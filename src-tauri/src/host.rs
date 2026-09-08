@@ -1,5 +1,6 @@
 //! Windows geometry only: UIA rectangles and Win32 placement stay physical.
 use crate::types::Rect;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use tauri::WebviewWindow;
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
@@ -34,6 +35,39 @@ pub fn window_rect(handle: isize) -> Option<Rect> {
 }
 pub fn escape_down() -> bool {
     unsafe { GetAsyncKeyState(VK_ESCAPE.0 as i32) < 0 }
+}
+
+static ESCAPE_PENDING:AtomicBool=AtomicBool::new(false);
+static OVERLAY_VISIBLE:AtomicBool=AtomicBool::new(false);
+static SOURCE:AtomicIsize=AtomicIsize::new(0);
+static OVERLAY:AtomicIsize=AtomicIsize::new(0);
+static CAPSULE:AtomicIsize=AtomicIsize::new(0);
+
+pub fn escape_scope(source:isize,overlay:isize,capsule:isize){
+    SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);CAPSULE.store(capsule,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
+}
+pub fn close_escape_scope(){OVERLAY_VISIBLE.store(false,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+pub fn take_escape()->bool{ESCAPE_PENDING.swap(false,Ordering::AcqRel)}
+pub fn handle(window:&WebviewWindow)->isize{window.hwnd().map(|h|h.0 as isize).unwrap_or(0)}
+
+pub fn install_escape_hook()->Result<(),String>{
+    use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,WH_KEYBOARD_LL,WM_KEYDOWN,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
+    unsafe extern "system" fn keyboard(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&OVERLAY_VISIBLE.load(Ordering::Acquire){
+            let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let fg=foreground();
+            if key.vkCode==VK_ESCAPE.0 as u32&&fg!=0&&[SOURCE.load(Ordering::Relaxed),OVERLAY.load(Ordering::Relaxed),CAPSULE.load(Ordering::Relaxed)].contains(&fg){
+                if [WM_KEYDOWN,WM_SYSKEYDOWN].contains(&(wparam.0 as u32)){ESCAPE_PENDING.store(true,Ordering::Release);return LRESULT(1);}
+                if [WM_KEYUP,WM_SYSKEYUP].contains(&(wparam.0 as u32)){return LRESULT(1);}
+            }
+        }
+        unsafe{CallNextHookEx(None,code,wparam,lparam)}
+    }
+    unsafe{
+        let module=GetModuleHandleW(None).map_err(|_|"Module clavier indisponible.".to_string())?;
+        SetWindowsHookExW(WH_KEYBOARD_LL,Some(keyboard),Some(HINSTANCE(module.0)),0).map_err(|_|"La gestion d’Échap est indisponible.".to_string())?;
+    }
+    Ok(())
 }
 pub fn belongs_to(window: &WebviewWindow, handle: isize) -> bool {
     window.hwnd().is_ok_and(|h| h.0 as isize == handle)

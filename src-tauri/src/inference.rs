@@ -100,7 +100,7 @@ where
         Language::Fr => "French",
         Language::En => "English",
     };
-    let prompt = format!("Translate the text below into {target}. Return only the translation, preserving tone, formatting, names, numbers, and links.\n\n{text}");
+    let prompt = format!("Translate the following text into {target}. Note that you should only output the translated result without any additional explanation:\n{text}");
     let body = json!({"model":profile.model,"messages":[{"role":"user","content":prompt}],"stream":true,
         "temperature":0.7,"top_p":0.8,"top_k":20,"repetition_penalty":1.05,"max_tokens":4096});
     let client = reqwest::Client::builder()

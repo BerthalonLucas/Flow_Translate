@@ -89,13 +89,10 @@ fn lock_error() -> String {
     "État interne indisponible.".into()
 }
 #[tauri::command]
-fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    Ok(state
-        .inner
-        .lock()
-        .map_err(|_| lock_error())?
-        .settings
-        .clone())
+fn get_settings(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Result<Settings, String> {
+    let mut settings=state.inner.lock().map_err(|_|lock_error())?.settings.clone();
+    if window.label()!="settings" {for profile in settings.profiles.values_mut(){profile.api_key.clear();}}
+    Ok(settings)
 }
 
 fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
@@ -164,8 +161,12 @@ fn save_settings(
         let _ = app.global_shortcut().unregister(old.shortcut.as_str());
     }
     state.inner.lock().map_err(|_| lock_error())?.settings = settings.clone();
-    app.emit("settings-changed", &settings)
-        .map_err(|_| "Notification des réglages indisponible.".to_string())
+    app.emit_to("settings", "settings-changed", &settings)
+        .map_err(|_| "Notification des réglages indisponible.".to_string())?;
+    let mut public=settings;
+    for profile in public.profiles.values_mut(){profile.api_key.clear();}
+    for label in ["overlay","capsule"]{app.emit_to(label,"settings-changed",&public).map_err(|_|"Notification des réglages indisponible.".to_string())?;}
+    Ok(())
 }
 fn store_capture(
     app: &AppHandle,
@@ -396,7 +397,7 @@ fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), Str
         .map_err(|_| "La copie est indisponible.".into())
 }
 #[tauri::command]
-fn replace_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+async fn replace_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
     let r = result_for(&state, &request_id)?;
     let target = {
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -409,9 +410,12 @@ fn replace_result(state: State<'_, AppState>, request_id: String) -> Result<(), 
             .clone()
             .ok_or_else(|| "La cible modifiable n’est plus valide.".to_string())?
     };
-    capture::replace(&target, &r.translated_text)
+    // UI Automation uses an MTA worker, never the WebView's STA UI thread.
+    tauri::async_runtime::spawn_blocking(move || capture::replace(&target, &r.translated_text))
+        .await.map_err(|_| "Le remplacement a été interrompu. Utilisez Copier.".to_string())?
 }
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    host::close_escape_scope();
     {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         i.cancel(None);
@@ -542,6 +546,9 @@ fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Resul
             let _ = w.hide();
         }
     }
+    host::escape_scope(state.inner.lock().map_err(|_|lock_error())?.source_window,
+        app.get_webview_window("overlay").map(|w|host::handle(&w)).unwrap_or(0),
+        app.get_webview_window("capsule").map(|w|host::handle(&w)).unwrap_or(0));
     host::show(
         &app.get_webview_window("overlay")
             .ok_or_else(|| "Traduction indisponible.".to_string())?,
@@ -579,7 +586,7 @@ fn watch_context(app: AppHandle) {
                     .is_some_and(|w| host::belongs_to(&w, fg))
             });
             let down = host::escape_down();
-            if down && !escape_was_down && (fg == snapshot.0 || ours) {
+            if host::take_escape() || (down && !escape_was_down && (fg == snapshot.0 || ours)) {
                 let _ = dismiss(&app, &state);
             }
             escape_was_down = down;
@@ -710,6 +717,7 @@ pub fn run() {
                 capture_error(app.handle(), &message);
                 let _ = open_settings(app.handle().clone());
             }
+            host::install_escape_hook()?;
             watch_context(app.handle().clone());
             if demo {
                 let handle = app.handle().clone();
