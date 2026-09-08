@@ -27,4 +27,19 @@ describe('translationReducer', () => {
     const next = translationReducer(complete, { type: 'INVALIDATE', message: 'La sélection a changé.' });
     expect(next).toMatchObject({ result: 'Bonjour', replacementValid: false });
   });
+  it('ignores done events after cancellation', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality', targetLanguage: 'fr' });
+    state = translationReducer(state, { type: 'CANCEL' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done' } });
+    expect(state.phase).toBe('cancelled');
+    expect(state.requestId).toBeNull();
+  });
+  it('does not restore replacement after invalidation arrives during a stream', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality', targetLanguage: 'fr' });
+    state = translationReducer(state, { type: 'INVALIDATE', message: 'La sélection a changé.' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done' } });
+    expect(state).toMatchObject({ phase: 'complete', replacementValid: false });
+  });
 });

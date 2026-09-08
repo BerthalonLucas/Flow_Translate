@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
-import type { Capture, Language, Mode, Settings, StreamEvent } from './types';
+import type { Capture, HistoryEntry, Language, Mode, Settings, StreamEvent } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const clipboardCapture: Capture = { id: 'demo-clipboard', text: 'Je vous envoie la proposition mise à jour.', source: 'clipboard', canReplace: false, anchor: null };
@@ -23,11 +23,13 @@ function IconButton({ label, onClick, disabled, children }: { label: string; onC
   return <button className="icon-button" aria-label={label} title={label} disabled={disabled} onClick={onClick}>{children}</button>;
 }
 
-function useTranslation() {
+function useTranslation(readyOnMount = false) {
   const [state, dispatch] = useReducer(translationReducer, initialTranslationState);
   const [settings, setSettings] = useState<Settings | null>(null);
   const requestRef = useRef<string | null>(null);
   const captureRef = useRef<Capture | null>(null);
+  const handledCaptureRef = useRef<string | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => { void bridge.getSettings().then(setSettings).catch(() => undefined); }, []);
   useEffect(() => { captureRef.current = state.capture; }, [state.capture]);
@@ -43,6 +45,9 @@ function useTranslation() {
   }, [settings]);
 
   const receiveCapture = useCallback((capture: Capture) => {
+    if (handledCaptureRef.current === capture.id) return;
+    handledCaptureRef.current = capture.id;
+    captureRef.current = capture;
     dispatch({ type: 'CAPTURE', capture });
     if (capture.source === 'selection') start(capture);
   }, [start]);
@@ -57,24 +62,31 @@ function useTranslation() {
       bridge.on<{ captureId: string; anchorLost: boolean; message: string }>('target-invalidated', invalidation => {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       })
-    ]).then(listeners => {
+    ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
-      else off = listeners;
+      else {
+        off = listeners;
+        if (readyOnMount) {
+          try { const pending = await bridge.frontendReady(); if (pending) receiveCapture(pending); }
+          catch { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); }
+        }
+      }
     });
     return () => { disposed = true; off.forEach(unlisten => unlisten()); };
-  }, [receiveCapture]);
+  }, [readyOnMount, receiveCapture]);
 
   const cancelAndDismiss = useCallback(() => {
     if (requestRef.current) { void bridge.cancel(requestRef.current); dispatch({ type: 'CANCEL' }); }
     void bridge.dismiss();
   }, []);
 
-  return { state, settings, dispatch, receiveCapture, start, cancelAndDismiss };
+  return { state, settings, dispatch, receiveCapture, start, cancelAndDismiss, initError };
 }
 
 function TranslationBubble({ controller }: { controller: ReturnType<typeof useTranslation> }) {
-  const { state, settings, dispatch, start, cancelAndDismiss } = controller;
+  const { state, dispatch, start, cancelAndDismiss } = controller;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const visible = state.capture !== null;
   const ready = state.phase === 'complete';
@@ -82,16 +94,19 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
   useLayoutEffect(() => {
     if (!bridge.native || !root.current || !visible) return;
     let frame = 0; let previous = '';
-    const observer = new ResizeObserver(([entry]) => {
-      const width = Math.min(420, Math.max(200, Math.ceil(entry.contentRect.width)));
-      const height = Math.min(260, Math.max(36, Math.ceil(entry.contentRect.height)));
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame); frame = requestAnimationFrame(() => {
+      if (!root.current) return;
+      const bounds = root.current.getBoundingClientRect();
+      const width = Math.min(state.enlarged ? 420 : 280, Math.max(200, Math.ceil(bounds.width)));
+      const height = Math.min(state.enlarged ? 440 : 220, Math.max(36, Math.ceil(bounds.height)));
       const next = `${width}x${height}`;
-      if (next === previous) return; previous = next;
-      cancelAnimationFrame(frame); frame = requestAnimationFrame(() => void bridge.resize(width, height));
+      if (next !== previous) { previous = next; void bridge.resize(width, height); }
+      });
     });
     observer.observe(root.current);
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [visible, state.enlarged, state.phase, state.result]);
+  }, [visible, state.enlarged]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -104,36 +119,49 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
   if (!visible) return null;
   const translating = state.phase === 'streaming';
   const sourceIsClipboard = state.capture?.source === 'clipboard';
-  const heading = state.targetLanguage === 'fr' ? 'Français' : 'English';
+  const invokeResult = async (action: 'copy' | 'replace') => {
+    if (!state.requestId) return;
+    try { await (action === 'copy' ? bridge.copy(state.requestId) : bridge.replace(state.requestId)); setFeedback(action === 'copy' ? 'Copié.' : 'Remplacement effectué.'); }
+    catch { setFeedback(action === 'copy' ? 'La copie a été refusée.' : 'Le remplacement a été refusé : la sélection a changé.'); }
+  };
   return <div ref={root} className={`translation-bubble ${state.enlarged ? 'is-enlarged' : ''} ${sourceIsClipboard ? 'is-clipboard-result' : ''}`} role="status" aria-live="polite">
     {state.phase === 'confirming' ? <div className="confirmation">
       <p>Traduire le texte du presse-papiers&nbsp;?</p>
+      <div className="source-preview">{state.capture?.text}</div>
       <div className="confirmation-actions"><button className="quiet-action" onClick={cancelAndDismiss}>Annuler</button><button className="primary-action" onClick={() => state.capture && start(state.capture)}>Traduire</button></div>
     </div> : <>
+      {state.comparing && <div className="original-copy"><span>Original</span>{state.capture?.text}</div>}
       <div className={`translation-copy ${translating ? 'is-streaming' : ''}`}>
         {state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}
       </div>
       {state.error && state.result ? <p className="subtle-warning">{state.error}</p> : null}
+      {feedback ? <p className="compact-feedback">{feedback}</p> : null}
       <div className="bubble-actions" aria-label="Actions de traduction">
-        <span className="language-chip">{heading}</span>
         <span className="action-spacer" />
-        <IconButton label="Copier la traduction" disabled={!ready} onClick={() => state.requestId && void bridge.copy(state.requestId)}><Icon name="copy" /></IconButton>
+        <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}><Icon name="copy" /></IconButton>
         <div className="more-wrap">
           <IconButton label="Plus d’options" disabled={!ready} onClick={() => setMenuOpen(value => !value)}><Icon name="more" /></IconButton>
-          {menuOpen && <div className="more-menu" role="menu">
-            <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_ENLARGE' }); setMenuOpen(false); }}><span>{state.enlarged ? 'Réduire' : 'Agrandir'}</span></button>
-            <button role="menuitem" onClick={() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); setMenuOpen(false); }}><span>Comparer en {state.mode === 'quality' ? 'Rapide' : 'Qualité'}</span></button>
-            <button role="menuitem" onClick={() => { void bridge.openSettings(); setMenuOpen(false); }}><span>Réglages</span></button>
-          </div>}
         </div>
       </div>
+      {menuOpen && <div className="more-menu" role="menu">
+            <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_ENLARGE' }); setMenuOpen(false); }}><span>{state.enlarged ? 'Réduire' : 'Agrandir'}</span></button>
+            <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_COMPARE' }); setMenuOpen(false); }}><span>{state.comparing ? 'Masquer l’original' : 'Afficher l’original'}</span></button>
+            {state.replacementValid && <button role="menuitem" onClick={() => { void invokeResult('replace'); setMenuOpen(false); }}><span>Remplacer</span></button>}
+            <button role="menuitem" onClick={() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); setMenuOpen(false); }}><span>Relancer en {state.mode === 'quality' ? 'Rapide' : 'Qualité'}</span></button>
+            <button role="menuitem" onClick={() => { void bridge.openSettings(); setMenuOpen(false); }}><span>Réglages</span></button>
+      </div>}
     </>}
   </div>;
 }
 
 function Capsule() {
   const [target, setTarget] = useState<Language>('fr');
-  useEffect(() => { void bridge.getSettings().then(settings => setTarget(settings.targetLanguage)).catch(() => undefined); }, []);
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    void bridge.getSettings().then(settings => setTarget(settings.targetLanguage)).catch(() => undefined);
+    void bridge.on<Settings>('settings-changed', settings => setTarget(settings.targetLanguage)).then(listener => off = listener);
+    return () => off?.();
+  }, []);
   return <div className="capsule">
     <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard" /><span>{target === 'fr' ? 'Français' : 'English'}</span><Icon name="chevron" /></button>
     <span className="capsule-rule" /><button className="capsule-settings" onClick={() => void bridge.openSettings()} aria-label="Ouvrir les réglages"><Icon name="more" /></button><button className="capsule-close" onClick={() => void bridge.dismiss()} aria-label="Fermer"><Icon name="close" /></button>
@@ -144,18 +172,20 @@ function SettingsWindow() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [notice, setNotice] = useState('');
   const [checking, setChecking] = useState<Mode | null>(null);
-  const [historyCount, setHistoryCount] = useState<number | null>(null);
-  useEffect(() => { void bridge.getSettings().then(setSettings).catch(() => setNotice('Les réglages sont indisponibles.')); void bridge.getHistory().then(items => setHistoryCount(items.length)).catch(() => undefined); }, []);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [advanced, setAdvanced] = useState(false);
+  useEffect(() => { void bridge.getSettings().then(setSettings).catch(() => setNotice('Les réglages sont indisponibles.')); void bridge.getHistory().then(setHistory).catch(() => undefined); }, []);
   if (!settings) return <main className="settings-window"><p>Chargement des réglages…</p></main>;
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings({ ...settings, [key]: value });
   const profile = (mode: Mode, key: 'endpoint' | 'model' | 'apiKey', value: string) => setSettings({ ...settings, profiles: { ...settings.profiles, [mode]: { ...settings.profiles[mode], [key]: value } } });
-  const save = async () => { try { await bridge.saveSettings(settings); setNotice('Réglages enregistrés sur cet appareil.'); } catch { setNotice('Les réglages n’ont pas été enregistrés.'); } };
-  const check = async (mode: Mode) => { setChecking(mode); try { const result = await bridge.checkConnection(mode); setNotice(result.message); } catch { setNotice('La vérification a échoué.'); } finally { setChecking(null); } };
+  const save = async () => { try { await bridge.saveSettings(settings); setNotice('Réglages enregistrés sur cet appareil.'); return true; } catch { setNotice('Les réglages n’ont pas été enregistrés.'); return false; } };
+  const check = async (mode: Mode) => { setChecking(mode); try { if (!await save()) return; const result = await bridge.checkConnection(mode); setNotice(result.message); } catch { setNotice('La vérification a échoué.'); } finally { setChecking(null); } };
+  const removeHistory = async (id: string | null) => { try { await bridge.deleteHistory(id); setHistory(await bridge.getHistory()); } catch { setNotice('La suppression a échoué.'); } };
   return <main className="settings-window">
-    <header><div><span className="product-mark">FlowTranslate</span><h1>Réglages</h1></div></header>
+    <header><div><span className="product-mark">FlowTranslate</span><h1>Réglages</h1></div><button className="close-settings" onClick={() => void bridge.closeSettings()} aria-label="Fermer"><Icon name="close" /></button></header>
     <section><h2>Traduction</h2><div className="setting-grid"><label>Langue cible<select value={settings.targetLanguage} onChange={e => update('targetLanguage', e.target.value as Language)}><option value="fr">Français</option><option value="en">English</option></select></label><label>Mode par défaut<select value={settings.mode} onChange={e => update('mode', e.target.value as Mode)}><option value="quality">Qualité</option><option value="fast">Rapide</option></select></label><label className="wide">Raccourci<input value={settings.shortcut} onChange={e => update('shortcut', e.target.value)} /></label></div></section>
-    <section><h2>Serveurs</h2>{(['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}><div className="profile-heading"><strong>{mode === 'quality' ? 'Qualité' : 'Rapide'}</strong><button className="text-button" onClick={() => void check(mode)} disabled={checking === mode}>{checking === mode ? 'Vérification…' : 'Vérifier'}</button></div><label>Adresse<input type="url" placeholder="https://serveur.exemple/v1" value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>Modèle<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label><label>Clé API<input type="password" autoComplete="new-password" placeholder="Conservée uniquement par Windows" value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label></div>)}</section>
-    <section><h2>Sur cet appareil</h2><label className="switch-row"><input type="checkbox" checked={settings.historyEnabled} onChange={e => update('historyEnabled', e.target.checked)} /><span>Conserver l’historique chiffré</span>{historyCount !== null && <small>{historyCount} entrée{historyCount > 1 ? 's' : ''}</small>}</label><label className="switch-row"><input type="checkbox" checked={settings.autostart} onChange={e => update('autostart', e.target.checked)} /><span>Lancer à l’ouverture de session</span></label></section>
+    <section><h2>Sur cet appareil</h2><label className="switch-row"><input type="checkbox" checked={settings.historyEnabled} onChange={e => update('historyEnabled', e.target.checked)} /><span>Conserver l’historique chiffré</span><small>{history.length} entrée{history.length > 1 ? 's' : ''}</small></label><label className="switch-row"><input type="checkbox" checked={settings.autostart} onChange={e => update('autostart', e.target.checked)} /><span>Lancer à l’ouverture de session</span></label>{settings.historyEnabled && <div className="history"><div className="history-heading"><strong>Historique</strong><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>Tout supprimer</button></div>{history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.mode === 'quality' ? 'Qualité' : 'Rapide'} · {new Date(item.createdAt).toLocaleDateString('fr-FR')}</small></div><button className="icon-button dark-icon" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}</div>}</section>
+    <section className="advanced"><button className="advanced-toggle" onClick={() => setAdvanced(value => !value)} aria-expanded={advanced}>Connexion avancée <Icon name="chevron" /></button>{advanced && <div className="advanced-content">{(['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}><div className="profile-heading"><strong>{mode === 'quality' ? 'Qualité' : 'Rapide'}</strong><button className="text-button" onClick={() => void check(mode)} disabled={checking === mode}>{checking === mode ? 'Vérification…' : 'Enregistrer et vérifier'}</button></div><label>Adresse<input type="url" placeholder="https://serveur.exemple/v1" value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>Modèle<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label><label>Clé API<input type="password" autoComplete="new-password" placeholder="Conservée uniquement par Windows" value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label></div>)}</div>}</section>
     <footer><span aria-live="polite">{notice}</span><button className="primary-action" onClick={() => void save()}>Enregistrer</button></footer>
   </main>;
 }
@@ -173,22 +203,29 @@ function DemoDesktop({ controller }: { controller: ReturnType<typeof useTranslat
   </main>;
 }
 
-export function App() {
-  const controller = useTranslation();
-  const { receiveCapture } = controller;
-  const params = useMemo(() => new URLSearchParams(location.search), []);
-  const windowName = params.get('window') ?? (bridge.native ? 'overlay' : 'demo');
-  const standaloneDemo = params.get('demo') === '1';
+function OverlayWindow({ standaloneDemo }: { standaloneDemo: boolean }) {
+  const controller = useTranslation(true);
+  const { receiveCapture, initError } = controller;
   const demoStarted = useRef(false);
   useEffect(() => {
-    if (!demoStarted.current && standaloneDemo && windowName === 'overlay') {
+    if (!demoStarted.current && standaloneDemo) {
       demoStarted.current = true;
       bridge.setDemoCapture(defaultCapture);
       receiveCapture(defaultCapture);
     }
-  }, [standaloneDemo, windowName, receiveCapture]);
+  }, [standaloneDemo, receiveCapture]);
+  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'}>{initError && <p className="initialization-error">{initError}</p>}<TranslationBubble controller={controller} /></div>;
+}
+
+function DemoWindow() { return <DemoDesktop controller={useTranslation(false)} />; }
+
+export function App() {
+  const params = useMemo(() => new URLSearchParams(location.search), []);
+  const windowName = params.get('window') ?? (bridge.native ? 'overlay' : 'demo');
+  const standaloneDemo = params.get('demo') === '1';
+  useEffect(() => { document.body.className = `flowtranslate-window flowtranslate-${windowName}`; return () => { document.body.className = ''; }; }, [windowName]);
   if (windowName === 'settings') return <SettingsWindow />;
   if (windowName === 'capsule') return <Capsule />;
-  if (windowName === 'overlay' && (bridge.native || standaloneDemo)) return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'}><TranslationBubble controller={controller} /></div>;
-  return <DemoDesktop controller={controller} />;
+  if (windowName === 'overlay' && (bridge.native || standaloneDemo)) return <OverlayWindow standaloneDemo={standaloneDemo} />;
+  return <DemoWindow />;
 }
