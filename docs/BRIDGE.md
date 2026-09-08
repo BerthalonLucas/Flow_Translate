@@ -7,7 +7,7 @@ Rust structs serialize camelCase. Rust command names are snake_case; invoke argu
 ```ts
 type Mode = 'fast' | 'quality';
 type Language = 'fr' | 'en';
-type Rect = { x: number; y: number; width: number; height: number }; // physical screen pixels
+type Rect = { x: number; y: number; width: number; height: number }; // physical screen pixels, final visible character (or final visible line if character unavailable), logical text order
 type Capture = { id: string; text: string; source: 'selection'|'clipboard'; canReplace: boolean; anchor: Rect|null };
 type Profile = { endpoint: string; model: string; apiKey: string }; // key decrypted only to settings; never browser mock persistence
 type Settings = { targetLanguage: Language; mode: Mode; shortcut: string; historyEnabled: boolean; autostart: boolean; profiles: Record<Mode,Profile> };
@@ -38,12 +38,14 @@ type ConnectionStatus = { connected: boolean; message: string };
 - `capture` carries Capture to overlay, after it is ready; selection starts translation automatically in React, clipboard waits for confirmation.
 - `translation` carries StreamEvent. React ignores stale request IDs. Rust emits done only on normal, non-truncated completion.
 - `settings-changed` carries Settings after successful persistence.
-- `target-invalidated` carries `{message:string}`: disable replacement and native window moves to bottom when anchor lost.
+- `target-invalidated` carries `{captureId:string,anchorLost:boolean,message:string}`: ignore stale capture IDs; disable replacement and native window moves to bottom only when anchorLost.
 - Window labels: `overlay` loads `/?window=overlay`, `capsule` loads `/?window=capsule`, `settings` loads `/?window=settings`.
 - Capsule opens on clipboard/unanchored capture. Capsule invokes focus_overlay, dismiss_overlay and open_settings; it does not duplicate translation handling. A narrow pill with language indicator, clipboard icon, close.
 - Frontend publishes no IPC command capable of executing a shell, opening arbitrary files, or injecting arbitrary keystrokes.
+- Showing/resizing never activates the overlay. Repeated shortcut/click activates it deliberately. Escape is captured by a scoped native shortcut/hook only while overlay is open if the source retains focus; no unrelated keys are intercepted or logged.
+- Graphite alpha82% applies to the background only, not overall window/text opacity. Transparent corners and small native bounds must not create a large invisible click-blocking area.
+- Rust preserves the chosen above/below side during a stream; frontend batches ResizeObserver updates to avoid per-token jitter. When geometry is genuinely lost, re-anchor to bottom explicitly.
 
 ## Browser preview
 
 `npm run dev` outside Tauri presents a clearly marked demo desktop with selectable examples, simulated selection/clipboard flow, settings and error scenarios. Same React components and reducer as production. `?window=overlay&demo=1` supports standalone screenshot tests. Desktop app must not show browser preview chrome.
-
