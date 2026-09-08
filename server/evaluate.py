@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from eval_corpus import cases
+from gpu_memory import LocalGpuMemory
 
 ROOT = Path(__file__).resolve().parent
 
@@ -98,6 +99,7 @@ def main():
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "results")
     parser.add_argument("--skip-warmup", action="store_true")
+    parser.add_argument("--measure-local-gpu", action="store_true", help="Sample local GPU totals once/second; run on the inference host")
     args = parser.parse_args()
     if not 1 <= args.limit <= 100:
         parser.error("--limit must be between 1 and 100")
@@ -111,10 +113,15 @@ def main():
         if not warmup["success"]:
             print(json.dumps({"status": "blocked", "reason": warmup["error"], "benchmarkExecuted": False}))
             return 2
+    memory = LocalGpuMemory(args.measure_local_gpu)
+    memory.start()
     wall_started = time.perf_counter()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        results = list(pool.map(lambda case: translate(case, endpoint, profile["alias"], lock["generation"], api_key), corpus))
-    wall_seconds = time.perf_counter() - wall_started
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+            results = list(pool.map(lambda case: translate(case, endpoint, profile["alias"], lock["generation"], api_key), corpus))
+    finally:
+        wall_seconds = time.perf_counter() - wall_started
+        memory.stop()
     successful = [r for r in results if r["success"]]
     totals = [r["totalSeconds"] for r in successful]
     ttfts = [r["ttftSeconds"] for r in successful if r["ttftSeconds"] is not None]
@@ -125,7 +132,8 @@ def main():
               "latencyP50Seconds": percentile(totals, .5), "latencyP95Seconds": percentile(totals, .95),
               "ttftP50Seconds": percentile(ttfts, .5), "ttftP95Seconds": percentile(ttfts, .95),
               "preservationFailures": sum(bool(r["missingPreservedTokens"]) for r in successful),
-              "humanQualityReview": "pending", "corpusSha256": hashlib.sha256(json.dumps(corpus, sort_keys=True).encode()).hexdigest()}
+              "humanQualityReview": "pending", "localGpuMemory": memory.report(),
+              "corpusSha256": hashlib.sha256(json.dumps(corpus, sort_keys=True).encode()).hexdigest()}
     args.output_dir.mkdir(parents=True, exist_ok=True)
     name = f'{args.profile}-c{args.concurrency}-{time.strftime("%Y%m%d-%H%M%S")}'
     (args.output_dir / f"{name}.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in results), encoding="utf-8")
@@ -141,4 +149,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

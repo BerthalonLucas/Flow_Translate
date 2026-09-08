@@ -3,6 +3,7 @@ dist/
 target/
 src-tauri/target/
 src-tauri/gen/
+release/
 .env
 .env.*
 !.env.example

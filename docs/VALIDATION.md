@@ -14,13 +14,13 @@
 - Real Tauri debug executable launched. Synthetic selection streaming, compact bubble, menu and actual Notepad UIA capture/anchor observed. Fixed startup race by initializing state before WebViews. Fixed native enlargement shrink via `flex: none`.
 - A real Notepad insertion test exposed corruption with queued Unicode keystrokes. That implementation was removed completely. Replacement now uses bounded native Edit/RichEdit messages and verifies the resulting document; a new interactive Notepad pass is still pending.
 - Very short synthetic Escape presses exposed polling gaps. A scoped keyboard hook replaced sole reliance on polling; interactive recheck is pending.
-- NSIS build completed successfully. The final package must be rebuilt after the last native corrections before delivery.
+- Final NSIS package rebuilt after the native replacement/Escape corrections. Silent current-user installation succeeded (exit 0), version 0.1.0, at `%LOCALAPPDATA%/FlowTranslate/FlowTranslate.exe`. Installed executable differs from the build by only the expected three-byte Tauri bundle-type marker (`UNK` → `NSS`).
 - Desktop automation became unavailable during the final interactive pass: `GetCursorPos failed: Accès refusé (0x80070005)`. No further app input was attempted after recovery failed; user was asked to make the desktop available.
 - Final inference preflight still blocked: Docker engine unavailable, approximately 591 MiB free on GPU0 and 2253 MiB on GPU1. Existing workloads remain untouched.
 
 ## Pending actual runtime evidence
 
-- Final installer installation and interactive recheck of focus, clipboard preservation, replacement, rapid Escape, desktop translucency/acrylic and resize transitions.
+- Interactive recheck of focus, clipboard preservation, replacement, rapid Escape, desktop translucency/acrylic and resize transitions.
 - Edge and Chrome selection + editable fields; Word paragraphs; Outlook classic/new; Teams web/desktop. Explicitly record version and capture/replacement support per app, never infer universal support from UI Automation availability.
 - Multiple monitors/negative origins and mixed100/125/150/200% DPI.
 - Real model loading, FP8 behavior, concurrent1/4/10 requests and resource usage.

@@ -4,7 +4,7 @@ This server does not depend on the Windows UI. `model-lock.json` records public 
 
 ## Local trial (Windows Docker Desktop / Linux engine, or a Linux GPU server)
 
-1. Inspect resources: `python server/preflight.py`. Exit 2 means the trial cannot safely start yet. This command does not start Docker or stop existing processes.
+1. Inspect resources: `python server/preflight.py`. A nonzero exit means the trial cannot safely start yet. This command does not start Docker or stop existing processes.
 2. Optional: copy `server/.env.example` to `server/.env`, select GPU indices/UUIDs and ports. Default Quality uses GPU 0, Fast uses GPU 1. If overriding ports/reservations, verify those explicitly in addition to preflight defaults.
 3. Validate configuration: `docker compose -f server/compose.yaml --profile fast --profile quality config --quiet`.
 4. Start one profile first: `docker compose -f server/compose.yaml --profile fast up -d fast`. The first start downloads the pinned image plus about 4.08 GB of weights (engine image/cache overhead is additional). Quality downloads about 8.03 GB of weights. Do not launch while the selected GPU is occupied.
@@ -30,3 +30,17 @@ Move this configuration to a Linux GPU host; the client still uses the same Open
 ## Evaluation
 
 Use the synthetic 100-case corpus and `evaluate.py` after a server is healthy. Outputs stay in ignored `results/`; never substitute real confidential messages into the committed corpus. Human fidelity/fluency review remains necessary; preservation checks and latency are not a claim of translation superiority.
+
+Run each profile at concurrency 1, 4 and 10, for example:
+
+```powershell
+python server/evaluate.py --profile fast --concurrency 1 --measure-local-gpu
+python server/evaluate.py --profile fast --concurrency 4 --measure-local-gpu
+python server/evaluate.py --profile fast --concurrency 10 --measure-local-gpu
+```
+
+Repeat with `--profile quality`. Use `--measure-local-gpu` only on the inference
+host: it samples total device VRAM once per second, including other processes,
+and reports baseline/peak MiB and availability. It is not a per-model allocation
+measurement and may miss peaks shorter than the sample interval. Without the
+flag or NVIDIA tooling, memory is explicitly unavailable, never reported as zero.
