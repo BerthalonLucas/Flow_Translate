@@ -244,4 +244,96 @@ fn replace_win32(expected:&Win32Target,value:&str)->Result<(),String>{
     if after!=wanted{return Err("Le contrôle n’a pas confirmé le remplacement complet.".into());}Ok(())
 }
 
-#[cfg(test)] mod tests {use super::*;#[test]fn only_known_edit_classes(){assert!(supported_class("Edit"));assert!(supported_class("RichEditD2DPT"));assert!(supported_class("RICHEDIT50W"));assert!(!supported_class("Chrome_RenderWidgetHostHWND"));}#[test]fn utf16_patch_is_exact(){let d="Bonjour monde".encode_utf16().collect::<Vec<_>>();assert_eq!(String::from_utf16(&patched(&d,8,13,"équipe").unwrap()).unwrap(),"Bonjour équipe");assert!(patched(&d,9,2,"x").is_none());}}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_known_edit_classes() {
+        assert!(supported_class("Edit"));
+        assert!(supported_class("RichEditD2DPT"));
+        assert!(supported_class("RICHEDIT50W"));
+        assert!(!supported_class("Chrome_RenderWidgetHostHWND"));
+    }
+
+    #[test]
+    fn utf16_patch_is_exact() {
+        let document = "Bonjour monde".encode_utf16().collect::<Vec<_>>();
+        assert_eq!(
+            String::from_utf16(&patched(&document, 8, 13, "équipe").unwrap()).unwrap(),
+            "Bonjour équipe"
+        );
+        assert!(patched(&document, 9, 2, "x").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn invisible_edit_replaces_unicode_selection_by_message() {
+        use windows::{
+            core::w,
+            Win32::{
+                Foundation::HWND,
+                UI::WindowsAndMessaging::{
+                    CreateWindowExW, DestroyWindow, ES_MULTILINE, WINDOW_EX_STYLE,
+                    IsWindowUnicode, WINDOW_STYLE, WM_SETTEXT, WS_OVERLAPPED,
+                },
+            },
+        };
+        const EM_SETSEL: u32 = 0x00B1;
+        const EM_REPLACESEL: u32 = 0x00C2;
+        const EM_SETLIMITTEXT: u32 = 0x00C5;
+
+        struct Window(HWND);
+        impl Drop for Window {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+
+        let edit = Window(unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("EDIT"),
+                w!(""),
+                WS_OVERLAPPED | WINDOW_STYLE(ES_MULTILINE as u32),
+                0,
+                0,
+                640,
+                480,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+        });
+        assert!(unsafe { IsWindowUnicode(edit.0).as_bool() });
+
+        let original = "Début\r\ncafé 😀 fin";
+        message(edit.0, EM_SETLIMITTEXT, 1_000_000, 0).unwrap();
+        let original_utf16 = original
+            .encode_utf16()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        message(edit.0, WM_SETTEXT, 0, original_utf16.as_ptr() as isize).unwrap();
+        let start = "Début\r\n".encode_utf16().count();
+        let end = start + "café 😀".encode_utf16().count();
+        message(edit.0, EM_SETSEL, start, end as isize).unwrap();
+
+        let (before, selected_start, selected_end) = read_control(edit.0.0 as isize).unwrap();
+        assert_eq!(selected_start as usize, start);
+        assert_eq!(selected_end as usize, end);
+        assert_eq!(
+            String::from_utf16(&before[start..end]).unwrap(),
+            "café 😀"
+        );
+
+        let replacement = "équipe 🚀";
+        let mut replacement_utf16 = replacement.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+        message(edit.0, EM_REPLACESEL, 1, replacement_utf16.as_mut_ptr() as isize).unwrap();
+        let (after, _, _) = read_control(edit.0.0 as isize).unwrap();
+        assert_eq!(String::from_utf16(&after).unwrap(), "Début\r\néquipe 🚀 fin");
+    }
+}
