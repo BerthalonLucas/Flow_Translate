@@ -10,7 +10,7 @@
 - Two-case real benchmark attempt exits before benchmarking because the endpoint is unavailable. No model quality/latency result exists yet.
 - React production build succeeds. Six reducer tests and twelve Playwright tests pass: confirmation text, partial/error copy guards, comparison, settings/history controls, reduced motion, capsule viewport and 420 px explicit enlargement.
 - CSS/browser device scale checks at 100/125/150/200% pass. These are **not** Windows mixed-DPI evidence.
-- Windows Rust host compiles; thirteen Rust tests pass (SSE fragmentation/CRLF/truncation, endpoint policy, request cancellation, placement, DPAPI retention and native text patching).
+- Windows Rust host compiles; fourteen Rust tests pass (SSE fragmentation/CRLF/truncation, endpoint policy, request cancellation, placement, DPAPI retention and native text patching). The additional Win32 test creates an invisible Edit control, replaces `café 😀` with `équipe 🚀` via `EM_REPLACESEL`, verifies exact UTF-16/CRLF and destroys the test window. It never touches the clipboard or user applications.
 - Real Tauri debug executable launched. Synthetic selection streaming, compact bubble, menu and actual Notepad UIA capture/anchor observed. Fixed startup race by initializing state before WebViews. Fixed native enlargement shrink via `flex: none`.
 - A real Notepad insertion test exposed corruption with queued Unicode keystrokes. That implementation was removed completely. Replacement now uses bounded native Edit/RichEdit messages and verifies the resulting document; a new interactive Notepad pass is still pending.
 - Very short synthetic Escape presses exposed polling gaps. A scoped keyboard hook replaced sole reliance on polling; interactive recheck is pending.
