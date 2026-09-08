@@ -10,10 +10,10 @@ test-results/
 playwright-report/
 server/models/
 server/cache/
-server/results/*.jsonl
+server/results/*
 !server/results/.gitkeep
+__pycache__/
 *.sqlite*
 *.key
 *.pem
 .DS_Store
-
