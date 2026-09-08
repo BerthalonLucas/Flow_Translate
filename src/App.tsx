@@ -127,7 +127,11 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
   const invokeResult = async (action: 'copy' | 'replace') => {
     if (!state.requestId) return;
     try { await (action === 'copy' ? bridge.copy(state.requestId) : bridge.replace(state.requestId)); setFeedback(action === 'copy' ? 'Copié.' : 'Remplacement effectué.'); }
-    catch { setFeedback(action === 'copy' ? 'La copie a été refusée.' : 'Le remplacement a été refusé : la sélection a changé.'); }
+    catch (error) {
+      const nativeMessage = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+      const sanitizedMessage = nativeMessage.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+      setFeedback(action === 'copy' ? 'La copie a été refusée.' : sanitizedMessage || 'Remplacement indisponible. Utilisez Copier.');
+    }
   };
   return <div ref={root} className={`translation-bubble ${state.enlarged ? 'is-enlarged' : ''} ${sourceIsClipboard ? 'is-clipboard-result' : ''}`} role="status" aria-live="polite">
     {state.phase === 'confirming' ? <div className="confirmation">
@@ -136,18 +140,20 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
       <div className="confirmation-actions"><button className="quiet-action" onClick={cancelAndDismiss}>Annuler</button><button className="primary-action" onClick={() => state.capture && start(state.capture)}>Traduire</button></div>
     </div> : <>
       {state.comparing && <div className="original-copy"><span>Original</span>{state.capture?.text}</div>}
-      <div className={`translation-copy ${translating ? 'is-streaming' : ''}`}>
-        {state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}
+      <div className="translation-result">
+        <div className={`translation-copy ${translating ? 'is-streaming' : ''}`}>
+          {state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}
+        </div>
+        <div className="bubble-actions" aria-label="Actions de traduction">
+          <span className="action-spacer" />
+          <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}><Icon name="copy" /></IconButton>
+          <div className="more-wrap">
+            <IconButton label="Plus d’options" disabled={!ready} onClick={() => setMenuOpen(value => !value)}><Icon name="more" /></IconButton>
+          </div>
+        </div>
       </div>
       {state.error && state.result ? <p className="subtle-warning">{state.error}</p> : null}
       {feedback ? <p className="compact-feedback">{feedback}</p> : null}
-      <div className="bubble-actions" aria-label="Actions de traduction">
-        <span className="action-spacer" />
-        <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}><Icon name="copy" /></IconButton>
-        <div className="more-wrap">
-          <IconButton label="Plus d’options" disabled={!ready} onClick={() => setMenuOpen(value => !value)}><Icon name="more" /></IconButton>
-        </div>
-      </div>
       {menuOpen && <div className="more-menu" role="menu">
             <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_ENLARGE' }); setMenuOpen(false); }}><span>{state.enlarged ? 'Réduire' : 'Agrandir'}</span></button>
             <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_COMPARE' }); setMenuOpen(false); }}><span>{state.comparing ? 'Masquer l’original' : 'Afficher l’original'}</span></button>
