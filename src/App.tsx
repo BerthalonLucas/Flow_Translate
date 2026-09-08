@@ -28,21 +28,25 @@ function useTranslation(readyOnMount = false) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const requestRef = useRef<string | null>(null);
   const captureRef = useRef<Capture | null>(null);
+  const settingsRef = useRef<Settings | null>(null);
+  const settingsReadyRef = useRef<Promise<boolean>>(Promise.resolve(false));
   const handledCaptureRef = useRef<string | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
 
-  useEffect(() => { void bridge.getSettings().then(setSettings).catch(() => undefined); }, []);
+  useEffect(() => {
+    settingsReadyRef.current = bridge.getSettings().then(next => { settingsRef.current = next; setSettings(next); return true; }).catch(() => false);
+  }, []);
   useEffect(() => { captureRef.current = state.capture; }, [state.capture]);
 
   const start = useCallback((capture: Capture, forced?: { mode?: Mode; targetLanguage?: Language }) => {
-    const mode = forced?.mode ?? settings?.mode ?? 'quality';
-    const targetLanguage = forced?.targetLanguage ?? settings?.targetLanguage ?? 'fr';
+    const mode = forced?.mode ?? settingsRef.current?.mode ?? 'quality';
+    const targetLanguage = forced?.targetLanguage ?? settingsRef.current?.targetLanguage ?? 'fr';
     const id = uid(); requestRef.current = id;
     dispatch({ type: 'START', requestId: id, mode, targetLanguage });
     void bridge.translate({ id, captureId: capture.id, text: capture.text, targetLanguage, mode }).catch(() => {
       dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: 'La traduction n’a pas pu démarrer.' } });
     });
-  }, [settings]);
+  }, []);
 
   const receiveCapture = useCallback((capture: Capture) => {
     if (handledCaptureRef.current === capture.id) return;
@@ -58,7 +62,7 @@ function useTranslation(readyOnMount = false) {
     void Promise.all([
       bridge.on<Capture>('capture', capture => receiveCapture(capture)),
       bridge.on<StreamEvent>('translation', event => dispatch({ type: 'STREAM', event })),
-      bridge.on<Settings>('settings-changed', next => setSettings(next)),
+      bridge.on<Settings>('settings-changed', next => { settingsRef.current = next; setSettings(next); }),
       bridge.on<{ captureId: string; anchorLost: boolean; message: string }>('target-invalidated', invalidation => {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       })
@@ -67,7 +71,7 @@ function useTranslation(readyOnMount = false) {
       else {
         off = listeners;
         if (readyOnMount) {
-          try { const pending = await bridge.frontendReady(); if (pending) receiveCapture(pending); }
+          try { if (!await settingsReadyRef.current) throw new Error('settings unavailable'); const pending = await bridge.frontendReady(); if (pending && !disposed) receiveCapture(pending); }
           catch { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); }
         }
       }
@@ -90,6 +94,7 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
   const root = useRef<HTMLDivElement>(null);
   const visible = state.capture !== null;
   const ready = state.phase === 'complete';
+  useEffect(() => { setMenuOpen(false); setFeedback(null); }, [state.capture?.id]);
 
   useLayoutEffect(() => {
     if (!bridge.native || !root.current || !visible) return;
