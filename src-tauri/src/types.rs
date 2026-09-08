@@ -173,6 +173,16 @@ pub struct TargetIdentity {
     pub selection_start: Option<usize>,
     pub selection_len: usize,
     pub editable: bool,
+    pub win32: Option<Win32Target>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Win32Target {
+    pub control_window: isize,
+    pub class_name: String,
+    pub selection_start: u32,
+    pub selection_end: u32,
+    pub document_utf16: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
