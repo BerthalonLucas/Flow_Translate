@@ -19,6 +19,7 @@ type ConnectionStatus = { connected: boolean; message: string };
 ## Commands
 
 - `get_settings() -> Settings`
+- `frontend_ready() -> Capture|null`: overlay-only handshake, called after event listeners register. Marks overlay ready and returns pending capture, if any. Frontend deduplicates capture IDs. Never recapture clipboard as a startup fallback.
 - `save_settings({settings}) -> void` (validate URL/model/shortcut before saving; DPAPI-protect credentials)
 - `capture_text() -> Capture` (also usable from preview/test controls)
 - `translate({request:{id,captureId,text,targetLanguage,mode}}) -> void`: starts background streaming and returns promptly. Emits `translation` StreamEvent. Register listeners before invoking. At most one active request; starting another cancels the prior one. Validate capture/text identity. Desktop demo may be explicitly started through CLI `--demo`, never silently substitute a mock for failed inference.
@@ -40,6 +41,7 @@ type ConnectionStatus = { connected: boolean; message: string };
 - `settings-changed` carries Settings after successful persistence.
 - `target-invalidated` carries `{captureId:string,anchorLost:boolean,message:string}`: ignore stale capture IDs; disable replacement and native window moves to bottom only when anchorLost.
 - Window labels: `overlay` loads `/?window=overlay`, `capsule` loads `/?window=capsule`, `settings` loads `/?window=settings`.
+- Only overlay subscribes to capture/translation and starts requests. Settings/capsule may subscribe to settings-changed, never trigger translation from global capture events.
 - Capsule opens on clipboard/unanchored capture. Capsule invokes focus_overlay, dismiss_overlay and open_settings; it does not duplicate translation handling. A narrow pill with language indicator, clipboard icon, close.
 - Frontend publishes no IPC command capable of executing a shell, opening arbitrary files, or injecting arbitrary keystrokes.
 - Showing/resizing never activates the overlay. Repeated shortcut/click activates it deliberately. Escape is captured by a scoped native shortcut/hook only while overlay is open if the source retains focus; no unrelated keys are intercepted or logged.
