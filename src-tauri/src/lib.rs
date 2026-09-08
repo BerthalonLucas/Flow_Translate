@@ -657,6 +657,10 @@ pub fn run() {
                 demo_clipboard,
                 simulated,
             });
+            // Commands may arrive as soon as the WebView loads. State must exist first.
+            for config in app.config().app.windows.clone() {
+                tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+            }
             use tauri::{
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,

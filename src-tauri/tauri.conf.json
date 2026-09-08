@@ -13,6 +13,8 @@
     "windows": [
       {
         "label": "overlay",
+        "create": false,
+        "focus": false,
         "title": "FlowTranslate",
         "url": "/?window=overlay",
         "width": 280,
@@ -27,6 +29,8 @@
       },
       {
         "label": "capsule",
+        "create": false,
+        "focus": false,
         "title": "FlowTranslate",
         "url": "/?window=capsule",
         "width": 200,
@@ -41,6 +45,7 @@
       },
       {
         "label": "settings",
+        "create": false,
         "title": "Paramètres FlowTranslate",
         "url": "/?window=settings",
         "width": 620,
