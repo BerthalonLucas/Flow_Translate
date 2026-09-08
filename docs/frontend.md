@@ -6,4 +6,6 @@ En dehors de Tauri, `npm run dev` affiche un bureau de démonstration clairement
 
 Le reducer ignore les événements de flux obsolètes, active les actions seulement après `done`, et invalide le remplacement quand le bridge signale que le `captureId` a changé. Les tests unitaires couvrent ces cas ; les tests UIA/focus et les captures multi-DPI restent des vérifications Windows natives.
 
+L’overlay enregistre d’abord ses listeners, puis appelle `frontend_ready()`. Cette commande doit retourner le `Capture` en attente ou `null`; elle ne doit jamais relancer une capture de presse-papiers. La capsule et les réglages ne démarrent ni n’écoutent une traduction.
+
 Commandes : `npm run dev`, `npm run build`, `npm test`, `npm run tauri`.

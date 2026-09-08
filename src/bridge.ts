@@ -17,6 +17,7 @@ let demoScenario: 'normal' | 'error' = 'normal';
 let demoSettings = structuredClone(defaultSettings);
 let activeTimer: number | undefined;
 let activeDemoRequest: string | undefined;
+let demoHistory: HistoryEntry[] = [{ id: 'demo-history', sourceText: 'Could you send the updated proposal?', translatedText: 'Pourriez-vous envoyer la proposition mise à jour ?', targetLanguage: 'fr', mode: 'quality', createdAt: '2026-09-08T10:24:00Z' }];
 const demoListeners = new Map<EventName, Set<(payload: never) => void>>();
 
 function emit<T>(name: EventName, payload: T) { demoListeners.get(name)?.forEach(handler => handler(payload as never)); }
@@ -32,8 +33,10 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   if (name === 'get_settings') return structuredClone(demoSettings) as T;
   if (name === 'save_settings') { demoSettings = structuredClone(args?.settings as Settings); emit('settings-changed', demoSettings); return undefined as T; }
   if (name === 'capture_text') return structuredClone(demoCapture) as T;
+  if (name === 'frontend_ready') return null as T;
   if (name === 'check_connection') return { connected: demoScenario !== 'error', message: demoScenario === 'error' ? 'Démo : serveur indisponible.' : 'Démo : connexion simulée.' } as T;
-  if (name === 'get_history') return [] as T;
+  if (name === 'get_history') return structuredClone(demoHistory) as T;
+  if (name === 'delete_history') { const id = args?.id as string | null; demoHistory = id === null ? [] : demoHistory.filter(item => item.id !== id); return undefined as T; }
   if (name === 'translate') {
     const request = args?.request as TranslationRequest;
     window.clearTimeout(activeTimer);
@@ -64,6 +67,11 @@ export const bridge = {
   getSettings: () => command<Settings>('get_settings'),
   saveSettings: (settings: Settings) => command<void>('save_settings', { settings }),
   captureText: () => command<Capture>('capture_text'),
+  frontendReady: () => command<Capture | null>('frontend_ready'),
+  closeSettings: async () => {
+    if (native) { const { getCurrentWindow } = await import('@tauri-apps/api/window'); return getCurrentWindow().close(); }
+    history.back();
+  },
   translate: (request: TranslationRequest) => command<void>('translate', { request }),
   cancel: (requestId: string) => command<void>('cancel_translation', { requestId }),
   copy: (requestId: string) => command<void>('copy_result', { requestId }),
