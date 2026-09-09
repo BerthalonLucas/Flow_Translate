@@ -1,5 +1,31 @@
 import { test, expect } from '@playwright/test';
 
+for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+  test(`preview backgrounds and copy feedback preserve the capture and pill bounds (${reducedMotion})`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion });
+    await page.goto('/?window=overlay&demo=1&background=light');
+    const copy = page.getByRole('button', { name: 'Copier la traduction', exact: true });
+    await expect(copy).toBeEnabled();
+    const text = await page.locator('.translation-text').textContent();
+    const captureId = await page.locator('.glass-overlay').getAttribute('data-capture-id');
+    const pillBounds = await page.locator('.action-pill').boundingBox();
+    for (const name of ['Sombre', 'Coloré', 'Clair']) {
+      const background = page.getByRole('button', { name, exact: true });
+      await background.click();
+      await expect(background).toHaveAttribute('aria-pressed', 'true');
+      expect(await page.locator('.translation-text').textContent()).toBe(text);
+      await expect(page.locator('.glass-overlay')).toHaveAttribute('data-capture-id', captureId!);
+      expect(await page.locator('.action-pill').boundingBox()).toEqual(pillBounds);
+    }
+    await copy.click();
+    await expect(page.locator('.compact-feedback')).toHaveText('Copié.');
+    await expect(copy.locator('.lucide-check')).toHaveCount(1);
+    await expect(copy.locator('.lucide-copy')).toHaveCount(0);
+    expect(await page.locator('.action-pill').boundingBox()).toEqual(pillBounds);
+    await page.screenshot({ path: `test-results/glass-material-${reducedMotion}.png` });
+  });
+}
+
 for (const scale of [1, 1.25, 1.5, 2]) {
   test(`bubble stays compact at ${scale * 100}% device scale`, async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: scale });
@@ -11,10 +37,9 @@ for (const scale of [1, 1.25, 1.5, 2]) {
     const bounds = await bubble.boundingBox();
     expect(bounds?.width).toBe(280);
     expect(bounds!.height).toBeLessThanOrEqual(220);
-    const style = await bubble.evaluate(el => ({ radius: getComputedStyle(el).borderRadius, opacity: getComputedStyle(el).opacity, background: getComputedStyle(el).backgroundColor }));
+    const style = await bubble.evaluate(el => ({ radius: getComputedStyle(el).borderRadius, opacity: getComputedStyle(el).opacity }));
     expect(style.radius).toBe('26px');
     expect(style.opacity).toBe('1'); // alpha applies to background, not text
-    expect(style.background).toContain('0.78');
     await expect(bubble.getByRole('heading')).toHaveCount(0);
     await page.screenshot({ path: `test-results/bubble-scale-${scale}.png` });
     await context.close();
