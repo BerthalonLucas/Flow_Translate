@@ -242,7 +242,7 @@ fn store_capture(
         }
         i.frontend_ready
     };
-    position(app, state, 280., 90.)?;
+    position(app, state, 280., 90., None)?;
     let fallback_app = app.clone();
     let fallback_id = public.id.clone();
     tauri::async_runtime::spawn(async move {
@@ -254,7 +254,7 @@ fn store_capture(
             i.measured = true;
             i.size
         };
-        let _ = position(&fallback_app, &state, size.0, size.1);
+        let _ = position(&fallback_app, &state, size.0, size.1, None);
     });
     if ready {
         app.emit_to("overlay", "capture", &public)
@@ -558,7 +558,7 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
     host::strip_chrome(&w)
 }
 #[tauri::command]
-fn resize_overlay(
+async fn resize_overlay(
     app: AppHandle,
     state: State<'_, AppState>,
     width: f64,
@@ -579,7 +579,9 @@ fn resize_overlay(
         if let Some(presentation) = presentation { i.presentation = presentation; }
         if let Some(regions) = regions { i.regions = regions; i.measured = true; }
     }
-    position(&app, &state, width, height)
+    let (placed_tx, placed_rx) = tokio::sync::oneshot::channel();
+    position(&app, &state, width, height, Some(placed_tx))?;
+    placed_rx.await.map_err(|_| "Placement interrompu.".to_string())?
 }
 
 fn validate_regions(regions: &[SurfaceRegion], width: f64, height: f64) -> Result<(), String> {
@@ -682,7 +684,7 @@ fn start_drag(
             i.size
         };
         let state = app.state::<AppState>();
-        let _ = position(&app, &state, size.0, size.1);
+        let _ = position(&app, &state, size.0, size.1, None);
     });
     Ok(())
 }
@@ -718,7 +720,13 @@ fn delete_history(state: State<'_, AppState>, id: Option<String>) -> Result<(), 
     state.history.delete(id.as_deref())
 }
 
-fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Result<(), String> {
+fn position(
+    app: &AppHandle,
+    state: &AppState,
+    width: f64,
+    height: f64,
+    placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+) -> Result<(), String> {
     let (capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible {
@@ -781,11 +789,9 @@ fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Resul
         let overlay_key = (result.0, regions.clone());
         let apply_overlay = i.last_overlay.as_ref() != Some(&overlay_key);
         let apply_capsule = i.last_capsule.as_ref() != Some(&result.1);
-        i.last_overlay = Some(overlay_key);
-        i.last_capsule = Some(result.1);
         (capture_id, result.0, result.1, result.2, regions, apply_overlay, apply_capsule)
     };
-    finish_position(app, capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule)
+    finish_position(app, capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule, placed)
 }
 
 fn finish_position(
@@ -797,27 +803,47 @@ fn finish_position(
     regions: Vec<SurfaceRegion>,
     apply_overlay: bool,
     apply_capsule: bool,
+    placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
 ) -> Result<(), String> {
     let handle = app.clone();
     app.run_on_main_thread(move || {
         let state = handle.state::<AppState>();
         let source_window = {
-            let Ok(i) = state.inner.lock() else { return };
-            if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) { return; }
+            let Ok(i) = state.inner.lock() else {
+                if let Some(placed) = placed { let _ = placed.send(Err(lock_error())); }
+                return;
+            };
+            if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
+                if let Some(placed) = placed { let _ = placed.send(Err("La capture n’est plus active.".into())); }
+                return;
+            }
             i.source_window
         };
-        if apply_capsule {
+        let result = (|| -> Result<(), String> {
+          if apply_capsule {
             if let Some(window) = handle.get_webview_window("capsule") {
-                if let Some(capsule) = capsule { let _ = host::show(&window, capsule, 19. * scale, &[], scale); }
-                else { let _ = window.hide(); }
+                if let Some(capsule) = capsule { host::show(&window, capsule, 19. * scale, &[], scale)?; }
+                else { window.hide().map_err(|_| "Placement de la capsule indisponible.".to_string())?; }
+            } else {
+                return Err("Capsule indisponible.".into());
             }
-        }
-        host::escape_scope(source_window,
+          }
+          host::escape_scope(source_window,
             handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0),
             handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
-        if apply_overlay {
-            if let Some(window) = handle.get_webview_window("overlay") { let _ = host::show(&window, rect, 26. * scale, &regions, scale); }
-        }
+          if apply_overlay {
+            let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
+            host::show(&window, rect, 26. * scale, &regions, scale)?;
+          }
+          let mut i = state.inner.lock().map_err(|_| lock_error())?;
+          if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
+              return Err("La capture n’est plus active.".into());
+          }
+          if apply_overlay { i.last_overlay = Some((rect, regions)); }
+          if apply_capsule { i.last_capsule = Some(capsule); }
+          Ok(())
+        })();
+        if let Some(placed) = placed { let _ = placed.send(result); }
     }).map_err(|_| "Placement indisponible.".to_string())
 }
 fn capture_error(app: &AppHandle, message: &str) {
@@ -892,7 +918,7 @@ fn watch_context(app: AppHandle) {
                         message: "La sélection a changé. Utilisez Copier.".into(),
                     },
                 );
-                let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1);
+                let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None);
             }
         }
     });
