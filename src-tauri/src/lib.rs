@@ -493,6 +493,8 @@ fn start_drag(
     app: AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
+    client_x: f64,
+    client_y: f64,
 ) -> Result<(), String> {
     let dragged = match window.label() {
         "overlay" => ManualWindow::Overlay,
@@ -513,7 +515,25 @@ fn start_drag(
         i.dragging = true;
         capture_id
     };
-    if let Err(_) = window.start_dragging() {
+    let button_down = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible
+            || i.capture
+                .as_ref()
+                .is_none_or(|capture| capture.public.id != capture_id)
+        {
+            i.dragging = false;
+            return Err("La capture n’est plus active.".into());
+        }
+        match host::compensate_pointer_drag(&window, client_x, client_y) {
+            Ok(button_down) => button_down,
+            Err(error) => {
+                i.dragging = false;
+                return Err(error);
+            }
+        }
+    };
+    if button_down && window.start_dragging().is_err() {
         state.inner.lock().map_err(|_| lock_error())?.dragging = false;
         return Err("Déplacement indisponible.".into());
     }
