@@ -7,6 +7,24 @@ use uiautomation::{
 };
 use uuid::Uuid;
 
+thread_local! {
+    // uiautomation::UIAutomation::new initializes COM every time without balancing
+    // that call. The context watcher validates several times per second, so retain
+    // one automation client per MTA worker thread instead of growing that count.
+    static UI_AUTOMATION: std::cell::OnceCell<UIAutomation> = const { std::cell::OnceCell::new() };
+}
+
+fn ui_automation() -> Result<UIAutomation, ()> {
+    UI_AUTOMATION.with(|cell| {
+        if let Some(automation) = cell.get() {
+            return Ok(automation.clone());
+        }
+        let automation = UIAutomation::new().map_err(|_| ())?;
+        let _ = cell.set(automation.clone());
+        Ok(automation)
+    })
+}
+
 fn selection(
     element: &UIElement,
 ) -> Result<(String, Option<Rect>, Option<usize>, usize, bool), String> {
@@ -58,7 +76,14 @@ fn selection(
     Ok((text, anchor, selection_start, selection_len, range_editable))
 }
 
-pub fn capture_current(demo: bool) -> Result<StoredCapture, String> {
+fn ensure_source_unchanged(source_window: isize) -> Result<(), String> {
+    if source_window == 0 || crate::host::foreground() != source_window {
+        return Err("La fenêtre source a changé pendant la capture. Réessayez.".into());
+    }
+    Ok(())
+}
+
+pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture, String> {
     if demo {
         let public = Capture {
             id: Uuid::new_v4().to_string(),
@@ -77,21 +102,28 @@ pub fn capture_current(demo: bool) -> Result<StoredCapture, String> {
             target: None,
         });
     }
-    if let Ok(automation) = UIAutomation::new() {
+    if let Ok(automation) = ui_automation() {
         if let Ok(element) = automation.get_focused_element() {
-            if !element.is_password().unwrap_or(true) {
+            match element.is_password() {
+                Ok(true) => {
+                    return Err("La capture est refusée dans un champ protégé.".into());
+                }
+                Err(_) => {
+                    return Err(
+                        "Impossible de vérifier si le champ actif est protégé; capture refusée."
+                            .into(),
+                    );
+                }
+                Ok(false) => {}
+            }
+            {
                 match selection(&element) {
                     Ok((text, anchor, selection_start, selection_len, range_editable)) => {
+                        ensure_source_unchanged(source_window)?;
                         let runtime_id = element.get_runtime_id().map_err(|_| {
                             "Impossible d’identifier le contrôle source.".to_string()
                         })?;
-                        #[cfg(windows)]
-                        let native_window = unsafe {
-                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0
-                                as isize
-                        };
-                        #[cfg(not(windows))]
-                        let native_window = 0isize;
+                        let native_window = source_window;
                         let value_editable = element
                             .get_pattern::<UIValuePattern>()
                             .ok()
@@ -117,6 +149,7 @@ pub fn capture_current(demo: bool) -> Result<StoredCapture, String> {
                             editable,
                             win32,
                         });
+                        ensure_source_unchanged(source_window)?;
                         return Ok(StoredCapture { public, target });
                     }
                     Err(message) if message.contains("6 000") => return Err(message),
@@ -136,6 +169,7 @@ pub fn capture_current(demo: bool) -> Result<StoredCapture, String> {
     if text.chars().count() > 6000 {
         return Err("Le texte du presse-papiers dépasse 6 000 caractères.".into());
     }
+    ensure_source_unchanged(source_window)?;
     let public = Capture {
         id: Uuid::new_v4().to_string(),
         text,
@@ -151,7 +185,7 @@ pub fn capture_current(demo: bool) -> Result<StoredCapture, String> {
 
 pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {
     let automation =
-        UIAutomation::new().map_err(|_| "UI Automation est indisponible.".to_string())?;
+        ui_automation().map_err(|_| "UI Automation est indisponible.".to_string())?;
     let element = automation
         .get_focused_element()
         .map_err(|_| "Le contrôle source n’est plus actif.".to_string())?;

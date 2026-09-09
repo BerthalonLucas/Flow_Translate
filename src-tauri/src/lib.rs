@@ -149,7 +149,7 @@ fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
                     if visible {
                         let _ = focus_overlay(app.clone());
                     } else if let Err(message) = capture_text(app.clone(), state) {
-                        capture_error(&app, &message);
+                        capture_error(&app, &message, true);
                     }
                 });
             }
@@ -212,9 +212,9 @@ fn store_capture(
     app: &AppHandle,
     state: &AppState,
     captured: StoredCapture,
+    source: isize,
 ) -> Result<Capture, String> {
     let public = captured.public.clone();
-    let source = host::foreground();
     let (work, scale) = host::monitor(public.anchor, source);
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
@@ -264,7 +264,8 @@ fn store_capture(
 }
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
-    let mut captured = capture::capture_current(state.demo)?;
+    let source = host::foreground();
+    let mut captured = capture::capture_current(state.demo, source)?;
     if state.demo_long {
         captured.public.text = "Bonjour, voici une démonstration longue destinée à vérifier le lecteur compact, son retour à la ligne, le menu placé au-dessus du verre et la stabilité du texte pendant les changements de présentation.".into();
     }
@@ -274,7 +275,11 @@ fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, S
         captured.public.can_replace = false;
         captured.target = None;
     }
-    store_capture(&app, &state, captured)
+    let result = store_capture(&app, &state, captured, source);
+    if result.is_ok() {
+        reset_tray_tooltip(&app, state.simulated);
+    }
+    result
 }
 #[tauri::command]
 fn frontend_ready(state: State<'_, AppState>) -> Result<Option<Capture>, String> {
@@ -549,13 +554,42 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 fn focus_overlay(app: AppHandle) -> Result<(), String> {
+    let capture_id = {
+        let state = app.state::<AppState>();
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.pending_dismiss.is_some() {
+            return Err("La capture n’est plus active.".into());
+        }
+        i.capture
+            .as_ref()
+            .map(|capture| capture.public.id.clone())
+            .ok_or_else(|| "La capture n’est plus active.".to_string())?
+    };
     let w = app
         .get_webview_window("overlay")
         .ok_or_else(|| "Traduction indisponible.".to_string())?;
     w.show()
         .and_then(|_| w.set_focus())
         .map_err(|_| "Activation de la traduction impossible.".to_string())?;
-    host::strip_chrome(&w)
+    host::strip_chrome(&w)?;
+    let (current, should_hide) = {
+        let state = app.state::<AppState>();
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        let current = i.visible
+            && i.pending_dismiss.is_none()
+            && i.capture
+                .as_ref()
+                .is_some_and(|capture| capture.public.id == capture_id);
+        let should_hide = !i.visible || i.pending_dismiss.is_some() || i.capture.is_none();
+        (current, should_hide)
+    };
+    if !current {
+        if should_hide {
+            let _ = w.hide();
+        }
+        return Err("La capture n’est plus active.".into());
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn resize_overlay(
@@ -624,7 +658,16 @@ fn start_drag(
         i.dragging = true;
         capture_id
     };
-    let button_down = {
+    let button_down = match host::compensate_pointer_drag(&window, client_x, client_y) {
+        Ok(button_down) => button_down,
+        Err(error) => {
+            if let Ok(mut i) = state.inner.lock() {
+                i.dragging = false;
+            }
+            return Err(error);
+        }
+    };
+    {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible
             || i.capture
@@ -633,13 +676,6 @@ fn start_drag(
         {
             i.dragging = false;
             return Err("La capture n’est plus active.".into());
-        }
-        match host::compensate_pointer_drag(&window, client_x, client_y) {
-            Ok(button_down) => button_down,
-            Err(error) => {
-                i.dragging = false;
-                return Err(error);
-            }
         }
     };
     if button_down && window.start_dragging().is_err() {
@@ -846,9 +882,22 @@ fn finish_position(
         if let Some(placed) = placed { let _ = placed.send(result); }
     }).map_err(|_| "Placement indisponible.".to_string())
 }
-fn capture_error(app: &AppHandle, message: &str) {
+fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
+    if let Some(tray) = app.tray_by_id("flowtranslate") {
+        let tooltip = if simulated {
+            "FlowTranslate — Démonstration simulée"
+        } else {
+            "FlowTranslate"
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+}
+fn capture_error(app: &AppHandle, message: &str, notify: bool) {
     if let Some(tray) = app.tray_by_id("flowtranslate") {
         let _ = tray.set_tooltip(Some(format!("FlowTranslate — {message}")));
+    }
+    if notify {
+        host::show_capture_error(message);
     }
 }
 fn watch_context(app: AppHandle) {
@@ -1014,7 +1063,7 @@ pub fn run() {
                 });
             }
             if let Err(message) = register_shortcut(app.handle(), &shortcut) {
-                capture_error(app.handle(), &message);
+                capture_error(app.handle(), &message, false);
                 let _ = open_settings(app.handle().clone());
             }
             host::install_escape_hook()?;
