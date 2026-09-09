@@ -36,6 +36,19 @@ struct Inner {
     work: Rect,
     scale: f64,
     size: (f64, f64),
+    manual: Option<ManualPlacement>,
+    dragging: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManualWindow {
+    Overlay,
+    Capsule,
+}
+#[derive(Clone, Copy, Debug)]
+struct ManualPlacement {
+    window: ManualWindow,
+    x: f64,
+    y: f64,
 }
 impl Inner {
     fn new(settings: Settings) -> Self {
@@ -58,6 +71,8 @@ impl Inner {
             },
             scale: 1.,
             size: (280., 90.),
+            manual: None,
+            dragging: false,
         }
     }
     fn cancel(&mut self, id: Option<&str>) {
@@ -188,6 +203,8 @@ fn store_capture(
         i.work = work;
         i.scale = scale;
         i.size = (280., 90.);
+        i.manual = None;
+        i.dragging = false;
         if !i.frontend_ready {
             i.pending_capture = Some(public.clone());
         }
@@ -451,7 +468,8 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "Traduction indisponible.".to_string())?;
     w.show()
         .and_then(|_| w.set_focus())
-        .map_err(|_| "Activation de la traduction impossible.".into())
+        .map_err(|_| "Activation de la traduction impossible.".to_string())?;
+    host::strip_chrome(&w)
 }
 #[tauri::command]
 fn resize_overlay(
@@ -469,6 +487,77 @@ fn resize_overlay(
         width.clamp(200., 420.),
         height.clamp(36., 440.),
     )
+}
+#[tauri::command]
+fn start_drag(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let dragged = match window.label() {
+        "overlay" => ManualWindow::Overlay,
+        "capsule" => ManualWindow::Capsule,
+        _ => return Err("Cette fenêtre ne peut pas être déplacée.".into()),
+    };
+    let capture_id = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible {
+            return Err("Aucune capture active.".into());
+        }
+        let capture_id = i.capture
+            .as_ref()
+            .ok_or_else(|| "Aucune capture active.".to_string())?
+            .public
+            .id
+            .clone();
+        i.dragging = true;
+        capture_id
+    };
+    if let Err(_) = window.start_dragging() {
+        state.inner.lock().map_err(|_| lock_error())?.dragging = false;
+        return Err("Déplacement indisponible.".into());
+    }
+    let inner = state.inner.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Tao posts WM_NCLBUTTONDOWN, so start_dragging returns before the native
+        // move loop finishes. Commit the manual position only after mouse-up.
+        while unsafe {
+            windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON.0 as i32,
+            ) < 0
+        } {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        let Some(rect) = host::window_rect(host::handle(&window)) else {
+            if let Ok(mut i) = inner.lock() {
+                i.dragging = false;
+            }
+            return;
+        };
+        let (work, scale) = host::monitor(Some(rect), 0);
+        let size = {
+            let Ok(mut i) = inner.lock() else { return };
+            if !i.visible
+                || i.capture
+                    .as_ref()
+                    .is_none_or(|capture| capture.public.id != capture_id)
+            {
+                return;
+            }
+            i.manual = Some(ManualPlacement {
+                window: dragged,
+                x: rect.x,
+                y: rect.y,
+            });
+            i.work = work;
+            i.scale = scale;
+            i.dragging = false;
+            i.size
+        };
+        let state = app.state::<AppState>();
+        let _ = position(&app, &state, size.0, size.1);
+    });
+    Ok(())
 }
 #[tauri::command]
 async fn check_connection(
@@ -518,7 +607,33 @@ fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Resul
         let work = i.work;
         let (w, h) = (width * s, height * s);
         i.size = (width, height);
-        if let Some(anchor) = cap.anchor {
+        if i.dragging {
+            return Ok(());
+        }
+        if let Some(manual) = i.manual {
+            match manual.window {
+                ManualWindow::Overlay => (
+                    placement::clamp(work, manual.x, manual.y, w, h),
+                    if cap.anchor.is_none() {
+                        Some(placement::capsule(work, 200. * s, 36. * s))
+                    } else {
+                        None
+                    },
+                    s,
+                ),
+                ManualWindow::Capsule => {
+                    let capsule = placement::clamp(work, manual.x, manual.y, 200. * s, 36. * s);
+                    let overlay = placement::clamp(
+                        work,
+                        capsule.x + (capsule.width - w) / 2.,
+                        capsule.y - h - 8. * s,
+                        w,
+                        h,
+                    );
+                    (overlay, Some(capsule), s)
+                }
+            }
+        } else if let Some(anchor) = cap.anchor {
             if i.side.is_none() {
                 i.side = Some(placement::overlay(anchor, work, w, 220. * s, None).1);
             }
@@ -539,6 +654,16 @@ fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Resul
             )
         }
     };
+    finish_position(app, state, rect, capsule, scale)
+}
+
+fn finish_position(
+    app: &AppHandle,
+    state: &AppState,
+    rect: Rect,
+    capsule: Option<Rect>,
+    scale: f64,
+) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("capsule") {
         if let Some(r) = capsule {
             host::show(&w, r, 19. * scale)?;
@@ -744,6 +869,7 @@ pub fn run() {
             open_settings,
             focus_overlay,
             resize_overlay,
+            start_drag,
             check_connection,
             get_history,
             delete_history
