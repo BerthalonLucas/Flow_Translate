@@ -9,6 +9,6 @@ Windows 11 app: Tauri 2, React, TypeScript and Rust. vLLM is a separate server.
 - Never include model weights, credentials or user data in Git.
 - Do not stop existing GPU processes. Inspect free VRAM before inference tests.
 - Use branches/worktrees for independent agent work. Each agent owns only its assigned scope.
-- Agent routing requested by Lucas: Astra for design/review, Terra for frontend, Sol for native/inference, Luna for docs/recette.
+- Agent routing requested by Lucas: Astra for frontend implementation, design, interactions, animations and review, with reasoning effort **medium or higher**. Sol handles native/inference; Luna handles docs/recette. Terra may handle other suitable work, but not own the frontend.
+- Reuse established frontend primitives and animation libraries; retain the approved custom visual identity. Validate the real Windows window as well as the browser preview before claiming the UI is ready. See docs/UI-ITERATION.md.
 - Keep claims of testing tied to actual executed checks. A mocked translation is not an inference benchmark.
-
