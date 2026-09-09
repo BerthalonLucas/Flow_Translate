@@ -25,6 +25,7 @@ export type Action =
   | { type: 'STREAM'; event: StreamEvent }
   | { type: 'INVALIDATE'; message: string }
   | { type: 'CANCEL' }
+  | { type: 'DISMISS' }
   | { type: 'TOGGLE_ENLARGE' }
   | { type: 'TOGGLE_COMPARE' };
 
@@ -43,6 +44,7 @@ export function translationReducer(state: TranslationState, action: Action): Tra
       return { ...state, phase: 'error', error: action.event.message ?? 'La traduction n’a pas abouti.', replacementValid: false };
     case 'INVALIDATE':
       return { ...state, replacementValid: false, invalidated: true, error: action.message };
+    case 'DISMISS': return { ...initialTranslationState };
     case 'CANCEL':
       return state.phase === 'streaming' ? { ...state, requestId: null, phase: 'cancelled', replacementValid: false } : state;
     case 'TOGGLE_ENLARGE': return { ...state, enlarged: !state.enlarged };

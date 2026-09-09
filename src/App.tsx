@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type PointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type PointerEvent } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { BubbleMenu, BubbleMenuTrigger, Icon, IconButton, SettingSwitch, useFade } from './ui';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
 import type { Capture, HistoryEntry, Language, Mode, Settings, StreamEvent } from './types';
@@ -7,7 +9,7 @@ const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send th
 const clipboardCapture: Capture = { id: 'demo-clipboard', text: 'Je vous envoie la proposition mise à jour.', source: 'clipboard', canReplace: false, anchor: null };
 const uid = () => crypto.randomUUID?.() ?? `request-${Date.now()}`;
 
-function dragSurface(event: PointerEvent<HTMLDivElement>) {
+function dragSurface(event: PointerEvent<HTMLDivElement>, onError?: () => void) {
   if (!bridge.native || event.button !== 0 || !event.isPrimary) return;
   const target = event.target as HTMLElement;
   if (target.closest('button, input, select, a, [role="menu"]')) return;
@@ -17,23 +19,7 @@ function dragSurface(event: PointerEvent<HTMLDivElement>) {
     if (node === event.currentTarget) break;
   }
   event.preventDefault();
-  void bridge.startDrag().catch(() => undefined);
-}
-
-function Icon({ name }: { name: 'copy' | 'more' | 'close' | 'clipboard' | 'check' | 'chevron' }) {
-  const paths = {
-    copy: <><rect x="8" y="7" width="10" height="12" rx="2"/><path d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></>,
-    more: <><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,
-    close: <><path d="m6 6 12 12M18 6 6 18"/></>,
-    clipboard: <><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2M9 11h6M9 15h4"/></>,
-    check: <path d="m5 12 4 4L19 6"/>,
-    chevron: <path d="m7 10 5 5 5-5"/>
-  };
-  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
-}
-
-function IconButton({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: ReactNode }) {
-  return <button className="icon-button" aria-label={label} title={label} disabled={disabled} onClick={onClick}>{children}</button>;
+  void bridge.startDrag(event.clientX, event.clientY).catch(() => onError?.());
 }
 
 function useTranslation(readyOnMount = false) {
@@ -94,6 +80,8 @@ function useTranslation(readyOnMount = false) {
 
   const cancelAndDismiss = useCallback(() => {
     if (requestRef.current) { void bridge.cancel(requestRef.current); dispatch({ type: 'CANCEL' }); }
+    requestRef.current = null;
+    dispatch({ type: 'DISMISS' });
     void bridge.dismiss();
   }, []);
 
@@ -105,9 +93,23 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
   const [menuOpen, setMenuOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const fade = useFade();
+  const textRoot = useRef<HTMLSpanElement>(null);
+  const [longResult, setLongResult] = useState(false);
   const visible = state.capture !== null;
+  const activeRequest = useRef(state.requestId);
+  useLayoutEffect(() => { activeRequest.current = state.requestId; }, [state.requestId]);
   const ready = state.phase === 'complete';
-  useEffect(() => { setMenuOpen(false); setFeedback(null); }, [state.capture?.id]);
+  useLayoutEffect(() => {
+    const text = textRoot.current;
+    setLongResult(Boolean(text && Math.max(text.scrollHeight, text.getBoundingClientRect().height) > (state.enlarged ? 385 : 192)));
+  }, [state.result, state.phase, state.enlarged]);
+  useEffect(() => { setMenuOpen(false); setFeedback(null); }, [state.capture?.id, state.requestId]);
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => setFeedback(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
 
   useLayoutEffect(() => {
     if (!bridge.native || !root.current || !visible) return;
@@ -124,10 +126,11 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
     });
     observer.observe(root.current);
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [visible, state.enlarged]);
+  }, [visible, state.enlarged, state.capture?.id]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); cancelAndDismiss(); }
       if (event.key === 'Enter' && state.phase === 'confirming' && state.capture) start(state.capture);
     };
@@ -138,46 +141,54 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
   const translating = state.phase === 'streaming';
   const sourceIsClipboard = state.capture?.source === 'clipboard';
   const invokeResult = async (action: 'copy' | 'replace') => {
-    if (!state.requestId) return;
-    try { await (action === 'copy' ? bridge.copy(state.requestId) : bridge.replace(state.requestId)); setFeedback(action === 'copy' ? 'Copié.' : 'Remplacement effectué.'); }
+    if (!ready || !state.requestId) return;
+    const requestId = state.requestId;
+    try {
+      await (action === 'copy' ? bridge.copy(requestId) : bridge.replace(requestId));
+      if (activeRequest.current === requestId) setFeedback(action === 'copy' ? 'Copié.' : 'Remplacement effectué.');
+    }
     catch (error) {
+      if (activeRequest.current !== requestId) return;
       const nativeMessage = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
       const sanitizedMessage = nativeMessage.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
       setFeedback(action === 'copy' ? 'La copie a été refusée.' : sanitizedMessage || 'Remplacement indisponible. Utilisez Copier.');
     }
   };
-  return <div ref={root} onPointerDown={dragSurface} className={`translation-bubble ${state.enlarged ? 'is-enlarged' : ''} ${sourceIsClipboard ? 'is-clipboard-result' : ''}`} role="status" aria-live="polite">
-    {state.phase === 'confirming' ? <div className="confirmation">
-      <p>Traduire le texte du presse-papiers&nbsp;?</p>
-      <div className="source-preview">{state.capture?.text}</div>
-      <div className="confirmation-actions"><button className="quiet-action" onClick={cancelAndDismiss}>Annuler</button><button className="primary-action" onClick={() => state.capture && start(state.capture)}>Traduire</button></div>
-    </div> : <>
-      {state.comparing && <div className="original-copy"><span>Original</span>{state.capture?.text}</div>}
-      <div className="translation-result">
-        <div className={`translation-copy ${translating ? 'is-streaming' : ''}`}>
-          <span className="translation-text">{state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}</span>
-        <span className="bubble-actions" aria-label="Actions de traduction">
-          <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}><Icon name="copy" /></IconButton>
-          <span className="more-wrap">
-            <IconButton label="Plus d’options" disabled={!ready} onClick={() => setMenuOpen(value => !value)}><Icon name="more" /></IconButton>
-          </span>
-        </span>
-        </div>
-      </div>
-      {state.error && state.result ? <p className="subtle-warning">{state.error}</p> : null}
-      {feedback ? <p className="compact-feedback">{feedback}</p> : null}
-      {menuOpen && <div className="more-menu" role="menu">
-            <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_ENLARGE' }); setMenuOpen(false); }}><span>{state.enlarged ? 'Réduire' : 'Agrandir'}</span></button>
-            <button role="menuitem" onClick={() => { dispatch({ type: 'TOGGLE_COMPARE' }); setMenuOpen(false); }}><span>{state.comparing ? 'Masquer l’original' : 'Afficher l’original'}</span></button>
-            {state.replacementValid && <button role="menuitem" onClick={() => { void invokeResult('replace'); setMenuOpen(false); }}><span>Remplacer</span></button>}
-            <button role="menuitem" onClick={() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); setMenuOpen(false); }}><span>Relancer en {state.mode === 'quality' ? 'Rapide' : 'Qualité'}</span></button>
-            <button role="menuitem" onClick={() => { void bridge.openSettings(); setMenuOpen(false); }}><span>Réglages</span></button>
-      </div>}
-    </>}
-  </div>;
+  return <motion.div key={state.capture?.id} {...fade} ref={root} onPointerDown={event => dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'))} className={`translation-bubble ${state.enlarged ? 'is-enlarged' : ''} ${sourceIsClipboard ? 'is-clipboard-result' : ''}`} data-menu-open={menuOpen || undefined}>
+    <BubbleMenu open={menuOpen} onOpenChange={setMenuOpen} actions={[
+      { label: state.enlarged ? 'Réduire' : 'Agrandir', run: () => dispatch({ type: 'TOGGLE_ENLARGE' }) },
+      { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: () => dispatch({ type: 'TOGGLE_COMPARE' }) },
+      ...(state.replacementValid ? [{ label: 'Remplacer', run: () => void invokeResult('replace') }] : []),
+      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: translating || state.phase === 'confirming', run: () => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); } },
+      { label: 'Réglages', run: () => void bridge.openSettings() },
+      { label: 'Fermer', run: cancelAndDismiss, close: true },
+    ]}>
+      {state.phase === 'confirming' ? <motion.div key="confirmation" {...fade} className="confirmation">
+        <p>Traduire le texte du presse-papiers&nbsp;?</p>
+        <div className="source-preview">{state.capture?.text}</div>
+        <div className="confirmation-actions"><button className="quiet-action" onClick={cancelAndDismiss}>Annuler</button><button className="primary-action" onClick={() => state.capture && start(state.capture)}>Traduire</button></div>
+      </motion.div> : <>
+        <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span>{state.capture?.text}</motion.div>}</AnimatePresence>
+        <motion.div key={state.phase === 'error' ? 'error' : 'result'} {...fade} className="translation-result">
+          <div className={`translation-copy ${translating ? 'is-streaming' : ''} ${longResult ? 'is-long' : ''}`}>
+            <span ref={textRoot} className="translation-text" role="status" aria-live="polite">{state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}</span>
+            <span className="bubble-actions" aria-label="Actions de traduction">
+              <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}>
+                <motion.span key={feedback === 'Copié.' ? 'copied' : 'copy'} {...fade} className="action-glyph"><Icon name={feedback === 'Copié.' ? 'check' : 'copy'} /></motion.span>
+              </IconButton>
+              <BubbleMenuTrigger onClick={() => setMenuOpen(value => !value)} />
+            </span>
+          </div>
+        </motion.div>
+        {state.error && state.result ? <p className="subtle-warning">{state.error}</p> : null}
+      </>}
+    </BubbleMenu>
+    <AnimatePresence>{feedback && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
+  </motion.div>;
 }
 
 function Capsule() {
+  const fade = useFade();
   const [target, setTarget] = useState<Language>('fr');
   useEffect(() => {
     let off: (() => void) | undefined;
@@ -185,10 +196,10 @@ function Capsule() {
     void bridge.on<Settings>('settings-changed', settings => setTarget(settings.targetLanguage)).then(listener => off = listener);
     return () => off?.();
   }, []);
-  return <div className="capsule" onPointerDown={dragSurface}>
+  return <motion.div {...fade} className="capsule" onPointerDown={event => dragSurface(event)}>
     <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard" /><span>{target === 'fr' ? 'Français' : 'English'}</span><Icon name="chevron" /></button>
     <span className="capsule-rule" /><button className="capsule-settings" onClick={() => void bridge.openSettings()} aria-label="Ouvrir les réglages"><Icon name="more" /></button><button className="capsule-close" onClick={() => void bridge.dismiss()} aria-label="Fermer"><Icon name="close" /></button>
-  </div>;
+  </motion.div>;
 }
 
 function SettingsWindow() {
@@ -207,20 +218,20 @@ function SettingsWindow() {
   return <main className="settings-window">
     <header><div><span className="product-mark">FlowTranslate</span><h1>Réglages</h1></div><button className="close-settings" onClick={() => void bridge.closeSettings()} aria-label="Fermer"><Icon name="close" /></button></header>
     <section><h2>Traduction</h2><div className="setting-grid"><label>Langue cible<select value={settings.targetLanguage} onChange={e => update('targetLanguage', e.target.value as Language)}><option value="fr">Français</option><option value="en">English</option></select></label><label>Mode par défaut<select value={settings.mode} onChange={e => update('mode', e.target.value as Mode)}><option value="quality">Qualité</option><option value="fast">Rapide</option></select></label><label className="wide">Raccourci<input value={settings.shortcut} onChange={e => update('shortcut', e.target.value)} /></label></div></section>
-    <section><h2>Sur cet appareil</h2><label className="switch-row"><input type="checkbox" checked={settings.historyEnabled} onChange={e => update('historyEnabled', e.target.checked)} /><span>Conserver l’historique chiffré</span><small>{history.length} entrée{history.length > 1 ? 's' : ''}</small></label><label className="switch-row"><input type="checkbox" checked={settings.autostart} onChange={e => update('autostart', e.target.checked)} /><span>Lancer à l’ouverture de session</span></label>{settings.historyEnabled && <div className="history"><div className="history-heading"><strong>Historique</strong><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>Tout supprimer</button></div>{history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.mode === 'quality' ? 'Qualité' : 'Rapide'} · {new Date(item.createdAt).toLocaleDateString('fr-FR')}</small></div><button className="icon-button dark-icon" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}</div>}</section>
+    <section><h2>Sur cet appareil</h2><SettingSwitch label="Conserver l’historique chiffré" checked={settings.historyEnabled} onCheckedChange={checked => update('historyEnabled', checked)} detail={`${history.length} entrée${history.length > 1 ? 's' : ''}`} /><SettingSwitch label="Lancer à l’ouverture de session" checked={settings.autostart} onCheckedChange={checked => update('autostart', checked)} />{settings.historyEnabled && <div className="history"><div className="history-heading"><strong>Historique</strong><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>Tout supprimer</button></div>{history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.mode === 'quality' ? 'Qualité' : 'Rapide'} · {new Date(item.createdAt).toLocaleDateString('fr-FR')}</small></div><button className="icon-button dark-icon" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}</div>}</section>
     <section className="advanced"><button className="advanced-toggle" onClick={() => setAdvanced(value => !value)} aria-expanded={advanced}>Connexion avancée <Icon name="chevron" /></button>{advanced && <div className="advanced-content">{(['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}><div className="profile-heading"><strong>{mode === 'quality' ? 'Qualité' : 'Rapide'}</strong><button className="text-button" onClick={() => void check(mode)} disabled={checking === mode}>{checking === mode ? 'Vérification…' : 'Enregistrer et vérifier'}</button></div><label>Adresse<input type="url" placeholder="https://serveur.exemple/v1" value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>Modèle<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label><label>Clé API<input type="password" autoComplete="new-password" placeholder="Conservée uniquement par Windows" value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label></div>)}</div>}</section>
     <footer><span aria-live="polite">{notice}</span><button className="primary-action" onClick={() => void save()}>Enregistrer</button></footer>
   </main>;
 }
 
 function DemoDesktop({ controller }: { controller: ReturnType<typeof useTranslation> }) {
-  const [scenario, setScenario] = useState<'selection' | 'clipboard' | 'error'>('selection');
+  const [scenario, setScenario] = useState<'selection' | 'clipboard' | 'long' | 'error'>('selection');
   const capture = scenario === 'clipboard' ? clipboardCapture : defaultCapture;
-  const begin = () => { bridge.setDemoCapture(capture, scenario === 'error' ? 'error' : 'normal'); controller.receiveCapture(capture); };
+  const begin = () => { const next = { ...capture, id: uid() }; bridge.setDemoCapture(next, scenario === 'error' ? 'error' : scenario === 'long' ? 'long' : 'normal'); controller.receiveCapture(next); };
   return <main className="demo-desktop">
     <aside className="demo-sidebar"><span className="demo-logo">FT</span><span>Courrier</span><span>Messages</span><span>Réglages</span></aside>
     <section className="demo-mail"><div className="demo-toolbar"><span>✉ Nouveau message</span><span className="demo-search">Rechercher</span><span>Envoyer</span></div><div className="demo-recipient"><span>À</span><b>alex.martin@exemple.com</b></div><div className="mail-copy"><p>Bonjour Alex,</p><p>Je vous envoie la proposition mise à jour.</p><p>Bonne journée,<br/>Marie</p></div></section>
-    <aside className="demo-panel"><span className="demo-badge">DÉMO UNIQUEMENT</span><h1>FlowTranslate</h1><p>Le navigateur ne contacte aucun serveur ni presse-papiers.</p><fieldset><legend>Scénario</legend><label><input type="radio" checked={scenario === 'selection'} onChange={() => setScenario('selection')} /> Sélection</label><label><input type="radio" checked={scenario === 'clipboard'} onChange={() => setScenario('clipboard')} /> Presse-papiers</label><label><input type="radio" checked={scenario === 'error'} onChange={() => setScenario('error')} /> Erreur réseau</label></fieldset><button className="primary-action demo-start" onClick={begin}>Simuler Ctrl + Alt + T</button><button className="text-button settings-link" onClick={() => location.assign('?window=settings&demo=1')}>Voir les réglages</button></aside>
+    <aside className="demo-panel"><span className="demo-badge">Aperçu navigateur</span><h1>FlowTranslate</h1><p>Réponses simulées. Cet aperçu vérifie les composants ; le rendu Windows, le focus et le déplacement se testent dans l’application.</p><fieldset><legend>Scénario</legend><label><input type="radio" checked={scenario === 'selection'} onChange={() => setScenario('selection')} /> Sélection</label><label><input type="radio" checked={scenario === 'clipboard'} onChange={() => setScenario('clipboard')} /> Presse-papiers</label><label><input type="radio" checked={scenario === 'long'} onChange={() => setScenario('long')} /> Texte long</label><label><input type="radio" checked={scenario === 'error'} onChange={() => setScenario('error')} /> Erreur réseau</label></fieldset><button className="primary-action demo-start" onClick={begin}>Simuler Ctrl + Alt + T</button><button className="text-button settings-link" onClick={() => location.assign('?window=settings&demo=1')}>Voir les réglages</button></aside>
     <div className="demo-selection">Could you send the updated proposal before Thursday?</div>
     <TranslationBubble controller={controller} />
   </main>;
@@ -233,11 +244,13 @@ function OverlayWindow({ standaloneDemo }: { standaloneDemo: boolean }) {
   useEffect(() => {
     if (!demoStarted.current && standaloneDemo) {
       demoStarted.current = true;
-      bridge.setDemoCapture(defaultCapture);
-      receiveCapture(defaultCapture);
+      const scenario = new URLSearchParams(location.search).get('scenario');
+      const capture = scenario === 'confirmation' ? clipboardCapture : defaultCapture;
+      bridge.setDemoCapture(capture, scenario === 'error' ? 'error' : scenario === 'long' ? 'long' : 'normal');
+      receiveCapture(capture);
     }
   }, [standaloneDemo, receiveCapture]);
-  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'}>{initError && <p className="initialization-error">{initError}</p>}<TranslationBubble controller={controller} /></div>;
+  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'}>{initError && <div className="initialization-error"><p>{initError}</p><button className="quiet-action" onClick={() => void bridge.dismiss()}>Fermer</button></div>}{standaloneDemo && <span className="preview-label">Aperçu navigateur · réponse simulée</span>}<TranslationBubble controller={controller} /></div>;
 }
 
 function DemoWindow() { return <DemoDesktop controller={useTranslation(false)} />; }

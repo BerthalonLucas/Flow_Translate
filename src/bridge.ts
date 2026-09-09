@@ -13,7 +13,7 @@ const defaultSettings: Settings = {
 
 const native = '__TAURI_INTERNALS__' in window;
 let demoCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 830, y: 410, width: 360, height: 24 } };
-let demoScenario: 'normal' | 'error' = 'normal';
+let demoScenario: 'normal' | 'error' | 'long' = 'normal';
 let demoSettings = structuredClone(defaultSettings);
 let activeTimer: number | undefined;
 let activeDemoRequest: string | undefined;
@@ -23,6 +23,7 @@ const demoListeners = new Map<EventName, Set<(payload: never) => void>>();
 function emit<T>(name: EventName, payload: T) { demoListeners.get(name)?.forEach(handler => handler(payload as never)); }
 function demoTranslation(text: string, language: 'fr' | 'en') {
   if (demoScenario === 'error') return null;
+  if (demoScenario === 'long') return 'Bonjour Alex,\n\nMerci pour votre retour sur la proposition. La nouvelle version reprend les points discutés lors de notre réunion : le calendrier de livraison, la répartition des responsabilités et les conditions de validation.\n\nPourriez-vous vérifier les montants et les dates avant jeudi ? Nous pourrons ensuite transmettre la version définitive à l’équipe. Le budget de 12 500 € reste inchangé et la première livraison est prévue le 15 octobre.\n\nVous trouverez également une synthèse des modifications et la liste des questions encore ouvertes. Je reste disponible pour en discuter demain matin.\n\nBonne journée,\nMarie';
   if (text.includes('updated proposal')) return language === 'fr' ? 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?' : 'Could you send the updated proposal before Thursday?';
   if (text.includes('Je vous envoie')) return language === 'en' ? 'I am sending you the updated proposal.' : 'Je vous envoie la proposition mise à jour.';
   return language === 'fr' ? 'Voici une traduction de démonstration, prête à être relue.' : 'Here is a demo translation, ready for review.';
@@ -46,7 +47,7 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
     let i = 0;
     const tick = () => {
       if (activeDemoRequest !== request.id) return;
-      if (i < translated.length) { emit<StreamEvent>('translation', { requestId: request.id, kind: 'delta', text: translated.slice(i, i += 5) }); activeTimer = window.setTimeout(tick, 45); }
+      if (i < translated.length) { emit<StreamEvent>('translation', { requestId: request.id, kind: 'delta', text: translated.slice(i, i += demoScenario === 'long' ? 28 : 5) }); activeTimer = window.setTimeout(tick, 45); }
       else emit<StreamEvent>('translation', { requestId: request.id, kind: 'done' });
     };
     activeTimer = window.setTimeout(tick, 120); return undefined as T;
@@ -79,11 +80,11 @@ export const bridge = {
   dismiss: () => command<void>('dismiss_overlay'),
   openSettings: () => command<void>('open_settings'),
   focusOverlay: () => command<void>('focus_overlay'),
-  startDrag: () => command<void>('start_drag'),
+  startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
   resize: (width: number, height: number) => command<void>('resize_overlay', { width, height }),
   checkConnection: (mode: Mode) => command<ConnectionStatus>('check_connection', { mode }),
   getHistory: () => command<HistoryEntry[]>('get_history'),
   deleteHistory: (id: string | null) => command<void>('delete_history', { id }),
   on: event,
-  setDemoCapture: (capture: Capture, scenario: 'normal' | 'error' = 'normal') => { demoCapture = capture; demoScenario = scenario; }
+  setDemoCapture: (capture: Capture, scenario: 'normal' | 'error' | 'long' = 'normal') => { demoCapture = capture; demoScenario = scenario; }
 };

@@ -79,11 +79,80 @@ test('settings keep connection details collapsed and expose history deletion', a
   await page.goto('/?window=settings&demo=1');
   await expect(page.getByRole('heading', { name: 'Réglages', exact: true })).toBeVisible();
   await expect(page.getByLabel('Clé API', { exact: true })).toHaveCount(0);
-  await page.getByRole('checkbox', { name: 'Conserver l’historique chiffré' }).check();
+  await page.getByRole('switch', { name: 'Conserver l’historique chiffré' }).check();
   await expect(page.locator('.history article')).toHaveCount(1);
   await page.getByRole('button', { name: 'Tout supprimer', exact: true }).click();
   await expect(page.locator('.history article')).toHaveCount(0);
   await page.getByRole('button', { name: 'Connexion avancée', exact: true }).click();
   await expect(page.getByLabel('Clé API', { exact: true })).toHaveCount(2);
   await page.screenshot({ path: 'test-results/settings.png', fullPage: true });
+});
+
+
+test('menu supports keyboard navigation and restores focus after Escape', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  const trigger = page.getByRole('button', { name: 'Plus d’options', exact: true });
+  await trigger.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Agrandir', exact: true })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('menuitem', { name: 'Fermer', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.locator('.translation-bubble')).toBeVisible();
+});
+
+for (const scenario of ['selection', 'error']) {
+  test(`closing stays available during ${scenario}`, async ({ page }) => {
+    await page.goto(`/?window=overlay&demo=1&scenario=${scenario}`);
+    if (scenario === 'error') await expect(page.locator('.error-copy')).toBeVisible();
+    await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Fermer', exact: true }).click();
+    await expect(page.locator('.translation-bubble')).toHaveCount(0);
+  });
+}
+
+test('long output scrolls within the fixed width and keeps the menu inside the bubble', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1&scenario=long');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  const bubble = page.locator('.translation-bubble');
+  const bounds = await bubble.boundingBox();
+  expect(bounds?.width).toBe(280);
+  expect(bounds?.height).toBe(220);
+  await expect(page.getByRole('button', { name: 'Plus d’options', exact: true })).toBeInViewport();
+  await page.screenshot({ path: 'test-results/bubble-long.png' });
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  const close = page.getByRole('menuitem', { name: 'Fermer', exact: true });
+  await expect(close).toBeVisible();
+  await close.scrollIntoViewIfNeeded();
+  const menuBounds = await page.getByRole('menu').boundingBox();
+  const nextBounds = await bubble.boundingBox();
+  expect(menuBounds!.x).toBeGreaterThanOrEqual(nextBounds!.x);
+  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(nextBounds!.x + nextBounds!.width);
+  expect(await page.getByRole('menu').evaluate(el => !!el.closest('.translation-bubble'))).toBe(true);
+  expect(await bubble.evaluate(el => getComputedStyle(el).transform)).toBe('none');
+  await page.screenshot({ path: 'test-results/bubble-menu.png' });
+});
+
+test('demo can replay and change scenarios without stale capture deduplication', async ({ page }) => {
+  await page.goto('/');
+  const begin = page.getByRole('button', { name: 'Simuler Ctrl + Alt + T', exact: true });
+  await begin.click();
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await page.getByRole('radio', { name: 'Erreur réseau', exact: true }).check();
+  await begin.click();
+  await expect(page.locator('.error-copy')).toContainText('indisponible');
+  await page.getByRole('radio', { name: 'Sélection', exact: true }).check();
+  await begin.click();
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+});
+
+test('reduced motion paints menu immediately without transforms or opacity transition', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/?window=overlay&demo=1');
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await expect(page.getByRole('menu')).toHaveCSS('opacity', '1');
+  await expect(page.getByRole('menu')).toHaveCSS('transform', 'none');
 });
