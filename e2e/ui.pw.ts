@@ -54,7 +54,7 @@ test('reduced motion disables streaming cursor animation', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?window=overlay&demo=1');
   await expect(page.locator('.translation-copy')).toBeVisible();
-  const duration = await page.locator('.translation-copy').evaluate(el => getComputedStyle(el, '::after').animationDuration);
+  const duration = await page.locator('.translation-text').evaluate(el => getComputedStyle(el, '::after').animationDuration);
   expect(duration === '0s' || duration === '1e-05s' || duration === '0.00001s').toBeTruthy();
 });
 

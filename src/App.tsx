@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type PointerEvent } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
 import type { Capture, HistoryEntry, Language, Mode, Settings, StreamEvent } from './types';
@@ -6,6 +6,19 @@ import type { Capture, HistoryEntry, Language, Mode, Settings, StreamEvent } fro
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const clipboardCapture: Capture = { id: 'demo-clipboard', text: 'Je vous envoie la proposition mise à jour.', source: 'clipboard', canReplace: false, anchor: null };
 const uid = () => crypto.randomUUID?.() ?? `request-${Date.now()}`;
+
+function dragSurface(event: PointerEvent<HTMLDivElement>) {
+  if (!bridge.native || event.button !== 0 || !event.isPrimary) return;
+  const target = event.target as HTMLElement;
+  if (target.closest('button, input, select, a, [role="menu"]')) return;
+  // Leave native scrollbar gestures alone, including on overflowing source text.
+  for (let node: HTMLElement | null = target; node; node = node.parentElement) {
+    if (node.scrollHeight > node.clientHeight && event.clientX >= node.getBoundingClientRect().right - 12) return;
+    if (node === event.currentTarget) break;
+  }
+  event.preventDefault();
+  void bridge.startDrag().catch(() => undefined);
+}
 
 function Icon({ name }: { name: 'copy' | 'more' | 'close' | 'clipboard' | 'check' | 'chevron' }) {
   const paths = {
@@ -133,7 +146,7 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
       setFeedback(action === 'copy' ? 'La copie a été refusée.' : sanitizedMessage || 'Remplacement indisponible. Utilisez Copier.');
     }
   };
-  return <div ref={root} className={`translation-bubble ${state.enlarged ? 'is-enlarged' : ''} ${sourceIsClipboard ? 'is-clipboard-result' : ''}`} role="status" aria-live="polite">
+  return <div ref={root} onPointerDown={dragSurface} className={`translation-bubble ${state.enlarged ? 'is-enlarged' : ''} ${sourceIsClipboard ? 'is-clipboard-result' : ''}`} role="status" aria-live="polite">
     {state.phase === 'confirming' ? <div className="confirmation">
       <p>Traduire le texte du presse-papiers&nbsp;?</p>
       <div className="source-preview">{state.capture?.text}</div>
@@ -142,14 +155,13 @@ function TranslationBubble({ controller }: { controller: ReturnType<typeof useTr
       {state.comparing && <div className="original-copy"><span>Original</span>{state.capture?.text}</div>}
       <div className="translation-result">
         <div className={`translation-copy ${translating ? 'is-streaming' : ''}`}>
-          {state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}
-        </div>
-        <div className="bubble-actions" aria-label="Actions de traduction">
-          <span className="action-spacer" />
+          <span className="translation-text">{state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}</span>
+        <span className="bubble-actions" aria-label="Actions de traduction">
           <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}><Icon name="copy" /></IconButton>
-          <div className="more-wrap">
+          <span className="more-wrap">
             <IconButton label="Plus d’options" disabled={!ready} onClick={() => setMenuOpen(value => !value)}><Icon name="more" /></IconButton>
-          </div>
+          </span>
+        </span>
         </div>
       </div>
       {state.error && state.result ? <p className="subtle-warning">{state.error}</p> : null}
@@ -173,7 +185,7 @@ function Capsule() {
     void bridge.on<Settings>('settings-changed', settings => setTarget(settings.targetLanguage)).then(listener => off = listener);
     return () => off?.();
   }, []);
-  return <div className="capsule">
+  return <div className="capsule" onPointerDown={dragSurface}>
     <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard" /><span>{target === 'fr' ? 'Français' : 'English'}</span><Icon name="chevron" /></button>
     <span className="capsule-rule" /><button className="capsule-settings" onClick={() => void bridge.openSettings()} aria-label="Ouvrir les réglages"><Icon name="more" /></button><button className="capsule-close" onClick={() => void bridge.dismiss()} aria-label="Fermer"><Icon name="close" /></button>
   </div>;

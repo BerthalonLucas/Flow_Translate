@@ -29,6 +29,7 @@ type ConnectionStatus = { connected: boolean; message: string };
 - `dismiss_overlay() -> void`: cancel and hide overlay/capsule; keep settings independent.
 - `open_settings() -> void`
 - `focus_overlay() -> void`
+- `start_drag() -> void`: only overlay/capsule; starts native movement after a primary pointer press on non-interactive content. Retain the manual location across streaming/menu resizes until the next capture. Buttons and scrollbars keep their own interactions.
 - `resize_overlay({width,height}) -> void`: logical pixels, Rust clamps and repositions around stored anchor. Content must fit native window bounds (no giant transparent click-blocking surface).
 - `check_connection({mode}) -> ConnectionStatus`
 - `get_history() -> HistoryEntry[]`

@@ -79,6 +79,7 @@ export const bridge = {
   dismiss: () => command<void>('dismiss_overlay'),
   openSettings: () => command<void>('open_settings'),
   focusOverlay: () => command<void>('focus_overlay'),
+  startDrag: () => command<void>('start_drag'),
   resize: (width: number, height: number) => command<void>('resize_overlay', { width, height }),
   checkConnection: (mode: Mode) => command<ConnectionStatus>('check_connection', { mode }),
   getHistory: () => command<HistoryEntry[]>('get_history'),
