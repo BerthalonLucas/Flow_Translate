@@ -44,3 +44,26 @@ la fenêtre native et les clics fonctionnent de nouveau. Échap a rendu la bulle
 inaccessible comme fenêtre affichée. La version 0.1.1 conserve un titre parasite
 à la perte du focus et le déplacement automatisé n’a pas modifié ses coordonnées :
 ces deux points restent à corriger avant validation native.
+
+### Intégration 0.1.2
+
+Le navigateur contrôlé montre les vrais composants Motion/Radix/Lucide ; le
+menu s'ouvre et Fermer masque effectivement le résultat. Les 19 tests Playwright
+et 6 tests unitaires passent dans le checkout intégré.
+
+Le premier essai natif a révélé un blocage au démarrage : modifier le cadre
+Windows directement dans le callback Focused réentrait dans des événements
+protégés par un mutex du runtime. Le correctif diffère cette opération hors du
+callback. Après reconstruction et installation, le processus répond et UI
+Automation expose la traduction complète et les deux boutons.
+
+La capture du dernier exécutable échoue avec
+`IGraphicsCaptureItemInterop.CreateForMonitor failed (0x80070057)`, après nouvelle
+sélection de fenêtre également. Le clic par accessibilité échoue avec
+`coordinate input geometry is unavailable`. Aucun déplacement, rendu sans titre
+au changement de focus ou effet dépoli de cette version n'est donc déclaré
+validé. Le processus de démonstration a été arrêté après ces vérifications.
+
+Les captures natives fonctionnaient plus tôt dans cette session sur 0.1.1 :
+cette panne intermittente impose de garder la boucle navigateur utilisable,
+puis de reprendre la recette native dès que la capture est disponible.

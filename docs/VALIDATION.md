@@ -1,5 +1,27 @@
 # Validation evidence
 
+## Integrated 0.1.2 — 2026-09-09
+
+- Astra high owns the frontend; minimum medium routing is recorded in AGENTS.md.
+- Motion, Radix DropdownMenu/Switch and Lucide are pinned, used in the app and
+  distributed with third-party license notices.
+- Production build, 6 reducer tests, 19 Playwright tests and 15 Rust tests pass
+  in the integrated checkout. Browser menu opening and Close observed directly.
+- NSIS installer built and installed successfully at
+  `C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe`, file version 0.1.2.
+- A startup deadlock in the focus/frame callback was reproduced and fixed by
+  deferring Win32 work outside the runtime's locked listener dispatch. The
+  rebuilt process responds and native accessibility exposes the complete demo
+  translation, Copy and More actions.
+- Final native screenshot fails with `CreateForMonitor (0x80070057)` even after
+  fresh window selection; attempted accessibility click fails with
+  `coordinate input geometry is unavailable`. Final native frame/drag/focus and
+  animation acceptance remain pending. Demo process stopped afterward.
+- Local installer SHA-256:
+  `9209590dc364ef22ce1c2e24c630e6186516998b9ae60647ec9baadbb238d74f`.
+- No native dimension/exit animation yet; browser device-scale tests do not
+  validate mixed Windows DPI. No inference measurements added in this turn.
+
 ## Executed 2026-09-08
 
 - Private GitHub repository created and initial specification/design commit pushed.

@@ -1,4 +1,20 @@
-# 0.1.1 — bulle compacte et déplaçable
+# 0.1.2 — composants éprouvés et boucle de revue visuelle
+
+Le frontend est confié à Astra avec un effort de raisonnement medium ou supérieur.
+Motion anime les apparitions et retours visuels, Radix fournit les menus et
+interrupteurs accessibles, Lucide fournit les icônes. Versions épinglées et
+notices de licence embarquées. La bulle courte conserve ses 280 × 76 px,
+ses coins de 26 px et son fond graphite à 82 %.
+
+Fermer reste disponible pendant le chargement et après une erreur. Les
+scénarios de démonstration sont rejouables. Les 6 tests unitaires et 19 tests
+navigateur passent. La revue combine désormais navigateur contrôlé et captures
+de la vraie fenêtre Windows ; voir UI-ITERATION.md pour les résultats natifs.
+
+Les transitions de dimensions et la fermeture native ne sont pas encore
+animées : elles demandent une coordination explicite entre React et Rust.
+
+## Correctifs précédents — 0.1.1
 
 Correction du cadre Windows qui recouvrait la traduction. Le texte utilise
 désormais toute la largeur et les petites actions suivent sa dernière ligne.
