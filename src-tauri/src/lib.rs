@@ -847,10 +847,12 @@ pub fn run() {
                             .color(Color(29, 31, 36, 30))
                             .build(),
                     );
-                    let window = w.clone();
+                    let native = host::handle(&w);
                     w.on_window_event(move |event| {
                         if matches!(event, tauri::WindowEvent::Focused(_)) {
-                            let _ = host::strip_chrome(&window);
+                            tauri::async_runtime::spawn_blocking(move || {
+                                let _ = host::strip_chrome_handle(native);
+                            });
                         }
                     });
                 }
