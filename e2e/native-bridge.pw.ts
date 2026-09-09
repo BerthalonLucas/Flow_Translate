@@ -11,6 +11,7 @@ declare global {
       requestId: () => string;
       recoverSettings: () => void;
       connect: () => void;
+      refuseShortcut: () => void;
       error: () => Promise<void>;
       holdCopy: () => void;
       releaseCopy: () => void;
@@ -30,32 +31,41 @@ async function openNativeFixture(page: Page) {
 const geometry = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').at(-1)?.args);
 const resizeCount = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').length);
 
-test('IPC fixture: stable streaming, one completion promotion and ordered bounded hit regions', async ({ page }) => {
+test('IPC fixture: streaming grows the glass line by line to 220px, never auto-enlarges, and orders bounded hit regions', async ({ page }) => {
   await openNativeFixture(page);
-  await expect.poll(async () => (await geometry(page))?.width).toBe(280);
+  await expect.poll(async () => (await geometry(page))?.width).toBe(300);
   const initial = await geometry(page);
   const initialCount = await resizeCount(page);
   await page.evaluate(async () => {
     for (let i = 0; i < 120; i++) await window.nativeFixture.delta('Une longue traduction. ');
   });
   await expect(page.locator('.translation-text')).toContainText('Une longue traduction. '.repeat(120));
-  expect(await resizeCount(page)).toBe(initialCount);
-  expect(await geometry(page)).toEqual(initial);
+  await expect.poll(async () => (await geometry(page))?.height).toBe(234);
+  expect(await resizeCount(page)).toBeGreaterThan(initialCount);
+  expect((await geometry(page))?.width).toBe(300);
+  expect((initial?.height as number)).toBeLessThan(234);
+  const heights = await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').map(call => call.args?.height as number));
+  for (let i = 1; i < heights.length; i++) expect(Math.abs(heights[i] - heights[i - 1])).toBeGreaterThanOrEqual(21);
+  await expect(page.locator('.translation-copy')).toHaveAttribute('data-capped', 'true');
   await page.evaluate(() => window.nativeFixture.done());
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
-  await expect.poll(async () => (await geometry(page))?.presentation).toBe('reader');
-  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '560px');
+  expect((await geometry(page))?.presentation).toBe('contextual');
+  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '300px');
   await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
   await expect(page.getByRole('menu')).toBeVisible();
+  await expect(page.getByRole('menu')).toHaveCSS('transform', 'none');
   await expect.poll(async () => ((await geometry(page))?.regions as unknown[])?.length).toBe(3);
+  await expect.poll(async () => { const regions = (await geometry(page))?.regions as Array<{ y: number }>; return regions[2]?.y - regions[0].y; }).toBe(20);
   const current = await geometry(page);
   const regions = current!.regions as Array<{ x: number; y: number; width: number; height: number; radius: number }>;
-  expect(regions[0].width).toBe(560);
-  expect(regions[0].radius).toBe(26);
-  expect(regions[1].width).toBe(60);
+  expect(regions[0].width).toBe(300);
+  expect(regions[0].radius).toBe(28);
+  expect(regions[1].width).toBe(52);
   expect(regions[1].height).toBe(28);
   expect(regions[1].y).toBe(regions[0].y - 14);
-  expect(regions[2].y + regions[2].height).toBeLessThan(regions[0].y);
+  expect(regions[2].y).toBe(regions[0].y + 20);
+  expect(regions[2].width).toBe(196);
+  expect(current!.height as number).toBeGreaterThanOrEqual(regions[2].y + regions[2].height);
   for (const part of regions) {
     expect(part.x).toBeGreaterThanOrEqual(0); expect(part.y).toBeGreaterThanOrEqual(0);
     expect(part.x + part.width).toBeLessThanOrEqual(current!.width as number);
@@ -131,19 +141,24 @@ test('IPC fixture: capture during presentation fade cancels the old layout commi
   await page.evaluate(async () => { await window.nativeFixture.delta('Remplacement court'); await window.nativeFixture.done(); });
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   expect((await geometry(page))?.presentation).toBe('contextual');
-  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '280px');
+  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '300px');
 });
 
 
-test('IPC fixture: long source selects reader before streaming and never automatically demotes', async ({ page }) => {
+test('IPC fixture: a long source starts compact; only the menu enlarges and the choice persists', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(() => window.nativeFixture.capture('long-source', 'A long source paragraph with details to translate. '.repeat(20)));
   await expect.poll(async () => (await geometry(page))?.captureId).toBe('long-source');
-  expect((await geometry(page))?.presentation).toBe('reader');
+  expect((await geometry(page))?.presentation).toBe('contextual');
   await expect(page.locator('.translation-text')).toContainText('Traduction en cours');
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Agrandir', exact: true }).click();
+  await expect.poll(async () => (await geometry(page))?.presentation).toBe('reader');
+  await expect.poll(async () => (await geometry(page))?.width).toBe(420);
   await page.evaluate(async () => { await window.nativeFixture.delta('Très court.'); await window.nativeFixture.done(); });
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   expect((await geometry(page))?.presentation).toBe('reader');
+  expect((await geometry(page))?.height as number).toBeLessThanOrEqual(454);
 });
 
 async function openSettingsFixture(page: Page, fail = false) {
@@ -163,32 +178,44 @@ test('IPC fixture: settings recover from load failure', async ({ page }) => {
   await expect(page.getByLabel('Langue cible')).toBeVisible();
 });
 
-test('IPC fixture: choose language and engine, recover connection, save and close without translation', async ({ page }) => {
+test('IPC fixture: choices save immediately, checks never save, typing saves after a pause, close without translation', async ({ page }) => {
   await openSettingsFixture(page);
-  const engine = page.getByRole('region', { name: 'Connexion du moteur' });
-  await expect(engine).toContainText('Serveur de traduction');
-  await expect(engine).toContainText('Adresse du serveur à renseigner');
   expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'check_connection'))).toBe(false);
-  await page.getByLabel('Langue cible').selectOption('en');
-  await page.getByLabel('Mode par défaut').selectOption('fast');
-  await expect(engine.getByRole('heading')).toHaveText('Moteur Rapide');
-  const check = page.getByRole('button', { name: 'Enregistrer et vérifier le moteur', exact: true });
-  await check.click();
-  await expect(engine.getByRole('status')).toContainText('Connexion indisponible');
-  await expect(engine).toContainText('Démarrez le serveur');
+  await expect(page.locator('.save-status')).toHaveText('Enregistré');
+  await page.getByRole('radio', { name: 'English', exact: true }).click();
+  await expect(page.locator('.save-status')).toHaveText('Enregistré à l’instant');
+  await page.getByRole('radio', { name: 'Rapide', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length)).toBe(2);
+  await page.getByRole('button', { name: 'Connexion', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings)).toMatchObject({ targetLanguage: 'en', mode: 'fast', connectionExpanded: true });
+  const fast = page.locator('.profile').nth(1);
+  await expect(fast).toContainText('Rapide');
+  const saves = await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length);
+  await fast.getByRole('button', { name: 'Vérifier', exact: true }).click();
+  await expect(fast.getByRole('status')).toHaveText('Échec de connexion');
+  await expect(fast).toContainText('Serveur indisponible.');
   await page.evaluate(() => window.nativeFixture.connect());
-  await check.click();
-  await expect(engine.getByRole('status')).toContainText('Modèle disponible');
-  await page.getByRole('button', { name: 'Connexion avancée', exact: true }).click();
+  await fast.getByRole('button', { name: 'Vérifier', exact: true }).click();
+  await expect(fast.getByRole('status')).toContainText('Connecté ·');
+  expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length)).toBe(saves);
   await page.getByLabel('Modèle', { exact: true }).nth(1).fill('changed-model');
-  await expect(engine.getByRole('status')).not.toContainText('Modèle disponible');
-  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  await expect(fast.getByRole('status')).toHaveText('Non vérifié');
+  await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings)).toMatchObject({ profiles: { fast: { model: 'changed-model' } } });
   const calls = await page.evaluate(() => window.nativeFixture.calls);
   expect(calls.filter(call => call.command === 'check_connection').map(call => call.args?.mode)).toEqual(['fast', 'fast']);
-  expect(calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings).toMatchObject({ targetLanguage: 'en', mode: 'fast' });
   expect(calls.some(call => call.command === 'translate')).toBe(false);
   await page.getByRole('button', { name: 'Fermer', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'plugin:window|close'))).toBe(true);
+});
+
+test('IPC fixture: a refused shortcut keeps the previous combination and explains the conflict', async ({ page }) => {
+  await openSettingsFixture(page);
+  await page.evaluate(() => window.nativeFixture.refuseShortcut());
+  await page.getByRole('button', { name: 'Modifier', exact: true }).click();
+  await page.keyboard.press('Control+Alt+Y');
+  await expect(page.getByRole('alert')).toHaveText('Déjà utilisé par une autre application');
+  await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'T']);
+  await expect(page.locator('.save-status')).toHaveText('Enregistré');
 });
 
 test('IPC fixture: server error offers retry and settings through existing menu', async ({ page }) => {

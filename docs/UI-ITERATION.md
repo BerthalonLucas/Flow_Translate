@@ -1,5 +1,37 @@
 # Boucle de validation visuelle
 
+## Reprise du 9 septembre 2026 (Claude Code, handoff design « 1a »)
+
+Les trois livrables du handoff (bulle 1a, défilement, fenêtre Réglages) sont implémentés
+dans les vrais composants : `GlassOverlay.tsx`, `ui.tsx`, `App.tsx`, `glass.css`, `styles.css`,
+plus `placement`/`lib.rs` (agrandi ancré, commandes de la fenêtre Réglages, champ
+`connectionExpanded`). Deux primitives Radix ont été ajoutées avec l’accord de Lucas :
+`react-scroll-area` (indicateur de défilement) et `react-toggle-group` (segmentés).
+Les 17 références visuelles ont été régénérées **parce que le design change**, après
+revue des images produites ; elles décrivent le nouveau design, pas une validation de
+Lucas. Le rendu Windows (acrylique réel, contraste sur page blanche, DPI 125/150 %,
+fenêtre Réglages sans cadre) reste à observer sur le bureau.
+
+## Correction de méthode après retour de Lucas
+
+L’entrée par défaut de `/lab.html` est désormais la liste des **défauts signalés**,
+pas le catalogue technique (`?view=states`). Chaque fiche distingue capture fournie,
+gestes, diagnostic établi ou inconnu, reproduction web possible ou test Windows requis.
+Les captures personnelles restent uniquement dans `release/ui-evidence`, hors Git.
+
+Pour UI-005a, `surface=production` n’impose pas color-scheme : l’ancienne fixture
+sombre masquait précisément les marges blanches. Le test a échoué avec un fond de
+body transparent, puis réussi après application du fond au document des réglages.
+
+Pour UI-001, le test du seul DOM était insuffisant. Le probe interroge maintenant
+la visibilité des HWND via l’API Tauri avant/après fermeture, sur trois cycles.
+Le test renforcé a échoué sur l’installation 0.1.5 : DOM vide, fenêtre encore visible.
+Sur le build du 9 septembre (checkout principal, `--features tauri/custom-protocol`), le même
+probe passe : `release/ui-evidence/native-after-1a/result.json`, trois cycles, overlay et capsule
+masqués nativement, fenêtre 300 × 89 puis 300 × 206 avec le menu. Cela ne mesure toujours pas
+le dépoli ni la composition du bureau : la capture d’écran (GDI, Windows-MCP) est refusée dans la
+session d’agent, il faut une observation de Lucas sur page blanche.
+
 ## Atelier reproductible — jalon du 9 septembre 2026
 
 Décisions à respecter : [UI-DECISIONS.md](UI-DECISIONS.md).

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RotateCcw, ExternalLink, FlaskConical } from 'lucide-react';
 import { scenarios, scenarioFrom } from './scenarios';
+import { BugWorkbench } from './bugs';
 import './workbench.css';
 
 function Workbench() {
@@ -17,13 +18,13 @@ function Workbench() {
   const query = new URLSearchParams({ scenario, theme, motion: reduced ? 'reduce' : 'full' });
   const src = `/lab-frame.html?${query}`;
   function remember(next: Record<string, string>) {
-    const params = new URLSearchParams({ scenario, theme, size, motion: reduced ? 'reduce' : 'full', ...next });
+    const params = new URLSearchParams({ view: 'states', scenario, theme, size, motion: reduced ? 'reduce' : 'full', ...next });
     history.replaceState(null, '', `/lab.html?${params}`);
   }
   return <main className="workbench">
     <header><div><span className="eyebrow"><FlaskConical size={15}/> FlowTranslate / Développement</span><h1>Atelier d’interface</h1><p>Un scénario, un défaut, une correction vérifiable.</p></div><span className="local-badge">Local · données fictives</span></header>
     <div className="workspace">
-      <nav aria-label="Scénarios"><span className="section-label">ÉTATS REPRODUCTIBLES</span>{scenarios.map(item => <button key={item.id} aria-current={scenario === item.id ? 'page' : undefined} onClick={() => { setScenario(item.id); remember({ scenario: item.id }); }}><span>{item.label}</span><small>{item.issue}</small></button>)}<p className="missing">Le repli au survol n’existe pas encore dans l’application. Ce scénario montre la capsule actuelle, sans simuler une correction.</p></nav>
+      <nav aria-label="Scénarios"><a href="/lab.html">← Défauts signalés</a><span className="section-label">ÉTATS TECHNIQUES</span>{scenarios.map(item => <button key={item.id} aria-current={scenario === item.id ? 'page' : undefined} onClick={() => { setScenario(item.id); remember({ scenario: item.id }); }}><span>{item.label}</span><small>{item.issue}</small></button>)}<p className="missing">Le repli au survol n’existe pas encore dans l’application. Ce scénario montre la capsule actuelle, sans simuler une correction.</p></nav>
       <section className="review" aria-label="Zone de revue">
         <div className="controls"><label>Fenêtre<select value={size} onChange={e => { setSize(e.target.value); remember({ size: e.target.value }); }}><option value="900x600">900 × 600</option><option value="620x640">620 × 640</option><option value="480x640">480 × 640</option><option value="1280x800">1280 × 800</option></select></label><label>Fond d’essai<select value={theme} onChange={e => { setTheme(e.target.value); remember({ theme: e.target.value }); }}><option value="dark">Sombre</option><option value="light">Clair</option></select></label><label className="check"><input type="checkbox" checked={reduced} onChange={e => { setReduced(e.target.checked); remember({ motion: e.target.checked ? 'reduce' : 'full' }); }}/>Mouvements réduits</label><button className="replay" onClick={() => setRun(run + 1)}><RotateCcw size={15}/>Rejouer</button><a href={src} target="_blank" rel="noreferrer" aria-label="Ouvrir le scénario seul"><ExternalLink size={17}/></a></div>
         <div className="canvas"><iframe key={`${src}-${run}`} title="Scénario FlowTranslate" src={src} width={width} height={height}/></div>
@@ -32,4 +33,4 @@ function Workbench() {
     </div>
   </main>;
 }
-if (import.meta.env.DEV) createRoot(document.getElementById('root')!).render(<Workbench/>);
+if (import.meta.env.DEV) createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).get('view') === 'states' ? <Workbench/> : <BugWorkbench/>);

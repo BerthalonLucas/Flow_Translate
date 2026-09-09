@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('workbench replays the real translation and keeps a reproducible URL', async ({ page }) => {
-  await page.goto('/lab.html');
+  await page.goto('/lab.html?view=states');
   const frame = page.frameLocator('iframe');
   await expect(frame.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   await page.screenshot({ path: 'test-results/workbench.png', fullPage: true });
@@ -13,7 +13,8 @@ test('workbench replays the real translation and keeps a reproducible URL', asyn
   await page.getByRole('button', { name: 'Traduction longue' }).click();
   await expect(page).toHaveURL(/scenario=long/);
   await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'complete');
-  await expect(frame.locator('.translation-bubble')).toHaveCSS('width', '560px');
+  await expect(frame.locator('.translation-bubble')).toHaveCSS('width', '300px');
+  await expect(frame.locator('.translation-copy')).toHaveAttribute('data-scroll-edge', 'top');
 });
 
 for (const scenario of ['pending', 'partial'] as const) {

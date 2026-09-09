@@ -29,7 +29,8 @@ function OverlayFixture() {
 
 async function mount() {
   if (!import.meta.env.DEV || bridge.native) return;
-  document.documentElement.style.colorScheme = theme;
+  // The defect reproduction must not hide the production document background.
+  if (params.get('surface') !== 'production') document.documentElement.style.colorScheme = theme;
   document.documentElement.dataset.labScenario = scenario;
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
   if (scenario === 'history') {
