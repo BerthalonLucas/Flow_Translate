@@ -38,6 +38,13 @@ struct Inner {
     size: (f64, f64),
     manual: Option<ManualPlacement>,
     dragging: bool,
+    presentation: Presentation,
+    regions: Vec<SurfaceRegion>,
+    pending_dismiss: Option<(String, u64)>,
+    dismiss_generation: u64,
+    last_overlay: Option<(Rect, Vec<SurfaceRegion>)>,
+    last_capsule: Option<Option<Rect>>,
+    measured: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ManualWindow {
@@ -73,6 +80,13 @@ impl Inner {
             size: (280., 90.),
             manual: None,
             dragging: false,
+            presentation: Presentation::Contextual,
+            regions: Vec::new(),
+            pending_dismiss: None,
+            dismiss_generation: 0,
+            last_overlay: None,
+            last_capsule: None,
+            measured: false,
         }
     }
     fn cancel(&mut self, id: Option<&str>) {
@@ -91,6 +105,16 @@ impl Inner {
             .as_ref()
             .is_some_and(|a| a.id == id && !a.cancel.is_cancelled())
     }
+    fn complete_pending_dismiss(&mut self, capture_id: &str, generation: u64) -> bool {
+        if self.pending_dismiss.as_ref().is_none_or(|pending| pending.0 != capture_id || pending.1 != generation) {
+            return false;
+        }
+        self.pending_dismiss = None;
+        self.capture = None;
+        self.last_overlay = None;
+        self.last_capsule = None;
+        true
+    }
 }
 struct AppState {
     inner: Arc<Mutex<Inner>>,
@@ -98,6 +122,7 @@ struct AppState {
     history: HistoryStore,
     demo: bool,
     demo_clipboard: bool,
+    demo_long: bool,
     simulated: bool,
 }
 fn lock_error() -> String {
@@ -205,12 +230,32 @@ fn store_capture(
         i.size = (280., 90.);
         i.manual = None;
         i.dragging = false;
+        i.presentation = Presentation::Contextual;
+        i.regions.clear();
+        i.pending_dismiss = None;
+        i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
+        i.last_overlay = None;
+        i.last_capsule = None;
+        i.measured = false;
         if !i.frontend_ready {
             i.pending_capture = Some(public.clone());
         }
         i.frontend_ready
     };
     position(app, state, 280., 90.)?;
+    let fallback_app = app.clone();
+    let fallback_id = public.id.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let state = fallback_app.state::<AppState>();
+        let size = {
+            let Ok(mut i) = state.inner.lock() else { return };
+            if !i.visible || i.measured || i.capture.as_ref().is_none_or(|capture| capture.public.id != fallback_id) { return; }
+            i.measured = true;
+            i.size
+        };
+        let _ = position(&fallback_app, &state, size.0, size.1);
+    });
     if ready {
         app.emit_to("overlay", "capture", &public)
             .map_err(|_| "Affichage de la capture indisponible.".to_string())?;
@@ -220,6 +265,9 @@ fn store_capture(
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
     let mut captured = capture::capture_current(state.demo)?;
+    if state.demo_long {
+        captured.public.text = "Bonjour, voici une démonstration longue destinée à vérifier le lecteur compact, son retour à la ligne, le menu placé au-dessus du verre et la stabilité du texte pendant les changements de présentation.".into();
+    }
     if state.demo_clipboard {
         captured.public.source = CaptureSource::Clipboard;
         captured.public.anchor = None;
@@ -244,7 +292,7 @@ fn translate(
     if request.text.is_empty() || request.text.chars().count() > 6000 {
         return Err("La traduction accepte de 1 à 6 000 caractères.".into());
     }
-    let (profile, cancel, inner, history, demo) = {
+    let (profile, cancel, inner, history, demo, demo_long) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         let captured = i
             .capture
@@ -270,15 +318,18 @@ fn translate(
             state.inner.clone(),
             state.history.clone(),
             state.simulated,
+            state.demo_long,
         )
     };
     tauri::async_runtime::spawn(async move {
         let id = request.id.clone();
         let result = if demo {
-            let output = match request.target_language {
+            let output = if demo_long {
+                "Voici une réponse synthétique suffisamment longue pour exercer le lecteur bas. Elle contient plusieurs phrases, des retours naturels et assez de texte pour vérifier que la surface principale reste stable lorsque la pilule et le menu se chevauchent visuellement. Aucun appel d’inférence réel n’est effectué dans ce mode de démonstration."
+            } else { match request.target_language {
                 Language::Fr => "Pourriez-vous envoyer la proposition mise à jour avant jeudi ?",
                 Language::En => "Could you send the updated proposal before Thursday?",
-            };
+            }};
             let mut out = String::new();
             for word in output.split_inclusive(' ') {
                 if cancel.is_cancelled() {
@@ -431,22 +482,57 @@ async fn replace_result(state: State<'_, AppState>, request_id: String) -> Resul
     tauri::async_runtime::spawn_blocking(move || capture::replace(&target, &r.translated_text))
         .await.map_err(|_| "Le remplacement a été interrompu. Utilisez Copier.".to_string())?
 }
+fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let should_hide = state.inner.lock().map(|mut i| i.complete_pending_dismiss(&capture_id, generation)).unwrap_or(false);
+        if should_hide {
+            for label in ["overlay", "capsule"] {
+                if let Some(window) = handle.get_webview_window(label) { let _ = window.hide(); }
+            }
+        }
+    }).map_err(|_| "Fermeture de la traduction indisponible.".to_string())
+}
+
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
     host::close_escape_scope();
-    {
+    let pending = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if i.pending_dismiss.is_some() { return Ok(()); }
+        let capture_id = i.capture.as_ref().map(|capture| capture.public.id.clone());
         i.cancel(None);
         i.visible = false;
         i.pending_capture = None;
         i.completed = None;
-        i.capture = None;
-    }
-    for l in ["overlay", "capsule"] {
-        if let Some(w) = app.get_webview_window(l) {
-            let _ = w.hide();
-        }
-    }
+        i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
+        capture_id.map(|capture_id| {
+            let pending = (capture_id, i.dismiss_generation);
+            i.pending_dismiss = Some(pending.clone());
+            pending
+        })
+    };
+    let Some((capture_id, generation)) = pending else { return Ok(()); };
+    let handle = app.clone();
+    let timeout_id = capture_id.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = schedule_finish_dismiss(handle, timeout_id, generation);
+    });
+    app.emit_to("overlay", "overlay-dismiss-requested", OverlayDismissRequested { capture_id })
+        .map_err(|_| "Fermeture de la traduction indisponible.".to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn complete_overlay_dismiss(app: AppHandle, state: State<'_, AppState>, capture_id: String) -> Result<(), String> {
+    let generation = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        let Some((pending_id, generation)) = i.pending_dismiss.as_ref() else { return Ok(()); };
+        if pending_id != &capture_id { return Ok(()); }
+        *generation
+    };
+    schedule_finish_dismiss(app, capture_id, generation)
 }
 #[tauri::command]
 fn dismiss_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
@@ -477,16 +563,37 @@ fn resize_overlay(
     state: State<'_, AppState>,
     width: f64,
     height: f64,
+    capture_id: Option<String>,
+    presentation: Option<Presentation>,
+    regions: Option<Vec<SurfaceRegion>>,
 ) -> Result<(), String> {
-    if !width.is_finite() || !height.is_finite() {
+    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. || width > 640. || height > 480. {
         return Err("Dimensions invalides.".into());
     }
-    position(
-        &app,
-        &state,
-        width.clamp(200., 420.),
-        height.clamp(36., 440.),
-    )
+    if let Some(items) = regions.as_ref() { validate_regions(items, width, height)?; }
+    {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if capture_id.as_ref().is_some_and(|id| i.capture.as_ref().is_none_or(|capture| &capture.public.id != id)) {
+            return Ok(());
+        }
+        if let Some(presentation) = presentation { i.presentation = presentation; }
+        if let Some(regions) = regions { i.regions = regions; i.measured = true; }
+    }
+    position(&app, &state, width, height)
+}
+
+fn validate_regions(regions: &[SurfaceRegion], width: f64, height: f64) -> Result<(), String> {
+    if regions.is_empty() || regions.len() > 4 { return Err("Régions de surface invalides.".into()); }
+    for region in regions {
+        let values = [region.x, region.y, region.width, region.height, region.radius];
+        if values.iter().any(|value| !value.is_finite())
+            || region.x < 0. || region.y < 0. || region.width <= 0. || region.height <= 0.
+            || region.radius < 0. || region.radius * 2. > region.width.min(region.height)
+            || region.x + region.width > width + 0.01 || region.y + region.height > height + 0.01 {
+            return Err("Régions de surface invalides.".into());
+        }
+    }
+    Ok(())
 }
 #[tauri::command]
 fn start_drag(
@@ -566,8 +673,8 @@ fn start_drag(
             }
             i.manual = Some(ManualPlacement {
                 window: dragged,
-                x: rect.x,
-                y: rect.y,
+                x: rect.x + if dragged == ManualWindow::Overlay { i.regions.first().map_or(0., |region| region.x * scale) } else { 0. },
+                y: rect.y + if dragged == ManualWindow::Overlay { i.regions.first().map_or(0., |region| region.y * scale) } else { 0. },
             });
             i.work = work;
             i.scale = scale;
@@ -612,28 +719,34 @@ fn delete_history(state: State<'_, AppState>, id: Option<String>) -> Result<(), 
 }
 
 fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Result<(), String> {
-    let (rect, capsule, scale) = {
+    let (capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible {
             return Ok(());
         }
+        if !i.measured { return Ok(()); }
         let cap = i
             .capture
             .as_ref()
             .ok_or_else(|| "Aucune capture active.".to_string())?
             .public
             .clone();
+        let capture_id = cap.id.clone();
         let s = i.scale;
         let work = i.work;
         let (w, h) = (width * s, height * s);
+        let regions = i.regions.clone();
+        let surface = regions.first().copied().unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 26. });
+        let (glass_w, glass_h) = (surface.width * s, surface.height * s);
+        let to_host = |glass: Rect| placement::clamp(work, glass.x - surface.x * s, glass.y - surface.y * s, w, h);
         i.size = (width, height);
         if i.dragging {
             return Ok(());
         }
-        if let Some(manual) = i.manual {
+        let result = if let Some(manual) = i.manual {
             match manual.window {
                 ManualWindow::Overlay => (
-                    placement::clamp(work, manual.x, manual.y, w, h),
+                    to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }),
                     if cap.anchor.is_none() {
                         Some(placement::capsule(work, 200. * s, 36. * s))
                     } else {
@@ -643,63 +756,69 @@ fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Resul
                 ),
                 ManualWindow::Capsule => {
                     let capsule = placement::clamp(work, manual.x, manual.y, 200. * s, 36. * s);
-                    let overlay = placement::clamp(
-                        work,
-                        capsule.x + (capsule.width - w) / 2.,
-                        capsule.y - h - 8. * s,
-                        w,
-                        h,
-                    );
+                    let overlay = to_host(Rect { x: capsule.x + (capsule.width - glass_w) / 2., y: capsule.y - glass_h - 8. * s, width: glass_w, height: glass_h });
                     (overlay, Some(capsule), s)
                 }
             }
+        } else if i.presentation == Presentation::Reader {
+            if cap.anchor.is_none() {
+                let (glass, capsule) = placement::reader_above_capsule(work, glass_w, glass_h, s);
+                (to_host(glass), Some(capsule), s)
+            } else {
+                (to_host(placement::reader(work, glass_w, glass_h)), None, s)
+            }
         } else if let Some(anchor) = cap.anchor {
             if i.side.is_none() {
-                i.side = Some(placement::overlay(anchor, work, w, 220. * s, None).1);
+                i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, None).1);
             }
-            let (rect, side) = placement::overlay(anchor, work, w, h, i.side);
+            let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, i.side);
             i.side = Some(side);
-            (rect, None, s)
+            (to_host(glass), None, s)
         } else {
             let capsule = placement::capsule(work, 200. * s, 36. * s);
-            (
-                Rect {
-                    x: work.x + (work.width - w) / 2.,
-                    y: (capsule.y - h - 8. * s).max(work.y),
-                    width: w,
-                    height: h,
-                },
-                Some(capsule),
-                s,
-            )
-        }
+            (to_host(Rect { x: work.x + (work.width - glass_w) / 2., y: capsule.y - glass_h - 8. * s, width: glass_w, height: glass_h }), Some(capsule), s)
+        };
+        let overlay_key = (result.0, regions.clone());
+        let apply_overlay = i.last_overlay.as_ref() != Some(&overlay_key);
+        let apply_capsule = i.last_capsule.as_ref() != Some(&result.1);
+        i.last_overlay = Some(overlay_key);
+        i.last_capsule = Some(result.1);
+        (capture_id, result.0, result.1, result.2, regions, apply_overlay, apply_capsule)
     };
-    finish_position(app, state, rect, capsule, scale)
+    finish_position(app, capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule)
 }
 
 fn finish_position(
     app: &AppHandle,
-    state: &AppState,
+    capture_id: String,
     rect: Rect,
     capsule: Option<Rect>,
     scale: f64,
+    regions: Vec<SurfaceRegion>,
+    apply_overlay: bool,
+    apply_capsule: bool,
 ) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("capsule") {
-        if let Some(r) = capsule {
-            host::show(&w, r, 19. * scale)?;
-        } else {
-            let _ = w.hide();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let source_window = {
+            let Ok(i) = state.inner.lock() else { return };
+            if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) { return; }
+            i.source_window
+        };
+        if apply_capsule {
+            if let Some(window) = handle.get_webview_window("capsule") {
+                if let Some(capsule) = capsule { let _ = host::show(&window, capsule, 19. * scale, &[], scale); }
+                else { let _ = window.hide(); }
+            }
         }
-    }
-    host::escape_scope(state.inner.lock().map_err(|_|lock_error())?.source_window,
-        app.get_webview_window("overlay").map(|w|host::handle(&w)).unwrap_or(0),
-        app.get_webview_window("capsule").map(|w|host::handle(&w)).unwrap_or(0));
-    host::show(
-        &app.get_webview_window("overlay")
-            .ok_or_else(|| "Traduction indisponible.".to_string())?,
-        rect,
-        26. * scale,
-    )
+        host::escape_scope(source_window,
+            handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0),
+            handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
+        if apply_overlay {
+            if let Some(window) = handle.get_webview_window("overlay") { let _ = host::show(&window, rect, 26. * scale, &regions, scale); }
+        }
+    }).map_err(|_| "Placement indisponible.".to_string())
 }
 fn capture_error(app: &AppHandle, message: &str) {
     if let Some(tray) = app.tray_by_id("flowtranslate") {
@@ -795,10 +914,11 @@ pub fn run() {
             let demo = args.iter().any(|a| {
                 matches!(
                     a.as_str(),
-                    "--demo" | "--demo-selection" | "--demo-clipboard"
+                    "--demo" | "--demo-selection" | "--demo-clipboard" | "--demo-long"
                 )
             });
             let demo_clipboard = args.iter().any(|a| a == "--demo-clipboard");
+            let demo_long = args.iter().any(|a| a == "--demo-long");
             let shortcut = settings.shortcut.clone();
             let simulated = demo || args.iter().any(|a| a == "--simulate-inference");
             app.manage(AppState {
@@ -807,6 +927,7 @@ pub fn run() {
                 history,
                 demo,
                 demo_clipboard,
+                demo_long,
                 simulated,
             });
             // Commands may arrive as soon as the WebView loads. State must exist first.
@@ -894,6 +1015,7 @@ pub fn run() {
             copy_result,
             replace_result,
             dismiss_overlay,
+            complete_overlay_dismiss,
             open_settings,
             focus_overlay,
             resize_overlay,
@@ -931,5 +1053,20 @@ mod tests {
         });
         c.cancel();
         assert!(!i.current("r"));
+    }
+    #[test]
+    fn stale_dismiss_ack_cannot_close_new_capture() {
+        let mut i = Inner::new(Settings::default());
+        i.pending_dismiss = Some(("new".into(), 8));
+        assert!(!i.complete_pending_dismiss("old", 7));
+        assert_eq!(i.pending_dismiss, Some(("new".into(), 8)));
+        assert!(i.complete_pending_dismiss("new", 8));
+    }
+    #[test]
+    fn regions_reject_nan_and_out_of_bounds() {
+        let valid = SurfaceRegion { x: 0., y: 14., width: 280., height: 100., radius: 26. };
+        assert!(validate_regions(&[valid], 280., 114.).is_ok());
+        assert!(validate_regions(&[SurfaceRegion { x: f64::NAN, ..valid }], 280., 114.).is_err());
+        assert!(validate_regions(&[SurfaceRegion { width: 281., ..valid }], 280., 114.).is_err());
     }
 }

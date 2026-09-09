@@ -14,6 +14,8 @@ type Settings = { targetLanguage: Language; mode: Mode; shortcut: string; histor
 type StreamEvent = { requestId: string; kind: 'delta'|'done'|'error'; text?: string; message?: string };
 type HistoryEntry = { id: string; sourceText: string; translatedText: string; targetLanguage: Language; mode: Mode; createdAt: string };
 type ConnectionStatus = { connected: boolean; message: string };
+type Presentation = 'contextual'|'reader';
+type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:number };
 ```
 
 ## Commands
@@ -26,11 +28,12 @@ type ConnectionStatus = { connected: boolean; message: string };
 - `cancel_translation({requestId}) -> void`
 - `copy_result({requestId}) -> void`: Rust copies only a completed known translation, never arbitrary frontend-supplied replacement text.
 - `replace_result({requestId}) -> void`: revalidate stored source target and selection; otherwise refuse safely.
-- `dismiss_overlay() -> void`: cancel and hide overlay/capsule; keep settings independent.
+- `dismiss_overlay() -> void`: cancel immediately and emit `overlay-dismiss-requested` with `{captureId}`. Native fallback hides after 300ms.
+- `complete_overlay_dismiss({captureId}) -> void`: acknowledge the closing animation; stale acknowledgements do nothing.
 - `open_settings() -> void`
 - `focus_overlay() -> void`
 - `start_drag({clientX,clientY}) -> void`: only overlay/capsule; starts native movement after a primary pointer press on non-interactive content. Coordinates are logical client pixels captured on pointerdown; Rust validates them and compensates pointer travel before IPC delivery, then uses native dragging while the button remains pressed. Retain the manual location across streaming/menu resizes until the next capture. Buttons and scrollbars keep their own interactions.
-- `resize_overlay({width,height}) -> void`: logical pixels, Rust clamps and repositions around stored anchor. Content must fit native window bounds (no giant transparent click-blocking surface).
+- `resize_overlay({width,height,captureId?,presentation?,regions?}) -> void`: logical pixels. Bounds are at most 640×480; one to four regions describe the visible rounded surfaces. Region zero is the main glass and remains screen-stable when accessories change the root bounds. Stale capture IDs do nothing.
 - `check_connection({mode}) -> ConnectionStatus`
 - `get_history() -> HistoryEntry[]`
 - `delete_history({id: string|null}) -> void`: null deletes all.
@@ -41,6 +44,7 @@ type ConnectionStatus = { connected: boolean; message: string };
 - `translation` carries StreamEvent. React ignores stale request IDs. Rust emits done only on normal, non-truncated completion.
 - `settings-changed` carries Settings after successful persistence.
 - `target-invalidated` carries `{captureId:string,anchorLost:boolean,message:string}`: ignore stale capture IDs; disable replacement and native window moves to bottom only when anchorLost.
+- `overlay-dismiss-requested` carries `{captureId:string}`. Frontend completes its exit animation then acknowledges it; a new capture invalidates the old request and timeout.
 - Window labels: `overlay` loads `/?window=overlay`, `capsule` loads `/?window=capsule`, `settings` loads `/?window=settings`.
 - Only overlay subscribes to capture/translation and starts requests. Settings/capsule may subscribe to settings-changed, never trigger translation from global capture events.
 - Capsule opens on clipboard/unanchored capture. Capsule invokes focus_overlay, dismiss_overlay and open_settings; it does not duplicate translation handling. A narrow pill with language indicator, clipboard icon, close.
