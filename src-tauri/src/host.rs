@@ -1,7 +1,7 @@
 //! Windows geometry only: UIA rectangles and Win32 placement stay physical.
 use crate::types::Rect;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use tauri::WebviewWindow;
+use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{
@@ -12,8 +12,10 @@ use windows::Win32::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE},
         WindowsAndMessaging::{
-            GetForegroundWindow, GetWindowRect, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE,
-            SWP_SHOWWINDOW,
+            GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW,
+            SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+            WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };
@@ -120,27 +122,39 @@ pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
 }
 
 pub fn show(window: &WebviewWindow, rect: Rect, radius: f64) -> Result<(), String> {
+    let width = rect.width.round().max(1.) as u32;
+    let height = rect.height.round().max(1.) as u32;
+    window
+        .set_size(PhysicalSize::new(width, height))
+        .and_then(|_| {
+            window.set_position(PhysicalPosition::new(
+                rect.x.round() as i32,
+                rect.y.round() as i32,
+            ))
+        })
+        .map_err(|_| "Placement indisponible.".to_string())?;
     unsafe {
         let h = window
             .hwnd()
             .map_err(|_| "Fenêtre indisponible.".to_string())?;
         let hwnd = HWND(h.0);
+        strip_chrome_hwnd(hwnd);
         SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
-            rect.x.round() as i32,
-            rect.y.round() as i32,
-            rect.width.round() as i32,
-            rect.height.round() as i32,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
         )
         .map_err(|_| "Placement indisponible.".to_string())?;
         // Clip native acrylic and hit testing to the same round silhouette as CSS.
         let region = CreateRoundRectRgn(
             0,
             0,
-            rect.width.round() as i32 + 1,
-            rect.height.round() as i32 + 1,
+            width as i32 + 1,
+            height as i32 + 1,
             (radius * 2.).round() as i32,
             (radius * 2.).round() as i32,
         );
@@ -149,4 +163,35 @@ pub fn show(window: &WebviewWindow, rect: Rect, radius: f64) -> Result<(), Strin
         }
     }
     Ok(())
+}
+
+pub fn strip_chrome(window: &WebviewWindow) -> Result<(), String> {
+    let hwnd = HWND(
+        window
+            .hwnd()
+            .map_err(|_| "Fenêtre indisponible.".to_string())?
+            .0,
+    );
+    unsafe {
+        strip_chrome_hwnd(hwnd);
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        )
+        .map_err(|_| "Fenêtre indisponible.".to_string())?;
+    }
+    Ok(())
+}
+
+unsafe fn strip_chrome_hwnd(hwnd: HWND) {
+    // Tao 0.35 rebuilds top-level styles from its window flags when visibility
+    // changes. Strip every caption-producing style at the HWND boundary too.
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+    let chrome = (WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX).0;
+    unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(chrome as isize)) };
 }

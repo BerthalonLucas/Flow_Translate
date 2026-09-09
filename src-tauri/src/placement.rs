@@ -47,6 +47,17 @@ pub fn capsule(work: Rect, width: f64, height: f64) -> Rect {
     }
 }
 
+pub fn clamp(work: Rect, x: f64, y: f64, width: f64, height: f64) -> Rect {
+    let width = width.min(work.width);
+    let height = height.min(work.height);
+    Rect {
+        x: x.clamp(work.x, work.x + work.width - width),
+        y: y.clamp(work.y, work.y + work.height - height),
+        width,
+        height,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +98,23 @@ mod tests {
             height: 20.,
         };
         assert_eq!(overlay(a, work, 280., 40., None).1, PlacementSide::Above);
+    }
+    #[test]
+    fn manual_position_stays_in_offset_work_area_after_resize() {
+        let work = Rect {
+            x: -1920.,
+            y: 40.,
+            width: 1920.,
+            height: 1040.,
+        };
+        assert_eq!(
+            clamp(work, -50., 1000., 420., 440.),
+            Rect {
+                x: -420.,
+                y: 640.,
+                width: 420.,
+                height: 440.,
+            }
+        );
     }
 }
