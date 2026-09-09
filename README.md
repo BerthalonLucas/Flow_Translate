@@ -31,6 +31,17 @@ FlowTranslate.exe --demo-selection
 FlowTranslate.exe --demo-clipboard
 ```
 
+La bulle se déplace en faisant glisser son texte ou son fond. Les boutons restent
+cliquables et la molette fait défiler les textes longs. Un déplacement manuel
+reste valable pour le résultat courant ; la capture suivante retrouve son ancrage.
+
+Sur le poste de développement de Lucas, le lancement utilise un dossier explicite
+afin d’éviter la redirection de `%LOCALAPPDATA%` par le paquet Codex :
+
+```powershell
+& "C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe" --demo-selection
+```
+
 Fermer l’instance précédente depuis son icône avant de changer de mode.
 Ces options explicites utilisent des réponses synthétiques et n’enregistrent
 pas d’historique. `--simulate-inference` conserve la capture Windows réelle mais

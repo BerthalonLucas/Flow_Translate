@@ -7,6 +7,12 @@ Le paquet NSIS est construit par `npm run tauri -- build --bundles nsis` dans
 droits administrateur. Un certificat de signature d’entreprise n’est pas
 fourni dans ce dépôt ; distribuer le paquet par le canal interne approuvé.
 
+Lorsqu’un installateur est lancé depuis une application Windows empaquetée,
+`%LOCALAPPDATA%` peut être redirigé dans son espace privé. Sur le poste de
+développement, passer `/D=C:\Users\Lucas\Apps\FlowTranslate` en dernier argument
+NSIS évite cette ambiguïté. Utiliser ensuite le chemin réellement installé dans
+les commandes de lancement ; ne pas déduire sa visibilité depuis le seul shell Codex.
+
 Prérequis de développement : Node.js 24, Rust stable, outils de compilation
 MSVC et Windows SDK, Microsoft Edge WebView2 Runtime. Les dépendances sont
 verrouillées dans `package-lock.json` et `src-tauri/Cargo.lock`.
