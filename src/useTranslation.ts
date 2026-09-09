@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
-import { layoutForText } from './layout';
 import { initialTranslationState, translationReducer } from './reducer';
 import type { Capture, Language, Mode, Settings, StreamEvent } from './types';
 
@@ -53,7 +52,7 @@ export function useTranslation(readyOnMount = false) {
     captureRef.current = capture;
     closingRef.current = null;
     setClosingCaptureId(null);
-    dispatch({ type: 'CAPTURE', capture, layout: layoutForText(capture.text) });
+    dispatch({ type: 'CAPTURE', capture });
     if (capture.source === 'selection') start(capture);
   }, [discardPending, start]);
 

@@ -1,5 +1,5 @@
 import type { Capture, Language, Mode, StreamEvent } from './types';
-import type { TextLayout } from './layout';
+import { compactLayout, type TextLayout } from './layout';
 
 export type TranslationState = {
   capture: Capture | null;
@@ -11,15 +11,14 @@ export type TranslationState = {
   error: string | null;
   replacementValid: boolean;
   invalidated: boolean;
-  enlarged: boolean;
   comparing: boolean;
   layout: TextLayout;
 };
 
 export const initialTranslationState: TranslationState = {
   capture: null, requestId: null, targetLanguage: 'fr', mode: 'quality', result: '',
-  phase: 'idle', error: null, replacementValid: false, invalidated: false, enlarged: false, comparing: false,
-  layout: { presentation: 'contextual', bodyHeight: 76 },
+  phase: 'idle', error: null, replacementValid: false, invalidated: false, comparing: false,
+  layout: compactLayout,
 };
 
 export type Action =
@@ -30,13 +29,12 @@ export type Action =
   | { type: 'INVALIDATE'; message: string }
   | { type: 'CANCEL' }
   | { type: 'DISMISS' }
-  | { type: 'TOGGLE_ENLARGE' }
   | { type: 'TOGGLE_COMPARE' };
 
 export function translationReducer(state: TranslationState, action: Action): TranslationState {
   switch (action.type) {
     case 'CAPTURE':
-      return { ...state, capture: action.capture, requestId: null, result: '', error: null, enlarged: false, comparing: false,
+      return { ...state, capture: action.capture, requestId: null, result: '', error: null, comparing: false,
         replacementValid: false, invalidated: false, layout: action.layout ?? initialTranslationState.layout, phase: action.capture.source === 'clipboard' ? 'confirming' : 'idle' };
     case 'LAYOUT': return action.captureId === state.capture?.id ? { ...state, layout: action.layout } : state;
     case 'START':
@@ -52,7 +50,6 @@ export function translationReducer(state: TranslationState, action: Action): Tra
     case 'DISMISS': return { ...initialTranslationState };
     case 'CANCEL':
       return state.phase === 'streaming' ? { ...state, requestId: null, phase: 'cancelled', replacementValid: false } : state;
-    case 'TOGGLE_ENLARGE': return { ...state, enlarged: !state.enlarged };
     case 'TOGGLE_COMPARE': return { ...state, comparing: !state.comparing };
     default: return state;
   }

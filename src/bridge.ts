@@ -7,7 +7,7 @@ type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invali
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false,
+  targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false, connectionExpanded: false,
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -36,7 +36,7 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   if (name === 'save_settings') { demoSettings = structuredClone(args?.settings as Settings); emit('settings-changed', demoSettings); return undefined as T; }
   if (name === 'capture_text') return structuredClone(demoCapture) as T;
   if (name === 'frontend_ready') return null as T;
-  if (name === 'check_connection') return { connected: demoScenario !== 'error', message: demoScenario === 'error' ? 'Démo : serveur indisponible.' : 'Démo : connexion simulée.' } as T;
+  if (name === 'check_connection') { await new Promise(resolve => window.setTimeout(resolve, 38)); return { connected: demoScenario !== 'error', message: demoScenario === 'error' ? 'Démo : serveur indisponible.' : 'Démo : connexion simulée.' } as T; }
   if (name === 'get_history') return structuredClone(demoHistory) as T;
   if (name === 'delete_history') { const id = args?.id as string | null; demoHistory = id === null ? [] : demoHistory.filter(item => item.id !== id); return undefined as T; }
   if (name === 'translate') {
@@ -84,6 +84,9 @@ export const bridge = {
     if (native) { const { getCurrentWindow } = await import('@tauri-apps/api/window'); return getCurrentWindow().close(); }
     location.assign('/');
   },
+  resizeSettings: (height: number) => command<void>('resize_settings', { height }),
+  dragSettings: () => command<void>('drag_settings'),
+  quit: () => command<void>('quit_app'),
   translate: (request: TranslationRequest) => command<void>('translate', { request }),
   cancel: (requestId: string) => command<void>('cancel_translation', { requestId }),
   copy: (requestId: string) => command<void>('copy_result', { requestId }),
