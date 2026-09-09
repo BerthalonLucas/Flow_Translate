@@ -1,6 +1,9 @@
 //! Windows geometry only: UIA rectangles and Win32 placement stay physical.
 use crate::types::Rect;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::{
+    sync::{atomic::{AtomicBool, AtomicIsize, Ordering}, LazyLock, Mutex},
+    time::Instant,
+};
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
@@ -45,6 +48,25 @@ static SOURCE:AtomicIsize=AtomicIsize::new(0);
 static OVERLAY:AtomicIsize=AtomicIsize::new(0);
 static CAPSULE:AtomicIsize=AtomicIsize::new(0);
 
+#[derive(Clone, Copy)]
+pub struct DragGesture {
+    pub dx: i32,
+    pub dy: i32,
+    pub button_down: bool,
+}
+struct MouseGesture {
+    started: Option<Instant>,
+    start: POINT,
+    current: POINT,
+    button_down: bool,
+}
+static MOUSE_GESTURE: LazyLock<Mutex<MouseGesture>> = LazyLock::new(|| Mutex::new(MouseGesture {
+    started: None,
+    start: POINT::default(),
+    current: POINT::default(),
+    button_down: false,
+}));
+
 pub fn escape_scope(source:isize,overlay:isize,capsule:isize){
     SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);CAPSULE.store(capsule,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
 }
@@ -53,7 +75,7 @@ pub fn take_escape()->bool{ESCAPE_PENDING.swap(false,Ordering::AcqRel)}
 pub fn handle(window:&WebviewWindow)->isize{window.hwnd().map(|h|h.0 as isize).unwrap_or(0)}
 
 pub fn install_escape_hook()->Result<(),String>{
-    use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,WH_KEYBOARD_LL,WM_KEYDOWN,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
+    use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,MSLLHOOKSTRUCT,WH_KEYBOARD_LL,WH_MOUSE_LL,WM_KEYDOWN,WM_LBUTTONDOWN,WM_LBUTTONUP,WM_MOUSEMOVE,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
     unsafe extern "system" fn keyboard(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
         if code>=0&&OVERLAY_VISIBLE.load(Ordering::Acquire){
             let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
@@ -65,9 +87,61 @@ pub fn install_escape_hook()->Result<(),String>{
         }
         unsafe{CallNextHookEx(None,code,wparam,lparam)}
     }
+    unsafe extern "system" fn mouse(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0 {
+            let event=unsafe{&*(lparam.0 as *const MSLLHOOKSTRUCT)};
+            if let Ok(mut gesture)=MOUSE_GESTURE.lock(){
+                match wparam.0 as u32 {
+                    WM_LBUTTONDOWN=>{
+                        gesture.started=Some(Instant::now());gesture.start=event.pt;gesture.current=event.pt;gesture.button_down=true;
+                    }
+                    WM_MOUSEMOVE if gesture.button_down=>gesture.current=event.pt,
+                    WM_LBUTTONUP if gesture.started.is_some()=>{gesture.current=event.pt;gesture.button_down=false;}
+                    _=>{}
+                }
+            }
+        }
+        unsafe{CallNextHookEx(None,code,wparam,lparam)}
+    }
     unsafe{
         let module=GetModuleHandleW(None).map_err(|_|"Module clavier indisponible.".to_string())?;
         SetWindowsHookExW(WH_KEYBOARD_LL,Some(keyboard),Some(HINSTANCE(module.0)),0).map_err(|_|"La gestion d’Échap est indisponible.".to_string())?;
+        // Drag still has a safe Tao fallback if the optional mouse hook is unavailable.
+        let _=SetWindowsHookExW(WH_MOUSE_LL,Some(mouse),Some(HINSTANCE(module.0)),0);
+    }
+    Ok(())
+}
+
+pub fn take_drag_gesture() -> Option<DragGesture> {
+    let mut gesture = MOUSE_GESTURE.lock().ok()?;
+    let started = gesture.started.take()?;
+    if started.elapsed() > std::time::Duration::from_millis(1500) {
+        return None;
+    }
+    Some(DragGesture {
+        dx: gesture.current.x - gesture.start.x,
+        dy: gesture.current.y - gesture.start.y,
+        button_down: gesture.button_down,
+    })
+}
+
+pub fn compensate_drag(window: &WebviewWindow, gesture: DragGesture) -> Result<(), String> {
+    if gesture.dx == 0 && gesture.dy == 0 {
+        return Ok(());
+    }
+    let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
+    let rect = window_rect(hwnd.0 as isize).ok_or_else(|| "Fenêtre indisponible.".to_string())?;
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            rect.x.round() as i32 + gesture.dx,
+            rect.y.round() as i32 + gesture.dy,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER,
+        )
+        .map_err(|_| "Déplacement indisponible.".to_string())?;
     }
     Ok(())
 }

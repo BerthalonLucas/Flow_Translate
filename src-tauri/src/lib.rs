@@ -513,7 +513,14 @@ fn start_drag(
         i.dragging = true;
         capture_id
     };
-    if let Err(_) = window.start_dragging() {
+    let gesture = host::take_drag_gesture();
+    if let Some(gesture) = gesture {
+        if let Err(error) = host::compensate_drag(&window, gesture) {
+            state.inner.lock().map_err(|_| lock_error())?.dragging = false;
+            return Err(error);
+        }
+    }
+    if gesture.is_none_or(|gesture| gesture.button_down) && window.start_dragging().is_err() {
         state.inner.lock().map_err(|_| lock_error())?.dragging = false;
         return Err("Déplacement indisponible.".into());
     }
@@ -827,6 +834,12 @@ pub fn run() {
                             .color(Color(29, 31, 36, 30))
                             .build(),
                     );
+                    let window = w.clone();
+                    w.on_window_event(move |event| {
+                        if matches!(event, tauri::WindowEvent::Focused(_)) {
+                            let _ = host::strip_chrome(&window);
+                        }
+                    });
                 }
             }
             if let Some(w) = app.get_webview_window("settings") {
