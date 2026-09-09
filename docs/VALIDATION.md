@@ -20,6 +20,14 @@
 
 ## Pending actual runtime evidence
 
+### Follow-up 2026-09-09 — 0.1.1
+
+- Reproduced the user's overlapping Windows caption in a real 280 px native capture.
+- Revised the text/action layout; all six React tests and twelve browser tests pass. The short reference translation now occupies two lines at 280×76 px. Astra reviewed the browser render against the approved mockup.
+- Native patch strips caption/frame styles and adds manual drag placement retained across result resizing. Fifteen Rust tests pass, including work-area clamping with a negative monitor origin.
+- Built the 0.1.1 NSIS installer and installed it successfully at `C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe` (file version 0.1.1). Computer Use identifies the running process at this exact path. The previous process was actually located under `AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\FlowTranslate`, explaining the mismatch with the user's ordinary PowerShell.
+- Final capture returned a black 280×76 surface while UI Automation still exposed the translation/buttons. Activation failed with `GetCursorPos failed: Accès refusé (0x80070005)`. User was asked to make the desktop available; native visual/drag acceptance is pending, not assumed from successful compilation.
+
 - Interactive recheck of focus, clipboard preservation, replacement, rapid Escape, desktop translucency/acrylic and resize transitions.
 - Edge and Chrome selection + editable fields; Word paragraphs; Outlook classic/new; Teams web/desktop. Explicitly record version and capture/replacement support per app, never infer universal support from UI Automation availability.
 - Multiple monitors/negative origins and mixed100/125/150/200% DPI.

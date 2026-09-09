@@ -29,3 +29,11 @@ Record application version, Windows scaling, screen configuration and pass/fail 
 | Installer then restart | App available, no autostart without opt-in | Not run |
 
 Acceptance is not based solely on a screenshot: verify selection identity, focus and actual clipboard contents before/after. Close only windows launched for this test, and never stop unrelated workloads.
+# Régression 0.1.1 : cadre et déplacement
+
+- Dans la vraie fenêtre Tauri, vérifier l’absence de barre de titre au premier affichage, après focus et après Agrandir/Réduire.
+- Faire glisser le texte et le fond : la bulle suit la souris et reste à sa nouvelle position après ouverture du menu et pendant le streaming.
+- Vérifier que Copier et Plus d’options ne déclenchent pas un déplacement ; faire défiler un texte long avec la molette et la barre.
+- Fermer avec Échap pendant un déplacement ne doit pas réafficher la fenêtre au relâchement.
+- Capturer un nouveau texte doit rétablir l’ancrage contextuel ; changer de moniteur doit conserver une bulle visible à la bonne échelle.
+- Vérifier le lancement depuis le PowerShell de l’utilisateur avec le chemin réellement installé, hors redirection privée de Codex.

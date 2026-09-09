@@ -1,4 +1,16 @@
-# 0.1.0 — aperçu V1
+# 0.1.1 — bulle compacte et déplaçable
+
+Correction du cadre Windows qui recouvrait la traduction. Le texte utilise
+désormais toute la largeur et les petites actions suivent sa dernière ligne.
+Faire glisser le texte ou le fond pour déplacer la bulle ; les boutons et les
+barres de défilement gardent leur interaction. La position choisie reste en
+place pendant le streaming et les changements de taille du résultat courant.
+
+Le poste de développement utilise désormais un chemin explicite :
+`C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe`, afin d’éviter la
+redirection de LocalAppData par l’environnement Codex.
+
+## Fonctionnalités de l’aperçu V1
 
 Premier client Windows installable : interface Tauri contextuelle, bulle 280 px,
 capsule presse-papiers avec confirmation, réglages, profils, raccourci global,
