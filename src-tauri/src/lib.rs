@@ -827,6 +827,12 @@ pub fn run() {
                             .color(Color(29, 31, 36, 30))
                             .build(),
                     );
+                    let window = w.clone();
+                    w.on_window_event(move |event| {
+                        if matches!(event, tauri::WindowEvent::Focused(_)) {
+                            let _ = host::strip_chrome(&window);
+                        }
+                    });
                 }
             }
             if let Some(w) = app.get_webview_window("settings") {
