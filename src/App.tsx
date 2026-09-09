@@ -4,7 +4,7 @@ import { Icon, SettingSwitch, useFade } from './ui';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
 import { useTranslation } from './useTranslation';
-import type { Capture, HistoryEntry, Language, Mode, Settings } from './types';
+import type { Capture, ConnectionStatus, HistoryEntry, Language, Mode, Settings } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Alex,\n\nThank you for your feedback. The updated proposal includes the delivery timeline, responsibilities, and payment terms. Could you confirm these details before Thursday?\n\nWe have kept the total budget unchanged and clarified the review process. Please check the dates and amounts before we share the final version with the team.\n\nBest regards,\nMarie' };
@@ -32,19 +32,38 @@ function SettingsWindow() {
   const [checking, setChecking] = useState<Mode | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [advanced, setAdvanced] = useState(false);
-  useEffect(() => { void bridge.getSettings().then(setSettings).catch(() => setNotice('Les réglages sont indisponibles.')); void bridge.getHistory().then(setHistory).catch(() => undefined); }, []);
-  if (!settings) return <main className="settings-window"><p>Chargement des réglages…</p></main>;
+  const [loadError, setLoadError] = useState(false);
+  const [connections, setConnections] = useState<Partial<Record<Mode, ConnectionStatus & { signature: string }>>>({});
+  const loadSettings = () => { setLoadError(false); void bridge.getSettings().then(setSettings).catch(() => setLoadError(true)); };
+  useEffect(() => { loadSettings(); void bridge.getHistory().then(setHistory).catch(() => undefined); }, []);
+  if (!settings) return <main className="settings-window"><h1>Réglages</h1><p role={loadError ? 'alert' : 'status'}>{loadError ? 'Les réglages sont indisponibles. Réessayez ou redémarrez FlowTranslate.' : 'Chargement des réglages…'}</p>{loadError && <button className="primary-action" onClick={loadSettings}>Réessayer</button>} <button className="quiet-action" onClick={() => void bridge.closeSettings()}>Fermer</button></main>;
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings({ ...settings, [key]: value });
   const profile = (mode: Mode, key: 'endpoint' | 'model' | 'apiKey', value: string) => setSettings({ ...settings, profiles: { ...settings.profiles, [mode]: { ...settings.profiles[mode], [key]: value } } });
-  const save = async () => { try { await bridge.saveSettings(settings); setNotice('Réglages enregistrés sur cet appareil.'); return true; } catch { setNotice('Les réglages n’ont pas été enregistrés.'); return false; } };
-  const check = async (mode: Mode) => { setChecking(mode); try { if (!await save()) return; const result = await bridge.checkConnection(mode); setNotice(result.message); } catch { setNotice('La vérification a échoué.'); } finally { setChecking(null); } };
+  const save = async () => { try { await bridge.saveSettings(settings); setNotice('Réglages enregistrés sur cet appareil.'); return true; } catch (error) { setNotice(typeof error === 'string' ? error : 'Les réglages n’ont pas été enregistrés. Vérifiez les adresses, modèles et raccourci.'); return false; } };
+  const check = async (mode: Mode) => {
+    const signature = JSON.stringify(settings.profiles[mode]);
+    setChecking(mode);
+    setConnections(previous => ({ ...previous, [mode]: undefined }));
+    try {
+      if (!await save()) return;
+      const result = await bridge.checkConnection(mode);
+      setConnections(previous => ({ ...previous, [mode]: { ...result, signature } }));
+      setNotice(`${mode === 'quality' ? 'Qualité' : 'Rapide'} : ${result.message}`);
+    } catch {
+      setConnections(previous => ({ ...previous, [mode]: { connected: false, message: 'Vérification impossible. Démarrez le serveur puis vérifiez la connexion avancée.', signature } }));
+      setNotice('Réglages enregistrés. La vérification de connexion a échoué.');
+    } finally { setChecking(null); }
+  };
+  const activeConnection = connections[settings.mode];
+  const verified = activeConnection?.signature === JSON.stringify(settings.profiles[settings.mode]) ? activeConnection : undefined;
   const removeHistory = async (id: string | null) => { try { await bridge.deleteHistory(id); setHistory(await bridge.getHistory()); } catch { setNotice('La suppression a échoué.'); } };
   return <main className="settings-window">
     <header><div><span className="product-mark">FlowTranslate</span><h1>Réglages</h1></div><button className="close-settings" onClick={() => void bridge.closeSettings()} aria-label="Fermer"><Icon name="close" /></button></header>
     <section><h2>Traduction</h2><div className="setting-grid"><label>Langue cible<select value={settings.targetLanguage} onChange={e => update('targetLanguage', e.target.value as Language)}><option value="fr">Français</option><option value="en">English</option></select></label><label>Mode par défaut<select value={settings.mode} onChange={e => update('mode', e.target.value as Mode)}><option value="quality">Qualité</option><option value="fast">Rapide</option></select></label><label className="wide">Raccourci<input value={settings.shortcut} onChange={e => update('shortcut', e.target.value)} /></label></div></section>
+    <section className="engine-readiness" aria-label="Connexion du moteur"><div className="profile-heading"><h2>Moteur {settings.mode === 'quality' ? 'Qualité' : 'Rapide'}</h2><button className="text-button" disabled={checking !== null} onClick={() => void check(settings.mode)}>{checking === settings.mode ? 'Vérification…' : 'Enregistrer et vérifier le moteur'}</button></div><p>{bridge.native ? 'Serveur de traduction' : 'Aperçu navigateur · connexion simulée'} · {settings.profiles[settings.mode].model || 'Modèle à renseigner'}</p><p role="status">{checking === settings.mode ? 'Vérification de la disponibilité du modèle…' : verified ? `${verified.connected ? 'Modèle disponible' : 'Connexion indisponible'} : ${verified.message}` : settings.profiles[settings.mode].endpoint ? 'Connexion non vérifiée. Vérifiez le moteur avant votre premier essai.' : 'Adresse du serveur à renseigner dans Connexion avancée.'}</p>{verified && !verified.connected && <p>Démarrez le serveur et vérifiez l’adresse, le modèle et la clé dans Connexion avancée, puis réessayez.</p>}<small>Cette vérification n’envoie aucun texte à traduire.</small></section>
     <section><h2>Sur cet appareil</h2><SettingSwitch label="Conserver l’historique chiffré" checked={settings.historyEnabled} onCheckedChange={checked => update('historyEnabled', checked)} detail={`${history.length} entrée${history.length > 1 ? 's' : ''}`} /><SettingSwitch label="Lancer à l’ouverture de session" checked={settings.autostart} onCheckedChange={checked => update('autostart', checked)} />{settings.historyEnabled && <div className="history"><div className="history-heading"><strong>Historique</strong><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>Tout supprimer</button></div>{history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.mode === 'quality' ? 'Qualité' : 'Rapide'} · {new Date(item.createdAt).toLocaleDateString('fr-FR')}</small></div><button className="icon-button dark-icon" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}</div>}</section>
-    <section className="advanced"><button className="advanced-toggle" onClick={() => setAdvanced(value => !value)} aria-expanded={advanced}>Connexion avancée <Icon name="chevron" /></button>{advanced && <div className="advanced-content">{(['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}><div className="profile-heading"><strong>{mode === 'quality' ? 'Qualité' : 'Rapide'}</strong><button className="text-button" onClick={() => void check(mode)} disabled={checking === mode}>{checking === mode ? 'Vérification…' : 'Enregistrer et vérifier'}</button></div><label>Adresse<input type="url" placeholder="https://serveur.exemple/v1" value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>Modèle<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label><label>Clé API<input type="password" autoComplete="new-password" placeholder="Conservée uniquement par Windows" value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label></div>)}</div>}</section>
-    <footer><span aria-live="polite">{notice}</span><button className="primary-action" onClick={() => void save()}>Enregistrer</button></footer>
+    <section className="advanced"><button className="advanced-toggle" onClick={() => setAdvanced(value => !value)} aria-expanded={advanced}>Connexion avancée <Icon name="chevron" /></button>{advanced && <div className="advanced-content">{(['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}><div className="profile-heading"><strong>{mode === 'quality' ? 'Qualité' : 'Rapide'}</strong><button className="text-button" onClick={() => void check(mode)} disabled={checking !== null}>{checking === mode ? 'Vérification…' : 'Enregistrer et vérifier'}</button></div><label>Adresse<input type="url" placeholder="https://serveur.exemple/v1" value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>Modèle<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label><label>Clé API<input type="password" autoComplete="new-password" placeholder="Conservée uniquement par Windows" value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label></div>)}</div>}</section>
+    <footer><span aria-live="polite">{notice}</span><button className="primary-action" disabled={checking !== null} onClick={() => void save()}>Enregistrer</button></footer>
   </main>;
 }
 
@@ -78,7 +97,7 @@ function OverlayWindow({ standaloneDemo }: { standaloneDemo: boolean }) {
       receiveCapture(capture);
     }
   }, [standaloneDemo, receiveCapture]);
-  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'} data-preview-background={standaloneDemo ? background : undefined}>{initError && <div className="initialization-error"><p>{initError}</p><button className="quiet-action" onClick={() => void bridge.dismiss()}>Fermer</button></div>}{standaloneDemo && <>
+  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'} data-preview-background={standaloneDemo ? background : undefined}>{initError && <div className="initialization-error"><p role="alert">{initError} Relancez l’application si le problème persiste.</p><button className="quiet-action" onClick={() => location.reload()}>Réessayer</button> <button className="quiet-action" onClick={() => void bridge.openSettings()}>Réglages</button> <button className="quiet-action" onClick={() => void bridge.dismiss()}>Fermer</button></div>}{standaloneDemo && <>
     <span className="preview-label">Aperçu navigateur · réponse simulée</span>
     <div className="preview-backgrounds" role="group" aria-label="Fond de l’aperçu">
       {([['light', 'Clair'], ['dark', 'Sombre'], ['color', 'Coloré']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={background === value} onClick={() => setBackground(value)}>{label}</button>)}

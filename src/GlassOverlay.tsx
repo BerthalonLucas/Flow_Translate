@@ -170,8 +170,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: reader ? 'Réduire' : 'Agrandir', disabled: reader && !compactResult, run: changePresentation },
       { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: () => dispatch({ type: 'TOGGLE_COMPARE' }) },
       ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
+      ...(state.phase === 'error' ? [{ label: 'Réessayer', run: () => { if (state.capture) start(state.capture); } }] : []),
       { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming || state.phase === 'confirming', run: () => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); } },
-      { label: 'Réglages', run: () => void bridge.openSettings() },
+      { label: 'Réglages', run: () => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.')) },
       { label: 'Fermer', run: cancelAndDismiss, close: true },
     ]}>
       <div className="translation-bubble" style={{ height: bodyHeight, borderRadius: glass.radius }} onPointerDown={event => dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'))}>
@@ -181,7 +182,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
           <div className="confirmation-actions"><button className="quiet-action" onClick={cancelAndDismiss}>Annuler</button><button className="primary-action" onClick={() => state.capture && start(state.capture)}>Traduire</button></div>
         </div> : <ScrollText streaming={streaming}>
           <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span>{state.capture?.text}</motion.div>}</AnimatePresence>
-          <span className="translation-text">{state.error && !state.result ? <span className="error-copy">{state.error}</span> : state.result || 'Traduction en cours…'}</span>
+          <span className="translation-text">{state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu ⋯.</span> : state.result || 'Traduction en cours…'}</span>
           {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
         </ScrollText>}
       </div>

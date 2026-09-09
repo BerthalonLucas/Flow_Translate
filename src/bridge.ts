@@ -72,7 +72,7 @@ export const bridge = {
   frontendReady: () => command<Capture | null>('frontend_ready'),
   closeSettings: async () => {
     if (native) { const { getCurrentWindow } = await import('@tauri-apps/api/window'); return getCurrentWindow().close(); }
-    history.back();
+    location.assign('/');
   },
   translate: (request: TranslationRequest) => command<void>('translate', { request }),
   cancel: (requestId: string) => command<void>('cancel_translation', { requestId }),
@@ -80,7 +80,10 @@ export const bridge = {
   replace: (requestId: string) => command<void>('replace_result', { requestId }),
   dismiss: () => command<void>('dismiss_overlay'),
   completeDismiss: (captureId: string) => command<void>('complete_overlay_dismiss', { captureId }),
-  openSettings: () => command<void>('open_settings'),
+  openSettings: async () => {
+    if (native) return command<void>('open_settings');
+    location.assign('?window=settings&demo=1');
+  },
   focusOverlay: () => command<void>('focus_overlay'),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
   resize: (width: number, height: number, geometry: OverlayGeometry) => command<void>('resize_overlay', { width, height, ...geometry }),
