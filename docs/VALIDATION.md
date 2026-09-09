@@ -1,5 +1,15 @@
 # Validation evidence
 
+## Integrated 0.1.4 — 2026-09-09
+
+- Refined glass by Astra high: 66% main tint, 68% accessories, shared static 32 px blur, asymmetric edge and inset depth. All approved dimensions and native region contracts preserved. Copy glyphs cross-fade within fixed bounds; menu/feedback use 140 ms fades.
+- Browser visual review on light, dark and colored backgrounds succeeds. Background controls are preview-only. Integrated production build, 7 React tests and 32 Playwright tests pass. Native worktree runs 20 passing Rust tests for the exact one-function native change, which only removes unnecessary `SWP_FRAMECHANGED` calls.
+- Fresh before/after Chromium rendering profile: no >50 ms tasks or >32 ms frame intervals; p95 16.7–16.8 ms after the change. See UI-PERFORMANCE.md for sample limits and raw report paths.
+- NSIS build succeeds; installed executable reports 0.1.4 at `C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe`. Installer exits 0. SHA-256 of `release/FlowTranslate_0.1.4_x64-setup.exe`: `FE5BDBA13487406EF45BFA75C881CC99BFBDFE5B00C0F845C71FBA9974F5E8F3`. Previous installers retained.
+- The pre-existing 0.1.3 demonstration instance was replaced and relaunched as 0.1.4. The installed process responds and accessibility exposes the completed translation and Copy/More controls. One demonstration instance is left running, matching the initial state.
+- Actual native screenshots return a black surface, although accessibility returns text. Activation still fails with `GetCursorPos ... Accès refusé (0x80070005)`. Native visual smoothness/acrylic cannot be certified from this pass. No per-frame native alpha animation was added; DWM backdrop and WebView opacity remain distinct.
+- Reproducible browser preview recording saved at `release/material-preview-0.1.4/transitions.webm`; synthetic text only. No new dependencies or inference activity.
+
 ## Integrated 0.1.3 — 2026-09-09
 
 - Approved design C implemented by Astra high, native integration by Sol, reviewed and integrated on `feat/glass-reader`.

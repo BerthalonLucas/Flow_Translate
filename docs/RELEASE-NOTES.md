@@ -1,4 +1,20 @@
-# 0.1.3 — verre, pilule chevauchante et lecteur bas
+# 0.1.4 — verre plus présent, interactions affinées
+
+Le verre graphite passe de 78 % à 66 % d'opacité, les accessoires à 68 %.
+Un bord asymétrique et des reflets intérieurs discrets donnent du relief sans
+modifier la taille de la bulle. Le menu et la pilule partagent le même matériau.
+
+Les retours visuels et le menu utilisent des fondus courts ; les icônes de copie
+se croisent dans une zone fixe. Le flou et les ombres restent statiques. Windows
+ne recalcule plus le cadre à chaque changement de géométrie lorsque le style
+de la fenêtre est déjà correct. Les mouvements réduits restent respectés.
+
+L'aperçu navigateur permet de comparer les fonds clair, sombre et coloré.
+Les contrôles de fond appartiennent uniquement à cet aperçu. Le fondu acrylique
+du compositeur Windows demeure distinct des animations du WebView ; les preuves
+et limites de la recette sont dans VALIDATION.md.
+
+## 0.1.3 — verre, pilule chevauchante et lecteur bas
 
 Référence visuelle : planche C validée par Lucas. La traduction dispose de sa
 propre surface de verre graphite ; Copier et Plus sont réunis dans une petite

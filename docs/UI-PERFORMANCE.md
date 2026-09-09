@@ -1,4 +1,30 @@
-# Profil de rendu — 0.1.3
+# Profil de rendu
+
+## 0.1.4 — raffinement du matériau
+
+Même protocole Chromium 153.0.8010.12 et viewport 1280 × 800, exécuté le
+9 septembre après la fin des tests et de la compilation. Les rapports bruts
+sont conservés dans `release/ui-profile-0.1.3-before.json` et
+`release/ui-profile-0.1.4-after.json`, hors du nettoyage Playwright.
+
+| Scénario / mouvements | p95 avant → après | Tâches >50 ms après | Intervalles >32 ms après | Temps de layout avant → après |
+|---|---:|---:|---:|---:|
+| Court / normaux | 16,8 → 16,7 ms | 0 | 0 | 8,93 → 8,99 ms |
+| Long / normaux | 16,8 → 16,7 ms | 0 | 0 | 12,34 → 12,26 ms |
+| Court / réduits | 16,8 → 16,7 ms | 0 | 0 | 8,35 → 8,53 ms |
+| Long / réduits | 16,8 → 16,8 ms | 0 | 0 | 11,85 → 12,72 ms |
+
+Aucune rupture de cadence dans ces quatre parcours courts. Les temps JS sont
+légèrement supérieurs dans ce passage (163/197 ms contre 154/190 ms en mode
+normal) ; ces échantillons uniques ne permettent pas de conclure à un gain
+ou une régression statistique. Le profil ne mesure pas le compositeur Windows.
+
+`scripts/capture-ui-preview.mjs` enregistre les composants réels du navigateur
+avec une traduction simulée : copie, menu, agrandissement, réduction et fermeture.
+Le fichier local `release/material-preview-0.1.4/transitions.webm` est un aperçu
+visuel, pas une mesure de FPS natif.
+
+## 0.1.3
 
 Mesuré le 9 septembre 2026 avec `scripts/profile-ui.mjs`. Chromium headless
 153.0.8010.12, viewport 1280 × 800, échelle 1, réponses simulées. Un passage par
