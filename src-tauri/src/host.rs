@@ -213,6 +213,7 @@ pub fn show(
         let region = make_region(width, height, radius, regions, scale);
         if SetWindowRgn(hwnd, Some(region), true) == 0 {
             let _ = DeleteObject(region.into());
+            return Err("Découpe de la fenêtre indisponible.".into());
         }
     }
     Ok(())
