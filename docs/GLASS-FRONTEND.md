@@ -36,7 +36,7 @@ The first geometry is published synchronously from `useLayoutEffect`, including 
 
 ## Preview and verification
 
-Use the dedicated worktree server on port 5176:
+Run `npm run dev` in the integrated repository (port 5173):
 
 - `/?window=overlay&demo=1`: contextual selection.
 - `/?window=overlay&demo=1&scenario=long`: reader chosen from a long source.

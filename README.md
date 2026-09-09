@@ -29,10 +29,12 @@ Pour examiner le rendu natif sans GPU :
 ```powershell
 FlowTranslate.exe --demo-selection
 FlowTranslate.exe --demo-clipboard
+FlowTranslate.exe --demo-long
 ```
 
-La bulle se déplace en faisant glisser son texte ou son fond. Les boutons restent
-cliquables et la molette fait défiler les textes longs. Un déplacement manuel
+La bulle se déplace en faisant glisser ses marges. Le texte reste sélectionnable,
+les boutons cliquables et la molette fait défiler les textes longs sans barre
+visible. Les textes longs passent dans le lecteur bas, plus large. Un déplacement manuel
 reste valable pour le résultat courant ; la capture suivante retrouve son ancrage.
 
 Sur le poste de développement de Lucas, le lancement utilise un dossier explicite

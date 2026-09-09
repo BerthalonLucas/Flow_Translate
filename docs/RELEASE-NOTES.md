@@ -1,4 +1,21 @@
-# 0.1.2 — composants éprouvés et boucle de revue visuelle
+# 0.1.3 — verre, pilule chevauchante et lecteur bas
+
+Référence visuelle : planche C validée par Lucas. La traduction dispose de sa
+propre surface de verre graphite ; Copier et Plus sont réunis dans une petite
+pilule à cheval sur le bord supérieur droit. Les textes longs utilisent un
+lecteur plus large en bas du moniteur, sans barre de défilement visible.
+
+Les transitions utilisent Motion et respectent les mouvements réduits. Le
+texte reste net : pas d'étirement ou d'animation du flou. La fermeture annule
+immédiatement la traduction, puis coordonne la sortie visuelle avec Rust ; un
+délai borné sert de secours. Les régions natives correspondent aux surfaces
+réelles pour laisser passer les clics dans les espaces transparents.
+
+Les preuves de compilation, tests, rendu et mesures sont consignées dans
+VALIDATION.md. Un profil Chromium synthétique ne prouve pas la fluidité du
+compositeur Windows et le dépoli doit être vérifié dans la fenêtre Tauri.
+
+## 0.1.2 — composants éprouvés et boucle de revue visuelle
 
 Le frontend est confié à Astra avec un effort de raisonnement medium ou supérieur.
 Motion anime les apparitions et retours visuels, Radix fournit les menus et

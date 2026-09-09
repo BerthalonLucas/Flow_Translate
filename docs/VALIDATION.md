@@ -1,5 +1,19 @@
 # Validation evidence
 
+## Integrated 0.1.3 — 2026-09-09
+
+- Approved design C implemented by Astra high, native integration by Sol, reviewed and integrated on `feat/glass-reader`.
+- Production frontend build succeeds: main JavaScript 436.21 kB (140.80 kB gzip), CSS 13.00 kB. Dependencies remain pinned; Motion/Radix/Lucide reused.
+- Integrated checks: 7 React unit tests, 30 Playwright tests and 20 Rust tests pass. Browser checks include 100/125/150/200% device scale, menu anchoring, full long text via wheel/keyboard, reduced motion, source-driven reader layout, 120 delta fragments without extra streaming resize, and new capture during dismissal/presentation transitions. Browser IPC fixtures do not execute Win32.
+- Browser visual review at 1280×720: 280 px glass with overlapping pill, independent context menu, bottom reader and menu above it. Measured long reading region remains `{x:385,y:435,width:510,height:234}` before/after menu opening. Fixed a context-preview menu position jump and playground controls covering the glass.
+- Bounded rendering measurements are recorded in [UI-PERFORMANCE.md](UI-PERFORMANCE.md): p95 frame intervals 16.7–16.8 ms, no >32 ms intervals and no >50 ms tasks in four synthetic Chromium runs. Not native Windows FPS or GPU evidence.
+- NSIS release build succeeds. Silent installation returns 0; installed executable at `C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe` reports version 0.1.3.
+- Installer: `release/FlowTranslate_0.1.3_x64-setup.exe`, SHA-256 `1507EE629B64DE773BD86E6AAC2D9068B20CD337E7166A32D0EEF5B5B32897D4`. The previous 0.1.2 installer is retained for rollback. No settings schema change.
+- Actual installed `--demo-selection` and `--demo-long` instances both respond and expose completed translation text plus Copy/More through Windows accessibility. Only one test instance was running at a time; both were stopped after inspection, leaving no overlay behind.
+- Native screenshot failed twice after fresh window selection: `IGraphicsCaptureItemInterop.CreateForMonitor ... 0x80070057`. Keyboard activation also failed: `GetCursorPos ... Accès refusé (0x80070005)`. No native visual, drag, click-through, focus or Escape acceptance is claimed from this pass. These checks remain pending; no stale coordinates were used.
+- CSS opacity animates the WebView; the separate Win32 acrylic backdrop can remain visible until native hide. Native dimension/movement interpolation is not implemented. Mixed-DPI/native compositing smoothness remains unverified.
+- No inference workload was started or interrupted in this frontend milestone.
+
 ## Integrated 0.1.2 — 2026-09-09
 
 - Astra high owns the frontend; minimum medium routing is recorded in AGENTS.md.
