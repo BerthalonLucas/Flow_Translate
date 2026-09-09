@@ -22,6 +22,8 @@ try {
     $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $projectRoot "release\native-profiles\$([guid]::NewGuid())"
     $env:FLOWTRANSLATE_CDP_URL = "http://127.0.0.1:$Port"
     $testProcess = Start-Process -FilePath $resolvedExe -ArgumentList '--demo-selection' -WindowStyle Hidden -PassThru
+    # The probe inspects the HWNDs of this process only (scripts/inspect-native-windows.ps1).
+    $env:FLOWTRANSLATE_TEST_PID = "$($testProcess.Id)"
     $ready = $false
     for ($attempt = 0; $attempt -lt 40; $attempt++) {
         try { $null = Invoke-RestMethod "$env:FLOWTRANSLATE_CDP_URL/json/version" -TimeoutSec 1; $ready = $true; break } catch { Start-Sleep -Milliseconds 250 }

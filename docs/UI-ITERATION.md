@@ -12,6 +12,19 @@ revue des images produites ; elles décrivent le nouveau design, pas une validat
 Lucas. Le rendu Windows (acrylique réel, contraste sur page blanche, DPI 125/150 %,
 fenêtre Réglages sans cadre) reste à observer sur le bureau.
 
+## Retour en conditions réelles du 10 septembre 2026
+
+Lucas a testé l’exécutable du 09-09 : la bulle et la capsule affichaient un titre
+« FlowTranslate » en haut à gauche et des coins carrés, avec le texte brut de reqwest
+(« error sending request for url … ») pour un serveur Qualité arrêté. Ce n’est pas le
+mode démo : c’est UI-007 (registre), reproduit avec `scripts/inspect-native-windows.ps1`
+sur le build démo (`--demo-clipboard`, CDP). Le clic sur la capsule appelait `show()`
+de Tao, dont la reconstruction différée des styles remet WS_CAPTION et fait perdre la
+région ; `host::hide` repassait aussi par Tao. Correctif : activation, masquage et
+réparation au niveau HWND (`host::activate`, `host::repair_handle`), et message
+d’erreur réseau lisible (`inference::unreachable_message`). Le probe natif vérifie
+maintenant styles et région après affichage et après `focus_overlay`.
+
 ## Correction de méthode après retour de Lucas
 
 L’entrée par défaut de `/lab.html` est désormais la liste des **défauts signalés**,

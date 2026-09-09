@@ -116,7 +116,7 @@ where
     if cancel.is_cancelled() {
         return Err("Traduction annulée.".into());
     }
-    let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|format!("Connexion au serveur impossible: {e}"))?};
+    let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|unreachable_message(&profile.endpoint, &e))?};
     if !response.status().is_success() {
         return Err(format!(
             "Le serveur a répondu HTTP {}.",
@@ -163,6 +163,27 @@ where
     Ok(result)
 }
 
+/// The raw reqwest text names the full URL and the transport; the glass only
+/// needs the host and what to do about it.
+fn unreachable_message(endpoint: &str, error: &reqwest::Error) -> String {
+    let target = reqwest::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_string(),
+            })
+        })
+        .unwrap_or_else(|| "configuré".to_string());
+    if error.is_timeout() {
+        format!("Le serveur {target} ne répond pas.")
+    } else if error.is_connect() {
+        format!("Serveur {target} injoignable. Démarrez-le ou changez de profil dans les Réglages.")
+    } else {
+        format!("Connexion au serveur {target} impossible.")
+    }
+}
+
 pub async fn check(profile: &Profile) -> Result<(), String> {
     let endpoint = api_url(&profile.endpoint, "models")?;
     let client = reqwest::Client::builder()
@@ -177,7 +198,7 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
     let response = req
         .send()
         .await
-        .map_err(|_| "Serveur injoignable.".to_string())?;
+        .map_err(|e| unreachable_message(&profile.endpoint, &e))?;
     if !response.status().is_success() {
         return Err(format!(
             "Le serveur a répondu HTTP {}.",

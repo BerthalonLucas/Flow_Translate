@@ -16,7 +16,7 @@ const defects = [
     image: 'residual-reported.png',
     observed: 'Une grande surface grise reste visible au-dessus de la capsule, même sans texte.',
     steps: ['Lancer la vraie fenêtre Tauri en démo.', 'Afficher une traduction, ouvrir puis fermer le menu, fermer la traduction.', 'Contrôler la visibilité des fenêtres natives et leur composition sur le bureau.'],
-    cause: 'Établie pour la fermeture : host::show affiche le HWND via SetWindowPos(SWP_SHOWWINDOW) sans passer par Tao, dont le cache de visibilité rend ensuite window.hide() sans effet. Correctif host::hide (Tauri puis ShowWindow SW_HIDE). La composition du fond gris sur le bureau n’est pas encore mesurée.',
+    cause: 'Établie pour la fermeture : host::show affiche le HWND via SetWindowPos(SWP_SHOWWINDOW) sans passer par Tao, dont le cache de visibilité rend ensuite window.hide() sans effet. Correctif host::hide (ShowWindow SW_HIDE au niveau HWND, sans repasser par Tao dont le rebuild des styles rétablit WS_CAPTION). La composition du fond gris sur le bureau n’est pas encore mesurée.',
     boundary: 'Le probe natif (npm run ui:native) prouve la fermeture des HWND sur trois cycles ; il ne mesure ni le dépoli ni un éventuel résidu de composition. Dessiner un rectangle gris en CSS ne reproduirait pas ce défaut.',
     scenario: null,
   },

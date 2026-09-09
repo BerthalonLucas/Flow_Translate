@@ -590,10 +590,7 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
     let w = app
         .get_webview_window("overlay")
         .ok_or_else(|| "Traduction indisponible.".to_string())?;
-    w.show()
-        .and_then(|_| w.set_focus())
-        .map_err(|_| "Activation de la traduction impossible.".to_string())?;
-    host::strip_chrome(&w)?;
+    host::activate(&w)?;
     let (current, should_hide) = {
         let state = app.state::<AppState>();
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -607,7 +604,7 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
     };
     if !current {
         if should_hide {
-            let _ = w.hide();
+            let _ = host::hide(&w);
         }
         return Err("La capture n’est plus active.".into());
     }
@@ -1067,7 +1064,7 @@ pub fn run() {
                     w.on_window_event(move |event| {
                         if matches!(event, tauri::WindowEvent::Focused(_)) {
                             tauri::async_runtime::spawn_blocking(move || {
-                                let _ = host::strip_chrome_handle(native);
+                                let _ = host::repair_handle(native);
                             });
                         }
                     });

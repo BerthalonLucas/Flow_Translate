@@ -1,19 +1,21 @@
 //! Windows geometry only: UIA rectangles and Win32 placement stay physical.
 use crate::types::{Rect, SurfaceRegion};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::Mutex;
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{
         ClientToScreen, CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject,
-        GetMonitorInfoW, MonitorFromPoint, SetWindowRgn, HRGN, MONITORINFO,
-        MONITOR_DEFAULTTONEAREST, RGN_OR,
+        GetMonitorInfoW, GetWindowRgnBox, MonitorFromPoint, SetWindowRgn, HRGN, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, RGN_ERROR, RGN_OR,
     },
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         WindowsAndMessaging::{
-            GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW, ShowWindow, SW_HIDE,
+            GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
+            SetForegroundWindow, SetWindowLongPtrW, ShowWindow, SW_HIDE,
             SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
             SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
             WS_SYSMENU, WS_THICKFRAME,
@@ -192,14 +194,65 @@ pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
     )
 }
 
+// The overlay and the capsule never go through Tao's show()/hide(): show() uses
+// SetWindowPos directly so the source keeps its focus, and any later Tao
+// visibility diff rebuilds the styles with WS_CAPTION | WS_SYSMENU (Tao 0.35
+// `WindowFlags::apply_diff`), which DWM then paints as a « FlowTranslate » title
+// over the acrylic backdrop and which drops the window region. Every visibility
+// and focus change therefore stays at the HWND boundary, and `repair_handle`
+// restores the silhouette whenever Tao or Windows touched the frame anyway.
+#[derive(Clone)]
+struct Surface {
+    width: u32,
+    height: u32,
+    radius: f64,
+    regions: Vec<SurfaceRegion>,
+    scale: f64,
+}
+
+static SURFACES: Mutex<Vec<(isize, Surface)>> = Mutex::new(Vec::new());
+
+fn remember_surface(handle: isize, surface: Surface) {
+    if let Ok(mut surfaces) = SURFACES.lock() {
+        match surfaces.iter_mut().find(|(known, _)| *known == handle) {
+            Some(entry) => entry.1 = surface,
+            None => surfaces.push((handle, surface)),
+        }
+    }
+}
+
+fn remembered_surface(handle: isize) -> Option<Surface> {
+    SURFACES
+        .lock()
+        .ok()
+        .and_then(|surfaces| surfaces.iter().find(|(known, _)| *known == handle).map(|(_, surface)| surface.clone()))
+}
+
 pub fn hide(window: &WebviewWindow) -> Result<(), String> {
-    // show() uses SWP_SHOWWINDOW to preserve source focus. Tao's cached VISIBLE
-    // flag may consequently still be false; window.hide() alone then does
-    // nothing (WindowFlags::apply_diff returns early). Update both layers.
-    window.hide().map_err(|_| "Fermeture de la fenêtre indisponible.".to_string())?;
     let hwnd = window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?;
     unsafe { let _ = ShowWindow(HWND(hwnd.0), SW_HIDE); }
     Ok(())
+}
+
+/// Brings the already visible overlay to the foreground so the WebView receives
+/// the keyboard, then re-establishes the frameless silhouette.
+pub fn activate(window: &WebviewWindow) -> Result<(), String> {
+    let handle = window
+        .hwnd()
+        .map_err(|_| "Fenêtre indisponible.".to_string())?
+        .0 as isize;
+    let hwnd = HWND(handle as *mut _);
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() {
+            return Err("La capture n’est plus active.".into());
+        }
+        // The request comes from a click in the capsule, so this process owns the
+        // foreground and Windows grants the switch; a refusal is not an error.
+        if GetForegroundWindow() != hwnd {
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+    repair_handle(handle)
 }
 
 pub fn show(
@@ -246,6 +299,7 @@ pub fn show(
             let _ = DeleteObject(region.into());
             return Err("Découpe de la fenêtre indisponible.".into());
         }
+        remember_surface(h.0 as isize, Surface { width, height, radius, regions: regions.to_vec(), scale });
     }
     Ok(())
 }
@@ -273,30 +327,37 @@ unsafe fn make_region(width: u32, height: u32, radius: f64, regions: &[SurfaceRe
     }
 }
 
-pub fn strip_chrome(window: &WebviewWindow) -> Result<(), String> {
-    let handle = window
-        .hwnd()
-        .map_err(|_| "Fenêtre indisponible.".to_string())?
-        .0 as isize;
-    strip_chrome_handle(handle)
-}
-
-pub fn strip_chrome_handle(handle: isize) -> Result<(), String> {
+/// Strips any caption Tao rebuilt and restores the last region when Windows
+/// dropped it. Safe from any thread: both calls message the window's thread.
+pub fn repair_handle(handle: isize) -> Result<(), String> {
     let hwnd = HWND(handle as *mut _);
     unsafe {
-        if !strip_chrome_hwnd(hwnd) {
+        if strip_chrome_hwnd(hwnd) {
+            SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            )
+            .map_err(|_| "Fenêtre indisponible.".to_string())?;
+        }
+        if !IsWindowVisible(hwnd).as_bool() {
             return Ok(());
         }
-        SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
-        )
-        .map_err(|_| "Fenêtre indisponible.".to_string())?;
+        let mut bounds = RECT::default();
+        if GetWindowRgnBox(hwnd, &mut bounds) != RGN_ERROR {
+            return Ok(());
+        }
+        if let Some(surface) = remembered_surface(handle) {
+            let region = make_region(surface.width, surface.height, surface.radius, &surface.regions, surface.scale);
+            if SetWindowRgn(hwnd, Some(region), true) == 0 {
+                let _ = DeleteObject(region.into());
+                return Err("Découpe de la fenêtre indisponible.".into());
+            }
+        }
     }
     Ok(())
 }
