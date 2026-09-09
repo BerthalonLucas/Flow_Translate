@@ -1,6 +1,6 @@
 # Exploration verre et lecteur bas
 
-Statut : Lucas a choisi la pilule horizontale chevauchant légèrement le bord supérieur droit, d'après sa capture Claude Design. La planche C applique ce choix ; matière et présentation du lecteur bas sont montrées pour validation avant intégration. Ces images ne remplacent pas encore les références approuvées dans leur ensemble.
+Statut : **planche C validée par Lucas le 9 septembre 2026**, avec demande d'implémentation, animations fluides et rendu performant. Elle devient la référence courante pour la matière, la pilule chevauchante et le lecteur bas. A et B restent des explorations historiques.
 
 ## Intention confirmée le 9 septembre 2026
 
@@ -24,4 +24,4 @@ Le pont actuel limite la largeur à 420 px : un lecteur autour de 560–640 px n
 
 Séparer la surface du texte et la pilule dans TranslationBubble/BubbleMenu. Les interstices transparents nécessitent un traitement natif des clics : pointer-events CSS ne fait pas traverser une fenêtre Windows. Conserver Motion, Radix et Lucide. Prévoir réduction des mouvements et validation réelle de la transparence, du focus, du déplacement et des transitions Tauri.
 
-Les images ne présentent pas encore le cas extrêmement long ou l'animation. Ces états suivront après choix du style.
+Les images ne présentent pas le cas extrêmement long ou l'animation. Leur implémentation doit conserver le texte complet, l'accessibilité clavier et les mouvements réduits ; les résultats de validation sont consignés séparément.

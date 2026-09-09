@@ -6,7 +6,11 @@ Windows 11; French/English professional email and messages; a private pilot of 1
 
 ## Approved design
 
-`design/selection-approved.png` and `design/clipboard-approved.png` supersede earlier large cards. A selection gets a 280 logical-pixel bubble near its last visible character. Graphite at approximately 82% opacity, 26px corners, 15px text, compact padding. Only copy and more actions. No header, oversized button or footer band. Long results keep the width and scroll at 220px height; enlarge is explicit. Clipboard uses a 200×36 capsule at the bottom of the active monitor with a small result above. Idle means hidden except tray icon. Settings use the same materials at a readable normal window size.
+On 2026-09-09 Lucas approved `design/glass-reader/c-overlapping-pill.png`, superseding the earlier selection/clipboard mockups for the translation surface. A short selection gets a 280 logical-pixel smoked-graphite glass bubble near its last visible character, with 26px corners, 15px text and compact padding. The translation surface contains only text; Copy and More live in a small horizontal pill partly overlapping the upper-right edge, without covering the first text line. Target glass opacity is around 76–82%, with a faint rim/reflection and understated shadow. No header, oversized button or footer band.
+
+Long translations use a wider reader (approximately 560 logical pixels) at the bottom center of the selection's monitor work area, with the same overlapping action pill. No visible scrollbar. Preserve the complete translation and keyboard/wheel access for content exceeding the reader. Estimate the presentation before streaming; avoid per-token window movement and allow at most one promotion if the translated text exceeds the initial estimate. Clipboard confirmation and the 200×36 capsule remain. Idle means hidden except tray icon. Settings use the same materials at a readable normal window size.
+
+Use Motion/Radix/Lucide for accessible interactions and short paint animations. Honor reduced motion. Native window clipping must follow the actual glass/pill/menu surfaces; transparent margins must not intercept desktop clicks. Closing cancels immediately and permits a short bounded exit animation, with a native fallback if the frontend does not acknowledge. Mockups do not establish native blur or performance.
 
 ## Interaction
 
@@ -25,4 +29,3 @@ Defaults: French target, Quality mode, no autostart, history off. Optional local
 First milestone: native Tauri visual prototype and simulated responses. Then real inference integration. Test cancellation, stale streams, clipboard races, focus/selection changes and network failures. Test Edge/Chrome/Word/Outlook/Teams manually; track unrun cases honestly. Design checks at 100/125/150/200% scaling and reduced motion. Evaluate 100 balanced FR/EN excerpts, fidelity/names/numbers/format and latency p50/p95 at 1/4/10 concurrent requests. Do not fabricate model results or human scores. Package Windows installer, separate reproducible server and rollback instructions.
 
 All code/config/docs/test data and selected design references are versioned in private GitHub repo BerthalonLucas/flowtranslate. Never commit confidential examples, model weights or secrets.
-
