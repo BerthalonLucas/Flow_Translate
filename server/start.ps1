@@ -5,10 +5,11 @@ param(
     [string]$Profile,
     [ValidateRange(30, 3600)]
     [int]$HealthDeadlineSeconds = 900,
-    [string]$EnvFile = (Join-Path $PSScriptRoot ".env")
+    [string]$EnvFile = ""
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot ".env" }
 $compose = @("compose")
 $preflight = @((Join-Path $PSScriptRoot "preflight.py"), "--profile", $Profile)
 if (Test-Path -LiteralPath $EnvFile) {

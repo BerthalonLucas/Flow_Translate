@@ -1,7 +1,8 @@
 # Essai réel FlowTranslate 0.1.5
 
 Cette recette vérifie l’installation Windows et une traduction réelle avec un
-serveur local. Elle n’utilise aucun mode de démonstration.
+serveur local. Elle n’utilise aucun mode de démonstration. Les deux profils sont
+déjà démarrés sur le poste de Lucas ; la section suivante sert après leur arrêt.
 
 ## Préparer le serveur
 
@@ -9,11 +10,12 @@ Docker Desktop doit être démarré avec le moteur **Linux** disponible. Depuis 
 dépôt FlowTranslate, lancer un seul profil à la fois :
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\Lucas\projects\flowtranslate\server\start.ps1" -Profile fast
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Lucas\projects\flowtranslate\server\start.ps1" -Profile fast
 ```
 
-Pour le moteur Qualité, relancer la même commande avec `-Profile quality`, après
-avoir arrêté ou vérifié le profil précédent. Les profils exposent : Rapide sur
+Pour le moteur Qualité, relancer la même commande avec `-Profile quality`.
+Les deux profils peuvent coexister sur ce poste : une carte leur est affectée
+à chacun. Les profils exposent : Rapide sur
 `http://127.0.0.1:8001/v1` avec `flowtranslate-fast` (Hy-MT2-1.8B), Qualité sur
 `http://127.0.0.1:8002/v1` avec `flowtranslate-quality` (Hy-MT2-7B-FP8).
 Le script valide le prérequis et attend l’état sain du profil sélectionné.

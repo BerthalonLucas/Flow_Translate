@@ -114,7 +114,8 @@ class EvaluationTests(unittest.TestCase):
             log.unlink()
             env["FLOWTRANSLATE_FAKE_EXISTING"] = "1"
             env["FLOWTRANSLATE_FAKE_MARKER"] = str(fixture / "inspect.marker")
-            result = subprocess.run(command, capture_output=True, text=True, timeout=15, env=env)
+            # Also exercise the default .env path under Windows PowerShell 5.1.
+            result = subprocess.run(command[:-2], capture_output=True, text=True, timeout=15, env=env)
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
             calls = log.read_text(encoding="utf-8")
             self.assertIn("up -d fast", calls)

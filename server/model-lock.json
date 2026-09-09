@@ -29,5 +29,5 @@
     "max_tokens": 4096,
     "seed": 42
   },
-  "validation": "metadata verified; GPU runtime and translation quality not yet measured"
+  "validation": "BF16 and FP8 runtime verified on 2026-09-09 with vLLM 0.28.0; 100 synthetic cases per profile at concurrency 1/4/10 completed; human quality review pending"
 }

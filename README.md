@@ -8,10 +8,11 @@ ouvre une capsule de 200 × 36 px et demande confirmation avant l’envoi. Au re
 seule l’icône de notification reste présente. Langue, profil Rapide/Qualité,
 raccourci et connexion se configurent dans les réglages.
 
-**État : prototype V1 intégré, avec recette encore en cours.** Les modèles,
-licences et révisions sont épinglés, mais les mesures GPU et la revue humaine
-des 100 traductions restent à exécuter. Voir les preuves et limites dans
-[VALIDATION.md](docs/VALIDATION.md), sans confondre démonstration et inférence.
+**État : version de recette 0.1.5, avec les deux moteurs réels opérationnels.**
+Les 100 extraits synthétiques FR↔EN ont été exécutés pour chaque modèle à 1, 4
+et 10 requêtes simultanées. La revue humaine de qualité et la matrice native
+Office/multimoniteur restent à terminer. Voir [le guide d’essai](docs/ESSAIS-0.1.5.md)
+et les preuves dans [VALIDATION.md](docs/VALIDATION.md).
 
 ## Essayer
 
@@ -41,7 +42,7 @@ Sur le poste de développement de Lucas, le lancement utilise un dossier explici
 afin d’éviter la redirection de `%LOCALAPPDATA%` par le paquet Codex :
 
 ```powershell
-& "C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe" --demo-selection
+& "C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe"
 ```
 
 Fermer l’instance précédente depuis son icône avant de changer de mode.
