@@ -27,9 +27,9 @@ secret.
 1. Quitter une instance précédente depuis l’icône de notification, puis lancer
    exactement `C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe`.
 2. Ouvrir Réglages et choisir la langue cible (**FR** ou **EN**) et le mode
-   (**Rapide** ou **Qualité**). Dans Connexion avancée, sélectionner le moteur
-   correspondant (URL, modèle et clé si le déploiement en utilise une), cliquer
-   **Enregistrer et vérifier le moteur**. Une erreur de connexion doit être
+   (**Rapide** ou **Qualité**), puis cliquer **Enregistrer et vérifier le moteur**.
+   Les adresses locales sont déjà renseignées ; Connexion avancée sert à les
+   modifier pour un autre serveur. Une erreur de connexion doit être
    corrigée avant l’essai.
 3. Dans un éditeur, sélectionner une courte phrase puis presser `Ctrl+Alt+T`.
    Avec une sélection valide, la traduction démarre automatiquement. Sans
@@ -55,11 +55,11 @@ Teams ou les autres applications.
 Conserver les données utilisateur et quitter FlowTranslate depuis la zone de
 notification. L’installateur précédent vérifié sur ce poste est :
 
-`C:\Users\Lucas\projects\flowtranslate\release\FlowTranslate-0.1.4_x64-setup.exe`
+`C:\Users\Lucas\projects\flowtranslate\release\FlowTranslate_0.1.4_x64-setup.exe`
 
-Le lancer pour réinstaller 0.1.4, sans supprimer les données. Remettre ensuite
-la configuration serveur et le `model-lock.json` de 0.1.4, puis démarrer le
-profil voulu avec `server/start.ps1`. Ne pas utiliser `docker compose down -v`
+Le lancer pour réinstaller 0.1.4 dans le même dossier, sans supprimer les données.
+Conserver le serveur 0.1.5 compatible avec le même contrat API : ses correctifs
+WSL restent nécessaires sur ce poste. Ne pas utiliser `docker compose down -v`
 et ne pas supprimer les volumes : ils contiennent notamment les poids et caches.
 Vérifier `/v1/models`, une traduction dans les deux sens, **Copier** et
 **Annuler**. Les données DPAPI restent liées au même compte Windows.

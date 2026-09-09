@@ -50,7 +50,7 @@ type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:n
 - Capsule opens on clipboard/unanchored capture. Capsule invokes focus_overlay, dismiss_overlay and open_settings; it does not duplicate translation handling. A narrow pill with language indicator, clipboard icon, close.
 - Frontend publishes no IPC command capable of executing a shell, opening arbitrary files, or injecting arbitrary keystrokes.
 - Showing/resizing never activates the overlay. Repeated shortcut/click activates it deliberately. Escape is captured by a scoped native shortcut/hook only while overlay is open if the source retains focus; no unrelated keys are intercepted or logged.
-- Graphite alpha82% applies to the background only, not overall window/text opacity. Transparent corners and small native bounds must not create a large invisible click-blocking area.
+- The 0.1.4/0.1.5 glass calibration uses background alpha66% on the main surface and alpha68% on accessories, plus the native acrylic backdrop. Text stays fully opaque. Transparent corners and small native bounds must not create a large invisible click-blocking area.
 - Rust preserves the chosen above/below side during a stream; frontend batches ResizeObserver updates to avoid per-token jitter. When geometry is genuinely lost, re-anchor to bottom explicitly.
 
 ## Browser preview

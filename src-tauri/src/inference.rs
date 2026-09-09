@@ -102,7 +102,7 @@ where
     };
     let prompt = format!("Translate the following text into {target}. Note that you should only output the translated result without any additional explanation:\n{text}");
     let body = json!({"model":profile.model,"messages":[{"role":"user","content":prompt}],"stream":true,
-        "temperature":0.7,"top_p":0.8,"top_k":20,"repetition_penalty":1.05,"max_tokens":4096});
+        "temperature":0.7,"top_p":0.6,"top_k":20,"repetition_penalty":1.05,"max_tokens":4096});
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -207,6 +207,32 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "requires a running local FlowTranslate vLLM profile"]
+    async fn live_vllm_stream_and_cancel() {
+        let mode = std::env::var("FLOWTRANSLATE_TEST_PROFILE").unwrap_or_else(|_| "fast".into());
+        assert!(matches!(mode.as_str(), "fast" | "quality"));
+        let profile = Profile {
+            endpoint: format!("http://127.0.0.1:{}/v1", if mode == "fast" { 8001 } else { 8002 }),
+            model: format!("flowtranslate-{mode}"),
+            api_key: String::new(),
+        };
+        check(&profile).await.expect("live model discovery");
+        let mut deltas = String::new();
+        let result = stream(profile.clone(), "Please confirm the budget of 1250 EUR for project Orion.".into(), Language::Fr, CancellationToken::new(), |chunk| {
+            if let Some(text) = chunk.text { deltas.push_str(&text); }
+            Ok(())
+        }).await.expect("live native streaming translation");
+        assert_eq!(result, deltas);
+        assert!(result.contains("Orion") && result.contains("EUR"));
+        let cancel = CancellationToken::new();
+        let trigger = cancel.clone();
+        let cancelled = stream(profile, "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), Language::Fr, cancel, |chunk| {
+            if chunk.text.is_some() { trigger.cancel(); }
+            Ok(())
+        }).await;
+        assert_eq!(cancelled.unwrap_err(), "Traduction annulée.");
+    }
     #[test]
     fn fragmented_utf8_and_frames() {
         let mut d = SseDecoder::default();

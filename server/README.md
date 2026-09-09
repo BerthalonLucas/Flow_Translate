@@ -23,6 +23,19 @@ Request logs are explicitly disabled and the logging level is warning. No payloa
 
 Both profiles pass `--no-enable-flashinfer-autotune`. The negated CLI flag is documented in vLLM 0.28.0; disabling it is a local Blackwell stability workaround observed after repeated launches, not a model-card requirement or a quality/performance result.
 
+The real WSL2 trial required `VLLM_USE_V2_MODEL_RUNNER=0`: the default V2 runner
+failed with `RuntimeError: UVA is not available`. This selects the alternative
+runner bundled in the same stable image. Docker/WSL also exposed both cards
+despite `device_ids`; Compose therefore requests GPU access and restricts CUDA
+with `CUDA_VISIBLE_DEVICES` for each service. Fast sees only the RTX 5060 Ti,
+Quality only the RTX 5070 Ti on the trial host. Prefer GPU UUIDs in `.env` when
+moving to another machine. CUDA visibility is allocation control, not a security
+boundary between containers.
+
+First measurements used an ignored Compose override setting startup logging to
+INFO to record KV cache capacity. Request/content logging stayed disabled. The
+distributed configuration keeps WARNING as its default.
+
 Primary verification: [Fast model card at the pinned revision](https://huggingface.co/tencent/Hy-MT2-1.8B/blob/9a341cd1b679d3efd23b46e847b01745a71ed792/README.md), [Quality model card at the pinned revision](https://huggingface.co/tencent/Hy-MT2-7B-FP8/blob/883d09eb21d9be92058556cd0a4016d8a648c7db/README.md), [vLLM 0.28.0 serve flags](https://docs.vllm.ai/en/v0.28.0/cli/serve/), and [vLLM 0.28.0 model registry](https://github.com/vllm-project/vllm/blob/v0.28.0/vllm/model_executor/models/registry.py).
 
 ## Enterprise deployment
