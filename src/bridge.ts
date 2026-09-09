@@ -13,7 +13,8 @@ const defaultSettings: Settings = {
 
 const native = '__TAURI_INTERNALS__' in window;
 let demoCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 830, y: 410, width: 360, height: 24 } };
-let demoScenario: 'normal' | 'error' | 'long' | 'very-long' = 'normal';
+type DemoScenario = 'normal' | 'error' | 'long' | 'very-long' | 'pending' | 'partial';
+let demoScenario: DemoScenario = 'normal';
 let demoSettings = structuredClone(defaultSettings);
 let activeTimer: number | undefined;
 let activeDemoRequest: string | undefined;
@@ -42,6 +43,15 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
     const request = args?.request as TranslationRequest;
     window.clearTimeout(activeTimer);
     activeDemoRequest = request.id;
+    if (import.meta.env.DEV && demoScenario === 'pending') return undefined as T;
+    if (import.meta.env.DEV && demoScenario === 'partial') {
+      activeTimer = window.setTimeout(() => {
+        if (activeDemoRequest !== request.id) return;
+        emit<StreamEvent>('translation', { requestId: request.id, kind: 'delta', text: 'Pourriez-vous envoyer la proposition' });
+        emit<StreamEvent>('translation', { requestId: request.id, kind: 'error', message: 'Réponse interrompue. Réessayez.' });
+      }, 120);
+      return undefined as T;
+    }
     const translated = demoTranslation(request.text, request.targetLanguage);
     if (!translated) { activeTimer = window.setTimeout(() => emit<StreamEvent>('translation', { requestId: request.id, kind: 'error', message: 'Démo : le serveur est indisponible.' }), 260); return undefined as T; }
     let i = 0;
@@ -91,5 +101,5 @@ export const bridge = {
   getHistory: () => command<HistoryEntry[]>('get_history'),
   deleteHistory: (id: string | null) => command<void>('delete_history', { id }),
   on: event,
-  setDemoCapture: (capture: Capture, scenario: 'normal' | 'error' | 'long' | 'very-long' = 'normal') => { demoCapture = capture; demoScenario = scenario; }
+  setDemoCapture: (capture: Capture, scenario: DemoScenario = 'normal') => { demoCapture = capture; demoScenario = scenario; }
 };

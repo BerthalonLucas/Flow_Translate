@@ -11,7 +11,7 @@ const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Ale
 const clipboardCapture: Capture = { id: 'demo-clipboard', text: 'Je vous envoie la proposition mise à jour.', source: 'clipboard', canReplace: false, anchor: null };
 const uid = () => crypto.randomUUID?.() ?? `request-${Date.now()}`;
 
-function Capsule() {
+export function Capsule() {
   const fade = useFade();
   const [target, setTarget] = useState<Language>('fr');
   useEffect(() => {
@@ -26,7 +26,7 @@ function Capsule() {
   </motion.div>;
 }
 
-function SettingsWindow() {
+export function SettingsWindow() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [notice, setNotice] = useState('');
   const [checking, setChecking] = useState<Mode | null>(null);

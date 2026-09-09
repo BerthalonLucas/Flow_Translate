@@ -1,5 +1,59 @@
 # Boucle de validation visuelle
 
+## Atelier reproductible — jalon du 9 septembre 2026
+
+Décisions à respecter : [UI-DECISIONS.md](UI-DECISIONS.md).
+Défauts à traiter séparément : [UI-ISSUES.md](UI-ISSUES.md).
+
+`npm run ui:lab` ouvre http://127.0.0.1:5174/lab.html. L’atelier est une entrée
+Vite de développement, exclue du build Windows. Il réutilise GlassOverlay,
+Capsule, SettingsWindow et useTranslation ; seules les réponses du pont sont
+simulées. Chaque iframe remet ses données fictives à zéro. Aucun appel vLLM,
+accès au presse-papiers Windows ou lecture de l’historique réel.
+
+Huit états, taille de fenêtre, fond clair/sombre, mouvements réduits et Rejouer.
+Les paramètres restent dans l’URL pour partager exactement le cas local.
+Le fond demandé n’est pas une simulation du DPI Windows. La capsule réduite
+et le thème automatique ne sont pas inventés dans l’atelier : leur absence
+reste visible tant que les composants ne les implémentent pas.
+
+### Références fixes
+
+- `npm run ui:check` compare 19 images dans 17 scénarios (dont menu et largeur étroite).
+- `npm run ui:reference` remplace les références : uniquement après revue de la différence.
+- `npx playwright show-report playwright-report/visual` présente attendu/réel/différence en cas d’échec.
+- Les premières références sont un **constat de 0.1.5 avec ses défauts**, pas un design approuvé.
+- Même Windows, version Chromium, polices et paramètres pour comparer. Les références
+  sont séparées par plateforme. Textes/dates fictifs et stables ; aucune donnée utilisateur.
+- Les images figent les animations. `FLOWTRANSLATE_PROFILE_URL` peut cibler le serveur
+  d’atelier et `npm run ui:motion` enregistre les interactions du lecteur dans
+  `release/material-preview`. Cette vidéo navigateur ne mesure pas la fluidité native.
+
+### Accès réel à Tauri / WebView2
+
+`npm run ui:native` lance l’exécutable installé en démo explicite, ouvre un port
+CDP local et utilise Playwright dans sa vraie WebView2. Fermer l’application avant
+ce test ; le script refuse une session existante. Pour un autre build :
+`powershell -NoProfile -File scripts/test-native-ui.ps1 -Executable CHEMIN_EXE`.
+Le script termine seulement son propre processus, même si le test échoue.
+La version de l’exécutable testé dépend du chemin fourni : ne jamais assimiler
+le test de l’installation 0.1.5 à celui d’un futur build de la branche.
+
+Preuves locales dans `release/native-ui-probe` : contenu court, menu, métadonnées
+WebView2 et vérification de disparition du DOM après Fermer. Les profils de test
+restent dans `release/native-profiles`, hors Git. Le port de débogage n’est pas
+ajouté à la configuration de production. Le stockage des réglages Rust reste
+celui de l’installation : le scénario ne le modifie pas et ne lit pas ses secrets.
+
+Essai réel de ce jalon : capture du contenu WebView2, ouverture du menu et
+fermeture du DOM réussies sur l’installation 0.1.5. La capture Computer Use
+renvoie une image noire ; après nouvelle sélection et activation, échec
+`GetCursorPos failed: Accès refusé. (0x80070005)`.
+Le dépoli, le focus, les régions de clic et les animations sur le bureau
+restent donc **non validés**. Une capture CDP ne remplace pas cette étape.
+
+Les sections suivantes décrivent les anciens essais, pas leur état courant.
+
 Le frontend doit être vu et manipulé avant chaque livraison. Les tests unitaires
 et une maquette statique ne valident pas le rendu Windows.
 

@@ -2,6 +2,8 @@
 
 Windows 11 app: Tauri 2, React, TypeScript and Rust. vLLM is a separate server.
 
+- Latest user decisions override the historical glass specifications below: read docs/UI-DECISIONS.md and track individual fixes in docs/UI-ISSUES.md. Main work without subagents; the user separately permits Claude Code/Fable 5.1 for bounded frontend variants. No such variant has been launched for the workbench milestone.
+
 - Read docs/SPEC.md and docs/BRIDGE.md before changing interfaces.
 - The approved screenshot docs/design/glass-reader/c-overlapping-pill.png is the current visual source of truth (Lucas approved 2026-09-09). Keep short overlays tiny, round and translucent, text-only with an overlapping upper-right action pill; long translations use a bottom-centered reader without a visible scrollbar. No large header or footer.
 - Preserve clipboard updates and never replace a selection unless its identity and text are revalidated.
