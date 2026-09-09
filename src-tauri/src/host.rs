@@ -1,12 +1,13 @@
 //! Windows geometry only: UIA rectangles and Win32 placement stay physical.
-use crate::types::Rect;
+use crate::types::{Rect, SurfaceRegion};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{
-        ClientToScreen, CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint,
-        SetWindowRgn, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        ClientToScreen, CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject,
+        GetMonitorInfoW, MonitorFromPoint, SetWindowRgn, HRGN, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, RGN_OR,
     },
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
@@ -174,7 +175,13 @@ pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
     )
 }
 
-pub fn show(window: &WebviewWindow, rect: Rect, radius: f64) -> Result<(), String> {
+pub fn show(
+    window: &WebviewWindow,
+    rect: Rect,
+    radius: f64,
+    regions: &[SurfaceRegion],
+    scale: f64,
+) -> Result<(), String> {
     let width = rect.width.round().max(1.) as u32;
     let height = rect.height.round().max(1.) as u32;
     window
@@ -202,20 +209,36 @@ pub fn show(window: &WebviewWindow, rect: Rect, radius: f64) -> Result<(), Strin
             SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
         )
         .map_err(|_| "Placement indisponible.".to_string())?;
-        // Clip native acrylic and hit testing to the same round silhouette as CSS.
-        let region = CreateRoundRectRgn(
-            0,
-            0,
-            width as i32 + 1,
-            height as i32 + 1,
-            (radius * 2.).round() as i32,
-            (radius * 2.).round() as i32,
-        );
+        // One native region defines acrylic, silhouette and pass-through gaps.
+        let region = make_region(width, height, radius, regions, scale);
         if SetWindowRgn(hwnd, Some(region), true) == 0 {
             let _ = DeleteObject(region.into());
         }
     }
     Ok(())
+}
+
+unsafe fn make_region(width: u32, height: u32, radius: f64, regions: &[SurfaceRegion], scale: f64) -> HRGN {
+    unsafe {
+        if regions.is_empty() {
+            CreateRoundRectRgn(0, 0, width as i32 + 1, height as i32 + 1, (radius * 2.).round() as i32, (radius * 2.).round() as i32)
+        } else {
+            let union = CreateRectRgn(0, 0, 0, 0);
+            for item in regions {
+                let piece = CreateRoundRectRgn(
+                    (item.x * scale).round() as i32,
+                    (item.y * scale).round() as i32,
+                    ((item.x + item.width) * scale).round() as i32 + 1,
+                    ((item.y + item.height) * scale).round() as i32 + 1,
+                    (item.radius * scale * 2.).round() as i32,
+                    (item.radius * scale * 2.).round() as i32,
+                );
+                let _ = CombineRgn(Some(union), Some(union), Some(piece), RGN_OR);
+                let _ = DeleteObject(piece.into());
+            }
+            union
+        }
+    }
 }
 
 pub fn strip_chrome(window: &WebviewWindow) -> Result<(), String> {
@@ -257,4 +280,26 @@ unsafe fn strip_chrome_hwnd(hwnd: HWND) -> bool {
     }
     unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, frameless) };
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Graphics::Gdi::PtInRegion;
+
+    #[test]
+    fn union_region_keeps_surfaces_and_pass_through_gap() {
+        let regions = [
+            SurfaceRegion { x: 0., y: 20., width: 280., height: 80., radius: 26. },
+            SurfaceRegion { x: 210., y: 0., width: 60., height: 18., radius: 9. },
+        ];
+        unsafe {
+            let region = make_region(280, 100, 26., &regions, 1.);
+            assert!(PtInRegion(region, 140, 50).as_bool());
+            assert!(PtInRegion(region, 240, 9).as_bool());
+            assert!(!PtInRegion(region, 100, 9).as_bool());
+            assert!(!PtInRegion(region, 0, 20).as_bool());
+            let _ = DeleteObject(region.into());
+        }
+    }
 }
