@@ -22,29 +22,38 @@ $compose += @("-f", (Join-Path $PSScriptRoot "compose.yaml"), "--profile", $Prof
 if ($LASTEXITCODE -ne 0) { throw "Compose validation failed; no container was started." }
 
 function Get-ContainerState([string]$Id) {
-    $value = (& docker inspect --format "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" $Id).Trim()
+    $output = & docker inspect --format "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" $Id
     if ($LASTEXITCODE -ne 0) { throw "Could not inspect container $Id." }
+    $value = if ($null -eq $output) { "" } else { ([string]$output).Trim() }
+    if (-not $value) { throw "Docker returned no state for container $Id." }
     $parts = $value.Split("|", 2)
     return @{ Status = $parts[0]; Health = $parts[1] }
 }
 
-$containerId = (& docker @compose ps --all -q $Profile).Trim()
+$containerOutput = & docker @compose ps --all -q $Profile
 if ($LASTEXITCODE -ne 0) { throw "Could not inspect the Compose service '$Profile'." }
+$containerId = if ($null -eq $containerOutput) { "" } else { ([string]$containerOutput).Trim() }
+$needsStart = -not $containerId
 if ($containerId) {
     $state = Get-ContainerState $containerId
     if ($state.Status -eq "running" -and $state.Health -eq "healthy") {
         Write-Host "Profile '$Profile' is already healthy (container $containerId)."
         exit 0
     }
-    if ($state.Status -ne "running") {
+    if ($state.Status -in @("created", "exited", "dead")) {
+        $needsStart = $true
+    } elseif ($state.Status -ne "running") {
         throw "Existing profile '$Profile' is '$($state.Status)' (health '$($state.Health)'). It was left unchanged."
     }
-} else {
+}
+if ($needsStart) {
     & python @preflight
     if ($LASTEXITCODE -ne 0) { throw "Preflight failed; no container was started." }
     & docker @compose up -d $Profile
     if ($LASTEXITCODE -ne 0) { throw "Compose could not start profile '$Profile'." }
-    $containerId = (& docker @compose ps -q $Profile).Trim()
+    $containerOutput = & docker @compose ps -q $Profile
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the started Compose service '$Profile'." }
+    $containerId = if ($null -eq $containerOutput) { "" } else { ([string]$containerOutput).Trim() }
     if (-not $containerId) { throw "Compose did not return a container for profile '$Profile'." }
 }
 

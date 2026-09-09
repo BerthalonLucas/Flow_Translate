@@ -11,7 +11,7 @@ This server does not depend on the Windows UI. `model-lock.json` records public 
 5. Inspect health, then trial Quality separately. Run both only after verifying each budget. No CPU offload or tensor-parallel multi-GPU assumptions are made.
 6. Client profiles: `http://127.0.0.1:8001/v1`, model `flowtranslate-fast`; `http://127.0.0.1:8002/v1`, model `flowtranslate-quality`.
 
-On Windows, `powershell -ExecutionPolicy Bypass -File server/start.ps1 -Profile fast -HealthDeadlineSeconds 900` validates Compose, reuses an already healthy selected service, otherwise performs preflight, starts only that service, and waits for health. It fails immediately if the container exits. On timeout or failure it leaves the container unchanged for inspection; it never stops or restarts workloads. Repeat with `quality` only after the Fast trial.
+On Windows, `powershell -ExecutionPolicy Bypass -File server/start.ps1 -Profile fast -HealthDeadlineSeconds 900` validates Compose and reuses an already healthy selected service. For a missing or stopped selected service it performs preflight, starts only that service, and waits for health. It fails immediately if the container exits during startup. On timeout or failure it leaves containers unchanged for inspection and never stops other workloads. Repeat with `quality` only after the Fast trial.
 
 Normal endpoint failure never falls back to a mock or a different model. The native app's explicit `--demo` option is separate and labelled.
 
