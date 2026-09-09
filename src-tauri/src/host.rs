@@ -5,14 +5,14 @@ use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{
-        CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint, SetWindowRgn,
-        MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        ClientToScreen, CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint,
+        SetWindowRgn, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     },
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
-        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE},
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         WindowsAndMessaging::{
-            GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW,
+            GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW,
             SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
             SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
             WS_SYSMENU, WS_THICKFRAME,
@@ -73,6 +73,59 @@ pub fn install_escape_hook()->Result<(),String>{
 }
 pub fn belongs_to(window: &WebviewWindow, handle: isize) -> bool {
     window.hwnd().is_ok_and(|h| h.0 as isize == handle)
+}
+
+pub fn compensate_pointer_drag(
+    window: &WebviewWindow,
+    client_x: f64,
+    client_y: f64,
+) -> Result<bool, String> {
+    if !client_x.is_finite() || !client_y.is_finite() {
+        return Err("Position de déplacement invalide.".into());
+    }
+    let scale = window
+        .scale_factor()
+        .map_err(|_| "Fenêtre indisponible.".to_string())?;
+    let client = window
+        .inner_size()
+        .map_err(|_| "Fenêtre indisponible.".to_string())?;
+    let (x, y) = (client_x * scale, client_y * scale);
+    if x < 0. || y < 0. || x >= client.width as f64 || y >= client.height as f64 {
+        return Err("Position de déplacement invalide.".into());
+    }
+    let hwnd = HWND(
+        window
+            .hwnd()
+            .map_err(|_| "Fenêtre indisponible.".to_string())?
+            .0,
+    );
+    let mut client_origin = POINT::default();
+    let mut cursor = POINT::default();
+    unsafe {
+        ClientToScreen(hwnd, &mut client_origin)
+            .ok()
+            .map_err(|_| "Fenêtre indisponible.".to_string())?;
+        GetCursorPos(&mut cursor).map_err(|_| "Déplacement indisponible.".to_string())?;
+    }
+    let dx = cursor.x - (client_origin.x + x.round() as i32);
+    let dy = cursor.y - (client_origin.y + y.round() as i32);
+    if dx != 0 || dy != 0 {
+        let rect = window_rect(hwnd.0 as isize)
+            .ok_or_else(|| "Fenêtre indisponible.".to_string())?;
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                rect.x.round() as i32 + dx,
+                rect.y.round() as i32 + dy,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER,
+            )
+            .map_err(|_| "Déplacement indisponible.".to_string())?;
+        }
+    }
+    Ok(unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 })
 }
 
 pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
