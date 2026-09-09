@@ -63,6 +63,10 @@ function DemoDesktop({ controller }: { controller: ReturnType<typeof useTranslat
 
 function OverlayWindow({ standaloneDemo }: { standaloneDemo: boolean }) {
   const controller = useTranslation(true);
+  const [background, setBackground] = useState(() => {
+    const requested = new URLSearchParams(location.search).get('background');
+    return requested === 'light' || requested === 'dark' ? requested : 'color';
+  });
   const { receiveCapture, initError } = controller;
   const demoStarted = useRef(false);
   useEffect(() => {
@@ -74,7 +78,12 @@ function OverlayWindow({ standaloneDemo }: { standaloneDemo: boolean }) {
       receiveCapture(capture);
     }
   }, [standaloneDemo, receiveCapture]);
-  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'}>{initError && <div className="initialization-error"><p>{initError}</p><button className="quiet-action" onClick={() => void bridge.dismiss()}>Fermer</button></div>}{standaloneDemo && <span className="preview-label">Aperçu navigateur · réponse simulée</span>}<GlassOverlay controller={controller} /></div>;
+  return <div className={standaloneDemo ? 'standalone-demo' : 'native-overlay'} data-preview-background={standaloneDemo ? background : undefined}>{initError && <div className="initialization-error"><p>{initError}</p><button className="quiet-action" onClick={() => void bridge.dismiss()}>Fermer</button></div>}{standaloneDemo && <>
+    <span className="preview-label">Aperçu navigateur · réponse simulée</span>
+    <div className="preview-backgrounds" role="group" aria-label="Fond de l’aperçu">
+      {([['light', 'Clair'], ['dark', 'Sombre'], ['color', 'Coloré']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={background === value} onClick={() => setBackground(value)}>{label}</button>)}
+    </div>
+  </>}<GlassOverlay controller={controller} /></div>;
 }
 
 function DemoWindow() { return <DemoDesktop controller={useTranslation(false)} />; }

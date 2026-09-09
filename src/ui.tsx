@@ -6,13 +6,13 @@ import { Check, ChevronDown, Clipboard, Copy, Ellipsis, X } from 'lucide-react';
 
 // Animate paint, never the dimensions/scale that the native ResizeObserver measures.
 export const motionTokens = { enter: 0.18, feedback: 0.14, exit: 0.1, ease: [0.2, 0, 0, 1] as const };
-export function useFade() {
+export function useFade(kind: 'surface' | 'feedback' = 'surface') {
   const reduced = useReducedMotion();
   return {
     initial: { opacity: reduced ? 1 : 0 },
     animate: { opacity: 1 },
     exit: { opacity: 0, transition: { duration: reduced ? 0 : motionTokens.exit } },
-    transition: { duration: reduced ? 0 : motionTokens.enter, ease: motionTokens.ease },
+    transition: { duration: reduced ? 0 : kind === 'feedback' ? motionTokens.feedback : motionTokens.enter, ease: motionTokens.ease },
   };
 }
 
@@ -20,6 +20,13 @@ const icons = { copy: Copy, more: Ellipsis, close: X, clipboard: Clipboard, chec
 export function Icon({ name }: { name: keyof typeof icons }) {
   const Glyph = icons[name];
   return <Glyph aria-hidden="true" size={17} strokeWidth={1.65} />;
+}
+
+export function AnimatedIcon({ name }: { name: keyof typeof icons }) {
+  const fade = useFade('feedback');
+  return <span className="action-glyph" aria-hidden="true"><AnimatePresence initial={false}>
+    <motion.span key={name} {...fade}><Icon name={name} /></motion.span>
+  </AnimatePresence></span>;
 }
 
 type IconButtonProps = ComponentPropsWithoutRef<'button'> & { label: string; children: ReactNode };
@@ -31,7 +38,7 @@ export type BubbleMenuAction = { label: string; run: () => void; disabled?: bool
 export function BubbleMenu({ open, onOpenChange, actions, children }: {
   open: boolean; onOpenChange: (open: boolean) => void; actions: BubbleMenuAction[]; children: ReactNode;
 }) {
-  const fade = useFade();
+  const fade = useFade('feedback');
   return <DropdownMenu.Root open={open} onOpenChange={onOpenChange} modal={false}>
     {children}
     <AnimatePresence>

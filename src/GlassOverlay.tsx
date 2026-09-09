@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { bridge } from './bridge';
 import { glass, layoutForText, textHeight } from './layout';
-import { BubbleMenu, BubbleMenuTrigger, Icon, IconButton, motionTokens, useFade } from './ui';
+import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, IconButton, motionTokens, useFade } from './ui';
 import type { HitRegion } from './types';
 import type { TranslationController } from './useTranslation';
 
@@ -53,7 +53,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const previousGeometry = useRef('');
-  const fade = useFade();
+  const fade = useFade('feedback');
   const reduced = useReducedMotion();
   const active = useRef({ requestId: state.requestId, closing: closingCaptureId });
   useLayoutEffect(() => { active.current = { requestId: state.requestId, closing: closingCaptureId }; }, [state.requestId, closingCaptureId]);
@@ -187,7 +187,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       </div>
       <div className="action-pill" aria-label="Actions de traduction">
         <IconButton label="Copier la traduction" disabled={!ready} onClick={() => void invokeResult('copy')}>
-          <motion.span key={feedback === 'Copié.' ? 'copied' : 'copy'} {...fade} className="action-glyph"><Icon name={feedback === 'Copié.' ? 'check' : 'copy'} /></motion.span>
+          <AnimatedIcon name={feedback === 'Copié.' ? 'check' : 'copy'} />
         </IconButton>
         <BubbleMenuTrigger onClick={() => setMenuOpen(value => !value)} />
       </div>
