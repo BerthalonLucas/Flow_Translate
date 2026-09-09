@@ -24,6 +24,23 @@ use windows::Win32::{
 pub fn foreground() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
 }
+pub fn show_capture_error(message: &str) {
+    use windows::{
+        core::{w, HSTRING},
+        Win32::UI::WindowsAndMessaging::{
+            MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
+        },
+    };
+    let message = HSTRING::from(message);
+    unsafe {
+        let _ = MessageBoxW(
+            None,
+            &message,
+            w!("FlowTranslate"),
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
+        );
+    }
+}
 pub fn window_rect(handle: isize) -> Option<Rect> {
     let mut r = RECT::default();
     unsafe {
