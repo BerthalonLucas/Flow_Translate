@@ -258,3 +258,14 @@ test('explicit compact-reader-compact changes fade through each layout without s
   const phases = await page.evaluate(() => (window as unknown as { observedLayoutPhases: string[] }).observedLayoutPhases);
   for (const phase of ['out', 'commit', 'in', 'idle']) expect(phases.filter(value => value === phase).length).toBeGreaterThanOrEqual(2);
 });
+
+
+test('browser settings identifies simulated checks and closes back to preview', async ({ page }) => {
+  await page.goto('/?window=settings&demo=1');
+  const engine = page.getByRole('region', { name: 'Connexion du moteur' });
+  await expect(engine).toContainText('Aperçu navigateur · connexion simulée');
+  await page.getByRole('button', { name: 'Enregistrer et vérifier le moteur', exact: true }).click();
+  await expect(engine.getByRole('status')).toContainText('Démo : connexion simulée');
+  await page.getByRole('button', { name: 'Fermer', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Simuler Ctrl + Alt + T', exact: true })).toBeVisible();
+});

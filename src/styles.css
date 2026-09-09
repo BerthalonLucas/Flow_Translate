@@ -30,3 +30,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .preview-label { position: fixed; left: 14px; top: 12px; color: #233e5c; font-size: 11px; }
 .initialization-error { width: 280px; padding: 16px; border-radius: 26px; background: rgba(29,31,36,.82); font-size: 13px; }
 @media (max-height: 250px) { .preview-label { display: none; } }
+
+.engine-readiness h2 { margin: 0; }
+.engine-readiness p { margin: 9px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.engine-readiness small { color: #a7b2c2; font-size: 11px; }
+.engine-readiness .profile-heading { gap: 12px; flex-wrap: wrap; }
+.settings-window button:disabled { opacity: .5; cursor: wait; }

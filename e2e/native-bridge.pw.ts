@@ -9,6 +9,9 @@ declare global {
       done: () => Promise<void>;
       dismissEvent: (captureId: string) => Promise<void>;
       requestId: () => string;
+      recoverSettings: () => void;
+      connect: () => void;
+      error: () => Promise<void>;
       holdCopy: () => void;
       releaseCopy: () => void;
     };
@@ -141,4 +144,64 @@ test('IPC fixture: long source selects reader before streaming and never automat
   await page.evaluate(async () => { await window.nativeFixture.delta('Très court.'); await window.nativeFixture.done(); });
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   expect((await geometry(page))?.presentation).toBe('reader');
+});
+
+async function openSettingsFixture(page: Page, fail = false) {
+  await page.route('**/?window=settings&fixture=1*', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: (await response.text()).replace('/src/main.tsx', '/e2e/native-fixture.ts') });
+  });
+  await page.goto(`/?window=settings&fixture=1${fail ? '&settingsError=1' : ''}`);
+}
+
+test('IPC fixture: settings recover from load failure', async ({ page }) => {
+  await openSettingsFixture(page, true);
+  await expect(page.getByRole('alert')).toContainText('réglages sont indisponibles');
+  await expect(page.getByText('Chargement des réglages…')).toHaveCount(0);
+  await page.evaluate(() => window.nativeFixture.recoverSettings());
+  await page.getByRole('button', { name: 'Réessayer', exact: true }).click();
+  await expect(page.getByLabel('Langue cible')).toBeVisible();
+});
+
+test('IPC fixture: choose language and engine, recover connection, save and close without translation', async ({ page }) => {
+  await openSettingsFixture(page);
+  const engine = page.getByRole('region', { name: 'Connexion du moteur' });
+  await expect(engine).toContainText('Serveur de traduction');
+  await expect(engine).toContainText('Adresse du serveur à renseigner');
+  expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'check_connection'))).toBe(false);
+  await page.getByLabel('Langue cible').selectOption('en');
+  await page.getByLabel('Mode par défaut').selectOption('fast');
+  await expect(engine.getByRole('heading')).toHaveText('Moteur Rapide');
+  const check = page.getByRole('button', { name: 'Enregistrer et vérifier le moteur', exact: true });
+  await check.click();
+  await expect(engine.getByRole('status')).toContainText('Connexion indisponible');
+  await expect(engine).toContainText('Démarrez le serveur');
+  await page.evaluate(() => window.nativeFixture.connect());
+  await check.click();
+  await expect(engine.getByRole('status')).toContainText('Modèle disponible');
+  await page.getByRole('button', { name: 'Connexion avancée', exact: true }).click();
+  await page.getByLabel('Modèle', { exact: true }).nth(1).fill('changed-model');
+  await expect(engine.getByRole('status')).not.toContainText('Modèle disponible');
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  const calls = await page.evaluate(() => window.nativeFixture.calls);
+  expect(calls.filter(call => call.command === 'check_connection').map(call => call.args?.mode)).toEqual(['fast', 'fast']);
+  expect(calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings).toMatchObject({ targetLanguage: 'en', mode: 'fast' });
+  expect(calls.some(call => call.command === 'translate')).toBe(false);
+  await page.getByRole('button', { name: 'Fermer', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'plugin:window|close'))).toBe(true);
+});
+
+test('IPC fixture: server error offers retry and settings through existing menu', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(() => window.nativeFixture.error());
+  await expect(page.locator('.error-copy')).toContainText('Réglages et Réessayer');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Réglages', exact: true }).click();
+  expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'open_settings'))).toBe(true);
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Réessayer', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'translate').length)).toBe(2);
+  await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); });
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
 });
