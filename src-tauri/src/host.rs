@@ -191,7 +191,7 @@ pub fn show(window: &WebviewWindow, rect: Rect, radius: f64) -> Result<(), Strin
             .hwnd()
             .map_err(|_| "Fenêtre indisponible.".to_string())?;
         let hwnd = HWND(h.0);
-        strip_chrome_hwnd(hwnd);
+        let _ = strip_chrome_hwnd(hwnd);
         SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
@@ -219,14 +219,19 @@ pub fn show(window: &WebviewWindow, rect: Rect, radius: f64) -> Result<(), Strin
 }
 
 pub fn strip_chrome(window: &WebviewWindow) -> Result<(), String> {
-    let hwnd = HWND(
-        window
-            .hwnd()
-            .map_err(|_| "Fenêtre indisponible.".to_string())?
-            .0,
-    );
+    let handle = window
+        .hwnd()
+        .map_err(|_| "Fenêtre indisponible.".to_string())?
+        .0 as isize;
+    strip_chrome_handle(handle)
+}
+
+pub fn strip_chrome_handle(handle: isize) -> Result<(), String> {
+    let hwnd = HWND(handle as *mut _);
     unsafe {
-        strip_chrome_hwnd(hwnd);
+        if !strip_chrome_hwnd(hwnd) {
+            return Ok(());
+        }
         SetWindowPos(
             hwnd,
             None,
@@ -241,10 +246,15 @@ pub fn strip_chrome(window: &WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
-unsafe fn strip_chrome_hwnd(hwnd: HWND) {
+unsafe fn strip_chrome_hwnd(hwnd: HWND) -> bool {
     // Tao 0.35 rebuilds top-level styles from its window flags when visibility
     // changes. Strip every caption-producing style at the HWND boundary too.
     let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
     let chrome = (WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX).0;
-    unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(chrome as isize)) };
+    let frameless = style & !(chrome as isize);
+    if style == frameless {
+        return false;
+    }
+    unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, frameless) };
+    true
 }
