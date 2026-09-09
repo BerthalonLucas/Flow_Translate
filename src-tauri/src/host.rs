@@ -198,7 +198,11 @@ pub fn show(
             .hwnd()
             .map_err(|_| "Fenêtre indisponible.".to_string())?;
         let hwnd = HWND(h.0);
-        let _ = strip_chrome_hwnd(hwnd);
+        let chrome_changed = strip_chrome_hwnd(hwnd);
+        let mut flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW;
+        if chrome_changed {
+            flags |= SWP_FRAMECHANGED;
+        }
         SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
@@ -206,7 +210,7 @@ pub fn show(
             0,
             0,
             0,
-            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            flags,
         )
         .map_err(|_| "Placement indisponible.".to_string())?;
         // One native region defines acrylic, silhouette and pass-through gaps.
