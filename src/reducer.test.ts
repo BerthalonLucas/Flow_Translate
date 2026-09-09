@@ -42,4 +42,9 @@ describe('translationReducer', () => {
     state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done' } });
     expect(state).toMatchObject({ phase: 'complete', replacementValid: false });
   });
+  it('rejects a late layout measurement belonging to an older capture', () => {
+    const current = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected, layout: { presentation: 'contextual', bodyHeight: 55 } });
+    expect(translationReducer(current, { type: 'LAYOUT', captureId: 'obsolete', layout: { presentation: 'reader', bodyHeight: 280 } })).toEqual(current);
+  });
+
 });

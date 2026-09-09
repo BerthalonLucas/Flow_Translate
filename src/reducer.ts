@@ -1,4 +1,5 @@
 import type { Capture, Language, Mode, StreamEvent } from './types';
+import type { TextLayout } from './layout';
 
 export type TranslationState = {
   capture: Capture | null;
@@ -12,15 +13,18 @@ export type TranslationState = {
   invalidated: boolean;
   enlarged: boolean;
   comparing: boolean;
+  layout: TextLayout;
 };
 
 export const initialTranslationState: TranslationState = {
   capture: null, requestId: null, targetLanguage: 'fr', mode: 'quality', result: '',
-  phase: 'idle', error: null, replacementValid: false, invalidated: false, enlarged: false, comparing: false
+  phase: 'idle', error: null, replacementValid: false, invalidated: false, enlarged: false, comparing: false,
+  layout: { presentation: 'contextual', bodyHeight: 76 },
 };
 
 export type Action =
-  | { type: 'CAPTURE'; capture: Capture }
+  | { type: 'CAPTURE'; capture: Capture; layout?: TextLayout }
+  | { type: 'LAYOUT'; captureId: string; layout: TextLayout }
   | { type: 'START'; requestId: string; mode: Mode; targetLanguage: Language }
   | { type: 'STREAM'; event: StreamEvent }
   | { type: 'INVALIDATE'; message: string }
@@ -33,7 +37,8 @@ export function translationReducer(state: TranslationState, action: Action): Tra
   switch (action.type) {
     case 'CAPTURE':
       return { ...state, capture: action.capture, requestId: null, result: '', error: null, enlarged: false, comparing: false,
-        replacementValid: false, invalidated: false, phase: action.capture.source === 'clipboard' ? 'confirming' : 'idle' };
+        replacementValid: false, invalidated: false, layout: action.layout ?? initialTranslationState.layout, phase: action.capture.source === 'clipboard' ? 'confirming' : 'idle' };
+    case 'LAYOUT': return action.captureId === state.capture?.id ? { ...state, layout: action.layout } : state;
     case 'START':
       return { ...state, requestId: action.requestId, mode: action.mode, targetLanguage: action.targetLanguage,
         result: '', error: null, phase: 'streaming', replacementValid: false };
