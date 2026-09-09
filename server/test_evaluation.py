@@ -1,9 +1,13 @@
 import json
+import os
 import threading
+import tempfile
 import unittest
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from eval_corpus import cases
 from evaluate import percentile, prompt, translate, validate_endpoint
+from preflight import effective_settings
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -40,6 +44,23 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("into French", prompt("hello", "fr"))
         self.assertIsNone(percentile([], .95))
         self.assertEqual(percentile([3, 1, 2], .5), 2)
+
+    def test_preflight_honors_env_file_and_process_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("FAST_GPU=GPU-test\nFAST_PORT=9011\n", encoding="utf-8")
+            settings = effective_settings("fast", None, path)
+            self.assertEqual(settings["fast"]["gpu"], "GPU-test")
+            self.assertEqual(settings["fast"]["port"], 9011)
+            previous = os.environ.get("FAST_PORT")
+            os.environ["FAST_PORT"] = "9012"
+            try:
+                self.assertEqual(effective_settings("fast", None, path)["fast"]["port"], 9012)
+            finally:
+                if previous is None:
+                    os.environ.pop("FAST_PORT", None)
+                else:
+                    os.environ["FAST_PORT"] = previous
 
     def test_stream_unicode_and_truncation(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

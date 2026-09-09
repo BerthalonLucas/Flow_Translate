@@ -58,6 +58,7 @@ services:
       - "10"
       - --gpu-memory-utilization
       - "${FAST_GPU_MEMORY:-0.45}"
+      - --no-enable-flashinfer-autotune
       - --no-enable-log-requests
       - --max-log-len
       - "0"
@@ -95,6 +96,7 @@ services:
       - "10"
       - --gpu-memory-utilization
       - "${QUALITY_GPU_MEMORY:-0.80}"
+      - --no-enable-flashinfer-autotune
       - --no-enable-log-requests
       - --max-log-len
       - "0"
@@ -104,4 +106,3 @@ services:
 volumes:
   model-cache:
   compile-cache:
-
