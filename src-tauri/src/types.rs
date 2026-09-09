@@ -80,6 +80,8 @@ pub struct Settings {
     pub shortcut: String,
     pub history_enabled: bool,
     pub autostart: bool,
+    #[serde(default)]
+    pub connection_expanded: bool,
     pub profiles: HashMap<String, Profile>,
 }
 
@@ -108,6 +110,7 @@ impl Default for Settings {
             shortcut: "Ctrl+Alt+T".into(),
             history_enabled: false,
             autostart: false,
+            connection_expanded: false,
             profiles,
         }
     }

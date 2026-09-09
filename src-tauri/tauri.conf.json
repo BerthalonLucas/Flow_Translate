@@ -46,14 +46,14 @@
       {
         "label": "settings",
         "create": false,
-        "title": "Paramètres FlowTranslate",
+        "title": "Réglages FlowTranslate",
         "url": "/?window=settings",
-        "width": 620,
-        "height": 640,
+        "width": 520,
+        "height": 540,
         "visible": false,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
-        "resizable": true,
+        "resizable": false,
         "center": true
       }
     ],

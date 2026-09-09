@@ -24,6 +24,8 @@ struct PersistedSettings {
     shortcut: String,
     history_enabled: bool,
     autostart: bool,
+    #[serde(default)]
+    connection_expanded: bool,
     profiles: HashMap<String, PersistedProfile>,
 }
 
@@ -76,6 +78,7 @@ impl SettingsStore {
             shortcut: raw.shortcut,
             history_enabled: raw.history_enabled,
             autostart: raw.autostart,
+            connection_expanded: raw.connection_expanded,
             profiles,
         };
         validate(&settings)?;
@@ -106,6 +109,7 @@ impl SettingsStore {
             shortcut: settings.shortcut.clone(),
             history_enabled: settings.history_enabled,
             autostart: settings.autostart,
+            connection_expanded: settings.connection_expanded,
             profiles,
         };
         let bytes = serde_json::to_vec_pretty(&raw)

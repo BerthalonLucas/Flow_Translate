@@ -494,7 +494,7 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
         let should_hide = state.inner.lock().map(|mut i| i.complete_pending_dismiss(&capture_id, generation)).unwrap_or(false);
         if should_hide {
             for label in ["overlay", "capsule"] {
-                if let Some(window) = handle.get_webview_window(label) { let _ = window.hide(); }
+                if let Some(window) = handle.get_webview_window(label) { let _ = host::hide(&window); }
             }
         }
     }).map_err(|_| "Fermeture de la traduction indisponible.".to_string())
@@ -551,6 +551,28 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
     w.show()
         .and_then(|_| w.set_focus())
         .map_err(|_| "Ouverture des réglages impossible.".into())
+}
+#[tauri::command]
+fn resize_settings(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
+    // The settings window has no system frame: its height follows the React content,
+    // capped to the work area so the document scrolls instead of leaving the screen.
+    if window.label() != "settings" { return Err("Fenêtre inattendue.".into()); }
+    if !height.is_finite() || height < 120. || height > 2000. { return Err("Hauteur invalide.".into()); }
+    let scale = window.scale_factor().map_err(|_| "Fenêtre indisponible.".to_string())?;
+    let (work, _) = host::monitor(host::window_rect(host::handle(&window)), 0);
+    let logical_height = height.min((work.height / scale - 40.).max(120.)).round();
+    window
+        .set_size(tauri::LogicalSize::new(520., logical_height))
+        .map_err(|_| "Redimensionnement indisponible.".to_string())
+}
+#[tauri::command]
+fn drag_settings(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "settings" { return Err("Fenêtre inattendue.".into()); }
+    window.start_dragging().map_err(|_| "Déplacement indisponible.".into())
+}
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
 }
 #[tauri::command]
 fn focus_overlay(app: AppHandle) -> Result<(), String> {
@@ -780,7 +802,7 @@ fn position(
         let work = i.work;
         let (w, h) = (width * s, height * s);
         let regions = i.regions.clone();
-        let surface = regions.first().copied().unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 26. });
+        let surface = regions.first().copied().unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 28. });
         let (glass_w, glass_h) = (surface.width * s, surface.height * s);
         let to_host = |glass: Rect| placement::clamp(work, glass.x - surface.x * s, glass.y - surface.y * s, w, h);
         i.size = (width, height);
@@ -804,14 +826,12 @@ fn position(
                     (overlay, Some(capsule), s)
                 }
             }
-        } else if i.presentation == Presentation::Reader {
-            if cap.anchor.is_none() {
-                let (glass, capsule) = placement::reader_above_capsule(work, glass_w, glass_h, s);
-                (to_host(glass), Some(capsule), s)
-            } else {
-                (to_host(placement::reader(work, glass_w, glass_h)), None, s)
-            }
+        } else if i.presentation == Presentation::Reader && cap.anchor.is_none() {
+            let (glass, capsule) = placement::reader_above_capsule(work, glass_w, glass_h, s);
+            (to_host(glass), Some(capsule), s)
         } else if let Some(anchor) = cap.anchor {
+            // Design « 1a »: compact and enlarged glass share the anchored top-left
+            // corner; a larger glass is shifted by the clamp, never recentred.
             if i.side.is_none() {
                 i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, None).1);
             }
@@ -859,7 +879,7 @@ fn finish_position(
           if apply_capsule {
             if let Some(window) = handle.get_webview_window("capsule") {
                 if let Some(capsule) = capsule { host::show(&window, capsule, 19. * scale, &[], scale)?; }
-                else { window.hide().map_err(|_| "Placement de la capsule indisponible.".to_string())?; }
+                else { host::hide(&window)?; }
             } else {
                 return Err("Capsule indisponible.".into());
             }
@@ -869,7 +889,7 @@ fn finish_position(
             handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
           if apply_overlay {
             let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
-            host::show(&window, rect, 26. * scale, &regions, scale)?;
+            host::show(&window, rect, 28. * scale, &regions, scale)?;
           }
           let mut i = state.inner.lock().map_err(|_| lock_error())?;
           if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
@@ -1094,6 +1114,9 @@ pub fn run() {
             open_settings,
             focus_overlay,
             resize_overlay,
+            resize_settings,
+            drag_settings,
+            quit_app,
             start_drag,
             check_connection,
             get_history,

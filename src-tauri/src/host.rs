@@ -13,7 +13,7 @@ use windows::Win32::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         WindowsAndMessaging::{
-            GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW,
+            GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW, ShowWindow, SW_HIDE,
             SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
             SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
             WS_SYSMENU, WS_THICKFRAME,
@@ -190,6 +190,16 @@ pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
         },
         1.,
     )
+}
+
+pub fn hide(window: &WebviewWindow) -> Result<(), String> {
+    // show() uses SWP_SHOWWINDOW to preserve source focus. Tao's cached VISIBLE
+    // flag may consequently still be false; window.hide() alone then does
+    // nothing (WindowFlags::apply_diff returns early). Update both layers.
+    window.hide().map_err(|_| "Fermeture de la fenêtre indisponible.".to_string())?;
+    let hwnd = window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?;
+    unsafe { let _ = ShowWindow(HWND(hwnd.0), SW_HIDE); }
+    Ok(())
 }
 
 pub fn show(
