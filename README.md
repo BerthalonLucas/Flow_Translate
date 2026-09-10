@@ -8,10 +8,10 @@ ouvre une capsule de 200 × 36 px et demande confirmation avant l’envoi. Au re
 seule l’icône de notification reste présente. Langue, profil Rapide/Qualité,
 raccourci et connexion se configurent dans les réglages.
 
-**État : version de recette 0.1.5, avec les deux moteurs réels opérationnels.**
+**État : version d’essai 0.1.6 (bulle repliée en onglet, bords lissés, attente en anneau) ; moteurs réels validés en 0.1.5.**
 Les 100 extraits synthétiques FR↔EN ont été exécutés pour chaque modèle à 1, 4
 et 10 requêtes simultanées. La revue humaine de qualité et la matrice native
-Office/multimoniteur restent à terminer. Voir [le guide d’essai](docs/ESSAIS-0.1.5.md)
+Office/multimoniteur restent à terminer. Voir [le guide d’essai sur un autre poste](docs/ESSAIS-0.1.6.md), [l’essai réel 0.1.5](docs/ESSAIS-0.1.5.md)
 et les preuves dans [VALIDATION.md](docs/VALIDATION.md).
 
 ## Essayer

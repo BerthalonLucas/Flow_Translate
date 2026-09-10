@@ -1,9 +1,13 @@
 [CmdletBinding()]
-param()
+param(
+    # Measurements to ship when the release itself was not re-measured (client-only changes).
+    [string]$EvaluationVersion = ''
+)
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 $version = (Get-Content -LiteralPath (Join-Path $repo "package.json") -Raw | ConvertFrom-Json).version
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Unexpected release version" }
+if (-not $EvaluationVersion) { $EvaluationVersion = $version }
 $release = Join-Path $repo "release"
 $kit = Join-Path $release "FlowTranslate-$version-test-kit"
 $installer = Join-Path $release "FlowTranslate_${version}_x64-setup.exe"
@@ -22,29 +26,52 @@ Copy-Item -LiteralPath (Join-Path $repo "docs/VALIDATION.md") -Destination $kit
 Copy-Item -LiteralPath (Join-Path $repo "public/THIRD-PARTY-INTERACTION-LICENSES.txt") -Destination $kit
 $evaluation = Join-Path $kit "evaluation"
 New-Item -ItemType Directory -Path $evaluation -Force | Out-Null
-Copy-Item -Path (Join-Path $release "evaluation-$version/*") -Destination $evaluation
-Copy-Item -LiteralPath (Join-Path $repo "docs/evaluation/$version/README.md") -Destination $evaluation
+Copy-Item -Path (Join-Path $release "evaluation-$EvaluationVersion/*") -Destination $evaluation
+Copy-Item -LiteralPath (Join-Path $repo "docs/evaluation/$EvaluationVersion/README.md") -Destination $evaluation
+# Launches the installed client with a synthetic engine: real capture, labelled simulated answers.
+# ASCII on purpose: cmd echoes in the console code page.
+@'
+@echo off
+setlocal
+set "EXE=%LOCALAPPDATA%\FlowTranslate\FlowTranslate.exe"
+if not exist "%EXE%" set "EXE=%~dp0FlowTranslate.exe"
+if not exist "%EXE%" (
+  echo FlowTranslate.exe introuvable. Installez d'abord l'application, ou copiez ce fichier dans son dossier.
+  pause
+  exit /b 1
+)
+tasklist /FI "IMAGENAME eq FlowTranslate.exe" | find /I "FlowTranslate.exe" >nul
+if not errorlevel 1 (
+  echo Quittez d'abord FlowTranslate depuis l'icone de notification, puis relancez ce fichier.
+  pause
+  exit /b 1
+)
+start "" "%EXE%" --simulate-inference
+echo FlowTranslate est lance en mode simule : selectionnez un texte puis Ctrl+Alt+T.
+'@ | Set-Content -LiteralPath (Join-Path $kit "Mode-simule.cmd") -Encoding ASCII
 @"
-FlowTranslate $version - kit de recette Windows
+FlowTranslate $version - kit d'essai Windows pour un autre poste
 
-1. Installer avec FlowTranslate_${version}_x64-setup.exe.
-2. Sur le poste serveur, demarrer Docker Desktop (moteur Linux), puis depuis ce dossier :
+1. Installer avec FlowTranslate_${version}_x64-setup.exe (par utilisateur, sans droits administrateur).
+2. Tester l'interface sans serveur : Mode-simule.cmd lance le client en mode simulé
+   (capture réelle, réponse synthétique). Sélectionner un texte puis Ctrl+Alt+T.
+   Sortir la souris de la bulle : elle se replie en onglet en bas de l'écran ; le survoler la rouvre.
+3. Vraie traduction, seulement si ce poste a Docker Desktop (moteur Linux) et une carte NVIDIA :
    powershell -NoProfile -ExecutionPolicy Bypass -File .\server\start.ps1 -Profile fast
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\server\start.ps1 -Profile quality
-   Python 3 et Docker/NVIDIA sont requis sur le poste serveur. Les poids sont telecharges au premier lancement.
-3. Ouvrir FlowTranslate via son raccourci. Choisir langue et mode, puis Enregistrer et verifier le moteur.
-4. Selectionner du texte et appuyer sur Ctrl+Alt+T. Echap ferme la bulle.
+   puis Réglages, mode Rapide, Enregistrer et vérifier le moteur. Les poids (~4 Go) se téléchargent au premier lancement.
+   Un serveur distant n'est accepté qu'en HTTPS : hors périmètre de ce kit.
+4. Quitter FlowTranslate depuis l'icône de notification avant toute réinstallation.
 
-LIRE-POUR-TESTER.md contient la recette detaillee et les chemins deja installes chez Lucas.
-Sur un autre poste, employer le chemin choisi par l'installateur et les fichiers du kit.
-evaluation contient uniquement des resultats synthetiques, pas de textes utilisateur.
-VALIDATION.md distingue tests effectues et controles manuels encore en attente.
-Les services tournent uniquement en local par defaut. Fermer le client ne decharge pas les modeles.
-Pour arreter uniquement ces deux moteurs sans effacer leurs caches :
+LIRE-POUR-TESTER.md détaille l'installation, les points à observer et quoi rapporter.
+VALIDATION.md distingue les contrôles automatiques faits et ce qui reste à confirmer à l'œil.
+evaluation contient les mesures de la version $EvaluationVersion (résultats synthétiques, aucun texte utilisateur).
+Les moteurs écoutent uniquement en local. Fermer le client ne décharge pas les modèles.
+Pour arrêter uniquement ces moteurs sans effacer leurs caches :
 docker compose -f .\server\compose.yaml --profile fast --profile quality down
 "@ | Set-Content -LiteralPath (Join-Path $kit "COMMENCER.txt") -Encoding UTF8
 $manifest = [ordered]@{
     version = $version
+    evaluationVersion = $EvaluationVersion
     sourceCommit = (git -C $repo rev-parse HEAD)
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     installerSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash

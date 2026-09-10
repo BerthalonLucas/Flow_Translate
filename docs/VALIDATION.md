@@ -1,5 +1,13 @@
 # Validation evidence
 
+## Integrated 0.1.6 — glass rework, 2026-09-10
+
+- NSIS installer `FlowTranslate_0.1.6_x64-setup.exe`, SHA-256 `594BAAED1F10D45BB75FE6E5598935C418CD5659D403243F08CECD7993643A70`, built from the 0.1.6 sources (commit recorded in the kit manifest). Packaged as `release/FlowTranslate-0.1.6-test-kit.zip` for another workstation: installer, `Mode-simule.cmd` (`--simulate-inference`), server files, trial guide, this file and the 0.1.5 measurements. Not signed.
+- Integrated checks: 7 React tests, 47 Playwright tests (browser UI, IPC fixture, workbench, reported defects), 17 visual references (short, long and pending regenerated for the tighter shadow and the ring), 19 Rust unit tests, production build.
+- Native WebView2 probe on the release executable (`release/ui-evidence/native-after-edges/result.json`): 3 cycles, overlay HWND without caption styles and **without window region**, `WindowFromPoint` returns the overlay on the glass and the window underneath in the halo, pass-through ex-styles set and cleared accordingly, after show and after `focus_overlay`; menus, DOM close, native windows hidden.
+- The Windows session was locked during the probe (LogonUI): `SetCursorPos` and `GetCursorPos` were inert, so the hit tester was fed through the test-only `override_cursor` command (honoured only under `FLOWTRANSLATE_CDP_URL`). A manual spike on the live tab had shown the same pass-through with the real `WindowFromPoint`. Screen capture was unavailable for the same reason.
+- Not declared accepted: anti-aliased corners and shadows on the real desktop, ring smoothness, click-through feel, 125/150 % DPI, and the overlay's rendering while it carries `WS_EX_LAYERED` at rest. These are the points of the 0.1.6 trial guide (`docs/ESSAIS-0.1.6.md`).
+
 ## Integrated 0.1.5 — real inference trial, 2026-09-09
 
 - Tauri 2 Windows installer built and installed at `C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe`, file version 0.1.5. The desktop shortcut points to this exact executable with no demo arguments. The installed instance runs with `--settings`, without simulation. User confirmed that the settings window displays correctly.

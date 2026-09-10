@@ -1,4 +1,30 @@
-# 0.1.4 — verre plus présent, interactions affinées
+# 0.1.6 — onglet, bords lissés, attente en anneau
+
+La bulle se replie en un onglet de 44 × 20 px au bord bas de l’écran quand la
+souris la quitte (ou après 10 s sans visite) ; le survoler la rouvre, le × ou
+**Fermer** la ferme. `Ctrl+Alt+T` traduit aussitôt la sélection courante, presse-
+papiers compris, sans confirmation ; la fenêtre capsule n’est plus affichée.
+
+Plus de matériau DWM ni de région Win32 : le verre se peint lui-même, Chromium
+dessine les coins et les ombres avec l’alpha par pixel, et le hit-test suit le
+curseur (sondage toutes les 8 ms, `WS_EX_TRANSPARENT | WS_EX_LAYERED`). Fini le
+cadre gris, les coins en escalier et les ombres coupées ; la fenêtre porte un halo
+transparent pour les ombres.
+
+Pendant la traduction, un anneau tourne ; le résultat arrive d’un bloc, la
+fenêtre se redimensionne une seule fois et le verre s’ouvre en fondu. Une erreur
+de connexion nomme le serveur injoignable et renvoie aux Réglages. Le rendu natif
+(coins, ombre, fluidité) reste à confirmer à l’œil : la session de validation
+était verrouillée, voir VALIDATION.md. Kit d’essai pour un autre poste :
+`scripts/package-test-kit.ps1 -EvaluationVersion 0.1.5`.
+
+## 0.1.5 — moteurs réels et kit de recette
+
+Inférence réelle sous WSL2 (runner alternatif de l’image vLLM 0.28.0 épinglée,
+une carte par profil), 600/600 réponses complètes sur les extraits synthétiques,
+fenêtre Réglages sans cadre, premier kit de recette Windows.
+
+## 0.1.4 — verre plus présent, interactions affinées
 
 Le verre graphite passe de 78 % à 66 % d'opacité, les accessoires à 68 %.
 Un bord asymétrique et des reflets intérieurs discrets donnent du relief sans
