@@ -1,7 +1,7 @@
 :root { font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: #f7f8fc; font-synthesis: none; }
 /* Design handoff « 1a » tokens (2026-09-09). */
 :root {
-  --glass-bg: rgba(22, 24, 29, .76);
+  --glass-bg: rgba(22, 24, 29, .92); /* the packaged window paints only the DOM: no native material behind the glass */
   --glass-sheen: radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.09), transparent 60%);
   --glass-border: rgba(255,255,255,.12);
   --glass-shadow: 0 16px 40px rgba(0,0,0,.32);

@@ -46,14 +46,9 @@ struct Inner {
     last_capsule: Option<Option<Rect>>,
     measured: bool,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ManualWindow {
-    Overlay,
-    Capsule,
-}
+// Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
 #[derive(Clone, Copy, Debug)]
 struct ManualPlacement {
-    window: ManualWindow,
     x: f64,
     y: f64,
 }
@@ -145,10 +140,9 @@ fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<AppState>();
-                    let visible = state.inner.lock().map(|i| i.visible).unwrap_or(false);
-                    if visible {
-                        let _ = focus_overlay(app.clone());
-                    } else if let Err(message) = capture_text(app.clone(), state) {
+                    // Every press translates the current selection (clipboard fallback
+                    // included); the docked tab brings the previous glass back on hover.
+                    if let Err(message) = capture_text(app.clone(), state) {
                         capture_error(&app, &message, true);
                     }
                 });
@@ -638,7 +632,7 @@ async fn resize_overlay(
 }
 
 fn validate_regions(regions: &[SurfaceRegion], width: f64, height: f64) -> Result<(), String> {
-    if regions.is_empty() || regions.len() > 4 { return Err("Régions de surface invalides.".into()); }
+    if regions.is_empty() || regions.len() > 6 { return Err("Régions de surface invalides.".into()); }
     for region in regions {
         let values = [region.x, region.y, region.width, region.height, region.radius];
         if values.iter().any(|value| !value.is_finite())
@@ -658,11 +652,9 @@ fn start_drag(
     client_x: f64,
     client_y: f64,
 ) -> Result<(), String> {
-    let dragged = match window.label() {
-        "overlay" => ManualWindow::Overlay,
-        "capsule" => ManualWindow::Capsule,
-        _ => return Err("Cette fenêtre ne peut pas être déplacée.".into()),
-    };
+    if window.label() != "overlay" {
+        return Err("Cette fenêtre ne peut pas être déplacée.".into());
+    }
     let capture_id = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible {
@@ -729,9 +721,8 @@ fn start_drag(
                 return;
             }
             i.manual = Some(ManualPlacement {
-                window: dragged,
-                x: rect.x + if dragged == ManualWindow::Overlay { i.regions.first().map_or(0., |region| region.x * scale) } else { 0. },
-                y: rect.y + if dragged == ManualWindow::Overlay { i.regions.first().map_or(0., |region| region.y * scale) } else { 0. },
+                x: rect.x + i.regions.first().map_or(0., |region| region.x * scale),
+                y: rect.y + i.regions.first().map_or(0., |region| region.y * scale),
             });
             i.work = work;
             i.scale = scale;
@@ -806,38 +797,21 @@ fn position(
         if i.dragging {
             return Ok(());
         }
-        let result = if let Some(manual) = i.manual {
-            match manual.window {
-                ManualWindow::Overlay => (
-                    to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }),
-                    if cap.anchor.is_none() {
-                        Some(placement::capsule(work, 200. * s, 36. * s))
-                    } else {
-                        None
-                    },
-                    s,
-                ),
-                ManualWindow::Capsule => {
-                    let capsule = placement::clamp(work, manual.x, manual.y, 200. * s, 36. * s);
-                    let overlay = to_host(Rect { x: capsule.x + (capsule.width - glass_w) / 2., y: capsule.y - glass_h - 8. * s, width: glass_w, height: glass_h });
-                    (overlay, Some(capsule), s)
+        // Docked glass and unanchored captures rest bottom-centre on the tab; the capsule
+        // window is no longer shown. Anchored glass keeps its drag position or its anchor.
+        let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Docked || cap.anchor.is_none(), i.manual, cap.anchor) {
+            (true, _, _) | (_, _, None) => (placement::docked(work, w, h, s), None, s),
+            (false, Some(manual), _) => (to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }), None, s),
+            (false, None, Some(anchor)) => {
+                // Design « 1a »: compact and enlarged glass share the anchored top-left
+                // corner; a larger glass is shifted by the clamp, never recentred.
+                if i.side.is_none() {
+                    i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, None).1);
                 }
+                let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, i.side);
+                i.side = Some(side);
+                (to_host(glass), None, s)
             }
-        } else if i.presentation == Presentation::Reader && cap.anchor.is_none() {
-            let (glass, capsule) = placement::reader_above_capsule(work, glass_w, glass_h, s);
-            (to_host(glass), Some(capsule), s)
-        } else if let Some(anchor) = cap.anchor {
-            // Design « 1a »: compact and enlarged glass share the anchored top-left
-            // corner; a larger glass is shifted by the clamp, never recentred.
-            if i.side.is_none() {
-                i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, None).1);
-            }
-            let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, i.side);
-            i.side = Some(side);
-            (to_host(glass), None, s)
-        } else {
-            let capsule = placement::capsule(work, 200. * s, 36. * s);
-            (to_host(Rect { x: work.x + (work.width - glass_w) / 2., y: capsule.y - glass_h - 8. * s, width: glass_w, height: glass_h }), Some(capsule), s)
         };
         let overlay_key = (result.0, regions.clone());
         let apply_overlay = i.last_overlay.as_ref() != Some(&overlay_key);
@@ -1029,7 +1003,6 @@ pub fn run() {
             use tauri::{
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,
-                window::{Color, Effect, EffectsBuilder},
             };
             let settings_item = MenuItem::with_id(app, "settings", "Réglages", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
@@ -1054,12 +1027,7 @@ pub fn run() {
             tray.build(app)?;
             for label in ["overlay", "capsule"] {
                 if let Some(w) = app.get_webview_window(label) {
-                    let _ = w.set_effects(
-                        EffectsBuilder::new()
-                            .effect(Effect::Acrylic)
-                            .color(Color(29, 31, 36, 30))
-                            .build(),
-                    );
+                    host::apply_glass(&w);
                     let native = host::handle(&w);
                     w.on_window_event(move |event| {
                         if matches!(event, tauri::WindowEvent::Focused(_)) {

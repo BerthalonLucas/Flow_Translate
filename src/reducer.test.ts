@@ -7,7 +7,7 @@ const selected: Capture = { id: 'c1', text: 'Hello', source: 'selection', canRep
 describe('translationReducer', () => {
   it('demands confirmation for clipboard input', () => {
     const clipboard = { ...selected, source: 'clipboard' as const, canReplace: false };
-    expect(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: clipboard }).phase).toBe('confirming');
+    expect(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: clipboard }).phase).toBe('idle');
   });
   it('ignores events belonging to a stale request', () => {
     const active = translationReducer(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected }), { type: 'START', requestId: 'new', mode: 'quality', targetLanguage: 'fr' });

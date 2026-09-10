@@ -167,7 +167,7 @@ export function SettingsWindow() {
           <Segmented<Language> label="Langue cible" value={settings.targetLanguage} options={[{ value: 'fr', label: 'Français' }, { value: 'en', label: 'English' }]} onChange={value => update('targetLanguage', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>Profil par défaut</strong><small>Qualité : plus lent, meilleures tournures. Changeable depuis le menu de la bulle.</small></div>
           <Segmented<Mode> label="Profil par défaut" value={settings.mode} options={[{ value: 'quality', label: 'Qualité' }, { value: 'fast', label: 'Rapide' }]} onChange={value => update('mode', value)} /></div>
-        <div className="setting-row"><div className="setting-copy"><strong>Raccourci</strong><small>Sélectionnez un texte, puis pressez-le. Une seconde pression donne le focus à la bulle.</small></div>
+        <div className="setting-row"><div className="setting-copy"><strong>Raccourci</strong><small>Sélectionnez un texte, puis pressez-le : la traduction démarre aussitôt. Une nouvelle pression traduit la sélection courante.</small></div>
           <div className="shortcut-control">
             <span ref={keys} className="keycaps" data-capturing={capturing || undefined} tabIndex={capturing ? 0 : -1} role="textbox" aria-readonly="true" aria-label="Raccourci" onKeyDown={captureShortcut} onBlur={event => { if (!(event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest('.shortcut-control'))) setCapturing(false); }}>
               {capturing ? <em>Pressez la combinaison…</em> : settings.shortcut.split('+').map((key, index) => <kbd key={`${key}-${index}`}>{key}</kbd>)}

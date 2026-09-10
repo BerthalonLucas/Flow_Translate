@@ -29,6 +29,8 @@ pub struct Rect {
 pub enum Presentation {
     Contextual,
     Reader,
+    /// Bottom-centre window whose bottom edge carries the tab; the glass grows upward.
+    Docked,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]

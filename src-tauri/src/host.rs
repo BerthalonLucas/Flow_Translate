@@ -3,6 +3,9 @@ use crate::types::{Rect, SurfaceRegion};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Mutex;
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::window::{Color, Effect, EffectsBuilder};
+use windows::core::{s, w, BOOL};
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{
@@ -22,6 +25,52 @@ use windows::Win32::{
         },
     },
 };
+
+/// Material behind the glass. `DWMWA_SYSTEMBACKDROP_TYPE` (Tauri's `Effect::Acrylic`
+/// on Windows 11) paints the material behind the *entire window bounds*, so the
+/// window region never clips it: that was the grey frame around the bubble. Any
+/// material also shows through DOM fades. The glass therefore paints itself (no
+/// material); `FLOWTRANSLATE_GLASS=blur|acrylic|dwm` remains for experiments.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Glass { Blur, Acrylic, Dwm, None }
+
+pub fn glass_mode() -> Glass {
+    match std::env::var("FLOWTRANSLATE_GLASS").as_deref() {
+        Ok("dwm") => Glass::Dwm,
+        Ok("acrylic") => Glass::Acrylic,
+        Ok("blur") => Glass::Blur,
+        _ => Glass::None,
+    }
+}
+
+#[repr(C)]
+struct AccentPolicy { state: u32, flags: u32, gradient: u32, animation: u32 }
+#[repr(C)]
+struct CompositionAttribute { attribute: u32, data: *mut core::ffi::c_void, size: usize }
+
+unsafe fn set_accent(hwnd: HWND, state: u32, flags: u32, gradient: u32) {
+    type SetWindowCompositionAttribute = unsafe extern "system" fn(HWND, *mut CompositionAttribute) -> BOOL;
+    unsafe {
+        let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else { return };
+        let Some(entry) = GetProcAddress(user32, s!("SetWindowCompositionAttribute")) else { return };
+        let set: SetWindowCompositionAttribute = std::mem::transmute(entry);
+        let mut policy = AccentPolicy { state, flags, gradient, animation: 0 };
+        let mut data = CompositionAttribute { attribute: 19, data: &mut policy as *mut _ as _, size: std::mem::size_of::<AccentPolicy>() };
+        let _ = set(hwnd, &mut data);
+    }
+}
+
+pub fn apply_glass(window: &WebviewWindow) {
+    let hwnd = HWND(handle(window) as *mut _);
+    // ABGR tint packed as r | g << 8 | b << 16 | a << 24 (graphite, light alpha).
+    let tint = 29u32 | (31u32 << 8) | (36u32 << 16) | (48u32 << 24);
+    match glass_mode() {
+        Glass::Dwm => { let _ = window.set_effects(EffectsBuilder::new().effect(Effect::Acrylic).color(Color(29, 31, 36, 30)).build()); }
+        Glass::Acrylic => unsafe { set_accent(hwnd, 4, 0, tint) },
+        Glass::Blur => unsafe { set_accent(hwnd, 3, 2, tint) },
+        Glass::None => {}
+    }
+}
 
 pub fn foreground() -> isize {
     unsafe { GetForegroundWindow().0 as isize }

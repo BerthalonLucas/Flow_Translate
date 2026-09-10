@@ -7,7 +7,7 @@ export type TranslationState = {
   targetLanguage: Language;
   mode: Mode;
   result: string;
-  phase: 'idle' | 'confirming' | 'streaming' | 'complete' | 'error' | 'cancelled';
+  phase: 'idle' | 'streaming' | 'complete' | 'error' | 'cancelled';
   error: string | null;
   replacementValid: boolean;
   invalidated: boolean;
@@ -35,7 +35,7 @@ export function translationReducer(state: TranslationState, action: Action): Tra
   switch (action.type) {
     case 'CAPTURE':
       return { ...state, capture: action.capture, requestId: null, result: '', error: null, comparing: false,
-        replacementValid: false, invalidated: false, layout: action.layout ?? initialTranslationState.layout, phase: action.capture.source === 'clipboard' ? 'confirming' : 'idle' };
+        replacementValid: false, invalidated: false, layout: action.layout ?? initialTranslationState.layout, phase: 'idle' };
     case 'LAYOUT': return action.captureId === state.capture?.id ? { ...state, layout: action.layout } : state;
     case 'START':
       return { ...state, requestId: action.requestId, mode: action.mode, targetLanguage: action.targetLanguage,

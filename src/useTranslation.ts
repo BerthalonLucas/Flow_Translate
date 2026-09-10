@@ -53,7 +53,8 @@ export function useTranslation(readyOnMount = false) {
     closingRef.current = null;
     setClosingCaptureId(null);
     dispatch({ type: 'CAPTURE', capture });
-    if (capture.source === 'selection') start(capture);
+    // The shortcut translates at once, clipboard fallback included: no confirmation step.
+    start(capture);
   }, [discardPending, start]);
 
   useEffect(() => {

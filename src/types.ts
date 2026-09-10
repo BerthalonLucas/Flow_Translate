@@ -8,6 +8,7 @@ export type StreamEvent = { requestId: string; kind: 'delta' | 'done' | 'error';
 export type HistoryEntry = { id: string; sourceText: string; translatedText: string; targetLanguage: Language; mode: Mode; createdAt: string };
 export type ConnectionStatus = { connected: boolean; message: string };
 export type TranslationRequest = { id: string; captureId: string; text: string; targetLanguage: Language; mode: Mode };
-export type Presentation = 'contextual' | 'reader';
+// 'docked': the window rests bottom-centre with the tab on its bottom edge.
+export type Presentation = 'contextual' | 'reader' | 'docked';
 export type HitRegion = { x: number; y: number; width: number; height: number; radius: number };
 export type OverlayGeometry = { captureId: string; presentation: Presentation; regions: HitRegion[] };

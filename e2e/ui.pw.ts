@@ -49,16 +49,47 @@ for (const scale of [1, 1.25, 1.5, 2]) {
   });
 }
 
-test('clipboard source is shown and must be confirmed before translation', async ({ page }) => {
+test('clipboard source translates at once, docked above its tab', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('radio', { name: 'Presse-papiers', exact: true }).check();
   await page.getByRole('button', { name: 'Simuler Ctrl + Alt + T', exact: true }).click();
-  const bubble = page.locator('.translation-bubble');
-  await expect(bubble).toContainText('Je vous envoie la proposition mise à jour.');
-  await expect(bubble.getByRole('button', { name: 'Traduire', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeDisabled();
-  await bubble.getByRole('button', { name: 'Traduire', exact: true }).click();
+  const overlay = page.locator('.glass-overlay');
+  await expect(overlay).toHaveAttribute('data-docked', 'true');
+  await expect(overlay.locator('.dock-tab')).toBeVisible();
+  await expect(overlay.getByRole('button', { name: 'Traduire', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  expect(await page.locator('.translation-text .chunk').count()).toBeGreaterThan(0);
+});
+
+test('leaving a finished glass docks it as a tab; hovering the tab brings it back', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1');
+  const copy = page.getByRole('button', { name: 'Copier la traduction', exact: true });
+  await expect(copy).toBeEnabled();
+  await page.locator('.translation-copy').hover();
+  await page.mouse.move(5, 5);
+  await expect(page.locator('.dock-tab')).toBeVisible({ timeout: 3000 });
+  await expect(page.locator('.translation-bubble')).toHaveCount(0);
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'true');
+  const tab = await page.locator('.dock-tab').boundingBox();
+  expect(tab?.width).toBe(44);
+  expect(tab?.height).toBe(20);
+  await page.locator('.dock-tab').hover();
+  await expect(page.locator('.translation-bubble')).toBeVisible();
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'false');
+  await expect(copy).toBeEnabled();
+  await page.getByRole('button', { name: 'Fermer', exact: true }).click();
+  await expect(page.locator('.glass-overlay')).toHaveCount(0);
+});
+
+test('streamed text settles chunk by chunk and keeps the whole result once complete', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1&scenario=long');
+  await expect(page.locator('.translation-text .chunk').first()).toBeVisible();
+  await expect(page.locator('.stream-caret')).toHaveCount(1);
+  await expect(page.locator('.thinking')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
+  await expect(page.locator('.stream-caret')).toHaveCount(0);
+  expect(await page.locator('.translation-text .chunk').count()).toBeGreaterThan(3);
+  expect(((await page.locator('.translation-text').textContent()) ?? '').length).toBeGreaterThan(200);
 });
 
 test('error never enables copy of a partial or absent result', async ({ page }) => {
@@ -78,12 +109,12 @@ test('capsule fits a 200px native viewport without horizontal overflow', async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(200);
 });
 
-test('reduced motion disables streaming cursor animation', async ({ page }) => {
+test('reduced motion disables the streaming caret and chunk animations', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/?window=overlay&demo=1');
-  await expect(page.locator('.translation-copy')).toBeVisible();
-  const duration = await page.locator('.translation-text').evaluate(el => getComputedStyle(el, '::after').animationDuration);
-  expect(duration === '0s' || duration === '1e-05s' || duration === '0.00001s').toBeTruthy();
+  await page.goto('/?window=overlay&demo=1&scenario=long');
+  await expect(page.locator('.stream-caret')).toHaveCount(1);
+  const durations = await page.evaluate(() => ['.stream-caret', '.chunk'].map(selector => { const el = document.querySelector(selector); return el ? getComputedStyle(el).animationDuration : 'missing'; }));
+  for (const duration of durations) expect(['0s', '1e-05s', '0.00001s']).toContain(duration);
 });
 
 test('comparison shows source without replacing the translated result', async ({ page }) => {
@@ -207,7 +238,8 @@ test('very long reader preserves all text and supports wheel and keyboard withou
   await expect(content).toHaveAttribute('data-scroll-edge', 'bottom');
   await page.keyboard.press('Home');
   await expect(content).toHaveAttribute('data-scroll-edge', 'top');
-  await page.mouse.move(5, 5);
+  // Off the reading area but still on the glass: the indicator fades, the glass stays.
+  await page.locator('.action-pill').hover();
   await expect(indicator).toHaveCSS('opacity', '0', { timeout: 3000 });
   await content.hover();
   await expect(indicator).toHaveCSS('opacity', '1');

@@ -38,30 +38,11 @@ pub fn overlay(
     )
 }
 
-pub fn capsule(work: Rect, width: f64, height: f64) -> Rect {
-    Rect {
-        x: work.x + (work.width - width) / 2.0,
-        y: work.y + work.height - height - 16.0,
-        width,
-        height,
-    }
-}
-
-pub fn reader(work: Rect, width: f64, height: f64) -> Rect {
-    let width = width.min(work.width);
-    let height = height.min(work.height);
-    Rect {
-        x: work.x + (work.width - width) / 2.,
-        y: work.y + work.height - height - 24.,
-        width,
-        height,
-    }
-}
-
-pub fn reader_above_capsule(work: Rect, width: f64, height: f64, scale: f64) -> (Rect, Rect) {
-    let capsule = capsule(work, 200. * scale, 36. * scale);
-    let glass = clamp(work, work.x + (work.width - width) / 2., capsule.y - height - 8. * scale, width, height);
-    (glass, capsule)
+/// Docked window: bottom-centre of the work area, 8 logical px above its bottom edge.
+/// The frontend keeps the tab on the window's bottom edge, so a taller window only
+/// moves the top edge.
+pub fn docked(work: Rect, width: f64, height: f64, scale: f64) -> Rect {
+    clamp(work, work.x + (work.width - width) / 2., work.y + work.height - height - 8. * scale, width, height)
 }
 
 pub fn clamp(work: Rect, x: f64, y: f64, width: f64, height: f64) -> Rect {
@@ -135,14 +116,12 @@ mod tests {
         );
     }
     #[test]
-    fn reader_is_centered_low_in_negative_work_area() {
+    fn docked_window_rests_on_the_bottom_edge_of_a_negative_work_area() {
         let work = Rect { x: -1600., y: -200., width: 1600., height: 1200. };
-        assert_eq!(reader(work, 560., 480.), Rect { x: -1080., y: 496., width: 560., height: 480. });
-    }
-    #[test]
-    fn clipboard_reader_stays_above_capsule() {
-        let work = Rect { x: 0., y: 0., width: 1920., height: 1080. };
-        let (reader, capsule) = reader_above_capsule(work, 560., 300., 1.);
-        assert!(reader.y + reader.height + 8. <= capsule.y);
+        assert_eq!(docked(work, 300., 40., 1.), Rect { x: -950., y: 952., width: 300., height: 40. });
+        // Growing upward: same bottom edge for a taller window, scaled margin.
+        let tall = docked(work, 300., 260., 1.);
+        assert_eq!(tall.y + tall.height, 992.);
+        assert_eq!(docked(work, 300., 40., 2.).y + 40., 984.);
     }
 }

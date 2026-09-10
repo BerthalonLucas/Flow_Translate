@@ -150,7 +150,7 @@ test('IPC fixture: a long source starts compact; only the menu enlarges and the 
   await page.evaluate(() => window.nativeFixture.capture('long-source', 'A long source paragraph with details to translate. '.repeat(20)));
   await expect.poll(async () => (await geometry(page))?.captureId).toBe('long-source');
   expect((await geometry(page))?.presentation).toBe('contextual');
-  await expect(page.locator('.translation-text')).toContainText('Traduction en cours');
+  await expect(page.locator('.translation-text .thinking')).toHaveAttribute('aria-label', 'Traduction en cours');
   await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Agrandir', exact: true }).click();
   await expect.poll(async () => (await geometry(page))?.presentation).toBe('reader');
@@ -231,4 +231,37 @@ test('IPC fixture: server error offers retry and settings through existing menu'
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'translate').length)).toBe(2);
   await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); });
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+});
+
+test('IPC fixture: a finished glass the pointer left docks as one tab region; hovering the tab restores the glass above it', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(() => window.nativeFixture.delta('Bonjour.'));
+  await page.evaluate(() => window.nativeFixture.done());
+  const copy = page.getByRole('button', { name: 'Copier la traduction', exact: true });
+  await expect(copy).toBeEnabled();
+  await page.locator('.translation-copy').hover();
+  await page.mouse.move(600, 460);
+  await expect(page.locator('.dock-tab')).toBeVisible({ timeout: 3000 });
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'true');
+  await expect.poll(async () => (await geometry(page))?.presentation).toBe('docked');
+  const folded = await geometry(page);
+  const tabRegions = folded!.regions as Array<{ x: number; y: number; width: number; height: number; radius: number }>;
+  expect(tabRegions).toHaveLength(1);
+  expect(tabRegions[0]).toEqual({ x: 128, y: 0, width: 44, height: 20, radius: 10 });
+  expect(folded!.height).toBe(20);
+  await page.locator('.dock-tab').hover();
+  await expect(page.locator('.translation-bubble')).toBeVisible();
+  await expect(copy).toBeEnabled();
+  await expect.poll(async () => ((await geometry(page))?.regions as unknown[])?.length).toBe(3);
+  const open = await geometry(page);
+  const regions = open!.regions as Array<{ x: number; y: number; width: number; height: number; radius: number }>;
+  expect(open!.presentation).toBe('docked');
+  expect(regions[0].width).toBe(300);
+  expect(regions[2].width).toBe(44);
+  expect(regions[2].y + regions[2].height).toBe(open!.height);
+  expect(regions[0].y + regions[0].height + 6).toBe(regions[2].y);
+  await page.locator('.translation-bubble').hover();
+  await page.mouse.move(600, 460);
+  await expect(page.locator('.translation-bubble')).toHaveCount(0, { timeout: 3000 });
+  await expect.poll(async () => ((await geometry(page))?.regions as unknown[])?.length).toBe(1);
 });

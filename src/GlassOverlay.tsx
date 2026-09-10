@@ -4,7 +4,7 @@ import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { bridge } from './bridge';
 import { compactLayout, enlargedLayout, glass } from './layout';
 import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton, motionTokens, useFade, useRise } from './ui';
-import type { HitRegion } from './types';
+import type { HitRegion, Presentation } from './types';
 import type { TranslationController } from './useTranslation';
 
 const DRAG_THRESHOLD = 4;
@@ -43,6 +43,25 @@ export function dragSurface(event: ReactPointerEvent<HTMLElement>, onError?: () 
 
 type ScrollEdge = 'top' | 'middle' | 'bottom' | 'none';
 const SCROLLBAR_LINGER = 800;
+// The glass docks as a tab on the bottom edge once the pointer has left it, or after a
+// quiet read when the pointer never came. Streaming, the menu, a drag or a keyboard
+// focus (`:focus-visible`, not the focus a click leaves behind) hold it.
+const DOCK_AFTER_LEAVE = 500;
+const DOCK_AFTER_REST = 10000;
+
+// Streamed text: each flushed chunk mounts once and settles with its own fade, so the
+// paragraph reads as ink arriving rather than as a reflow. Older chunks never re-animate.
+function StreamedText({ text, streaming, resetKey }: { text: string; streaming: boolean; resetKey: string | null }) {
+  const chunks = useRef<Array<{ id: number; text: string }>>([]);
+  const consumed = useRef(0);
+  const key = useRef(resetKey);
+  if (key.current !== resetKey || text.length < consumed.current) { key.current = resetKey; chunks.current = []; consumed.current = 0; }
+  if (text.length > consumed.current) {
+    chunks.current = [...chunks.current, { id: chunks.current.length, text: text.slice(consumed.current) }];
+    consumed.current = text.length;
+  }
+  return <>{chunks.current.map(chunk => <span key={chunk.id} className="chunk">{chunk.text}</span>)}{streaming && <span className="stream-caret" aria-hidden="true" />}</>;
+}
 
 // The text scrolls inside the glass without a native bar. Radix ScrollArea owns the
 // 3 px indicator geometry; it shows on hover or while scrolling and fades 800 ms later.
@@ -99,9 +118,17 @@ export function GlassOverlay({ controller }: { controller: TranslationController
   return controller.state.capture ? <GlassSession key={controller.state.capture.id} controller={controller} /> : null;
 }
 
+// What the session shows: the glass size, whether it lives on the bottom edge (docked)
+// and, once docked, whether only the tab remains (collapsed).
+type ViewLayout = { presentation: Presentation; docked: boolean; collapsed: boolean };
+const sameView = (a: ViewLayout, b: ViewLayout) => a.presentation === b.presentation && a.docked === b.docked && a.collapsed === b.collapsed;
+
 function GlassSession({ controller }: { controller: TranslationController }) {
   const { state, dispatch, start, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
-  const desiredLayout = state.layout;
+  const captureId = state.capture?.id;
+  // Clipboard captures have no anchor: they open above the tab right away.
+  const [dock, setDock] = useState(() => ({ docked: state.capture?.source === 'clipboard', collapsed: false }));
+  const desiredLayout: ViewLayout = { presentation: state.layout.presentation, docked: dock.docked, collapsed: dock.collapsed };
   const [displayedLayout, setDisplayedLayout] = useState(desiredLayout);
   const [layoutPhase, setLayoutPhase] = useState<'idle' | 'out' | 'commit' | 'in'>('idle');
   const targetLayout = useRef(desiredLayout);
@@ -113,22 +140,29 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focusWithin, setFocusWithin] = useState(false);
+  const visited = useRef(false);
   const root = useRef<HTMLDivElement>(null);
   const previousGeometry = useRef('');
   const fade = useFade('feedback');
+  const bodyFade = useFade();
   const pillRise = useRise(4, 'surface', 0.06);
   const reduced = useReducedMotion();
   const active = useRef({ requestId: state.requestId, closing: closingCaptureId });
   useLayoutEffect(() => { active.current = { requestId: state.requestId, closing: closingCaptureId }; }, [state.requestId, closingCaptureId]);
-  const captureId = state.capture?.id;
   const enlarged = displayedLayout.presentation === 'reader';
+  const docked = displayedLayout.docked;
+  const collapsed = docked && displayedLayout.collapsed;
   const ready = state.phase === 'complete' && !closingCaptureId && layoutPhase === 'idle';
   const streaming = state.phase === 'streaming';
+  const settled = state.phase === 'complete' || state.phase === 'error' || state.phase === 'cancelled';
 
   useLayoutEffect(() => {
-    if (closingCaptureId || layoutPhase !== 'idle') return;
-    if (displayedLayout.presentation === desiredLayout.presentation) return;
-    if (reduced) setDisplayedLayout(desiredLayout);
+    if (closingCaptureId || layoutPhase !== 'idle' || sameView(displayedLayout, desiredLayout)) return;
+    // Folding in place keeps the tab under the pointer; a move or a size change fades through.
+    const foldOnly = displayedLayout.presentation === desiredLayout.presentation && displayedLayout.docked === desiredLayout.docked;
+    if (foldOnly || reduced) setDisplayedLayout(desiredLayout);
     else setLayoutPhase('out');
   }, [desiredLayout, displayedLayout, layoutPhase, reduced, closingCaptureId]);
   useEffect(() => { setMenuOpen(false); setFeedback(null); setCopied(false); }, [captureId, state.requestId]);
@@ -142,9 +176,36 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const timer = window.setTimeout(() => setCopied(false), 1600);
     return () => window.clearTimeout(timer);
   }, [copied]);
+  const held = hovered || focusWithin || menuOpen || dragging || !settled || Boolean(closingCaptureId) || layoutPhase !== 'idle';
+  const menuOpenRef = useRef(menuOpen);
+  menuOpenRef.current = menuOpen;
+  // Hover is read from every pointerover the window sees, not from enter/leave pairs: a
+  // menu item removed under the pointer would otherwise leave the glass "hovered" for
+  // good. Leaving with the pointer means "done reading": a focus the menu or a click
+  // left behind must not keep the glass open; keyboard-only use never moves the pointer.
+  useEffect(() => {
+    const release = () => {
+      const focused = document.activeElement;
+      if (!menuOpenRef.current && focused instanceof HTMLElement && root.current?.contains(focused)) focused.blur();
+    };
+    const over = (event: PointerEvent) => {
+      const inside = event.target instanceof Node && Boolean(root.current?.contains(event.target));
+      if (inside) visited.current = true; else release();
+      setHovered(inside);
+    };
+    const gone = () => { setHovered(false); release(); };
+    window.addEventListener('pointerover', over, true);
+    document.documentElement.addEventListener('pointerleave', gone);
+    return () => { window.removeEventListener('pointerover', over, true); document.documentElement.removeEventListener('pointerleave', gone); };
+  }, []);
+  useEffect(() => {
+    if (collapsed || held) return;
+    const timer = window.setTimeout(() => setDock({ docked: true, collapsed: true }), visited.current ? DOCK_AFTER_LEAVE : DOCK_AFTER_REST);
+    return () => window.clearTimeout(timer);
+  }, [collapsed, held]);
 
-  // The glass never takes focus when it appears. A second shortcut press focuses the
-  // native window; the reading surface then becomes the keyboard target.
+  // The glass never takes focus when it appears. When the native window is focused
+  // (a click inside it), the reading surface becomes the keyboard target.
   useEffect(() => {
     if (!bridge.native) return;
     const onFocus = () => {
@@ -170,8 +231,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
         const bounds = element.getBoundingClientRect();
         const width = Math.ceil(bounds.width);
         // Order is a bridge invariant: Rust anchors the glass (region zero). The menu
-        // overlays the text and may reach below the glass: the window grows to hold it.
-        const selectors = ['.translation-bubble', '.action-pill', '.more-menu', '.compact-feedback'];
+        // overlays the text and may reach past the glass: the window grows to hold it,
+        // upward when docked (the root then keeps the window's bottom edge).
+        const selectors = ['.translation-bubble', '.action-pill', '.more-menu', '.compact-feedback', '.dock-tab'];
         const parts = selectors.flatMap(selector => {
           const part = element.querySelector<HTMLElement>(selector);
           if (!part) return [];
@@ -183,13 +245,14 @@ function GlassSession({ controller }: { controller: TranslationController }) {
           const rect = travel ? { x: box.x - travel.e, y: box.y - travel.f, width: box.width, height: box.height, bottom: box.bottom - travel.f } : box;
           return [{ part, rect }];
         });
-        const height = Math.ceil(Math.max(bounds.height, ...parts.map(({ rect }) => rect.bottom - bounds.y)));
+        const top = Math.min(0, ...parts.map(({ rect }) => rect.y - bounds.y));
+        const height = Math.ceil(Math.max(bounds.height, ...parts.map(({ rect }) => rect.bottom - bounds.y)) - top);
         const regions: HitRegion[] = parts.map(({ part, rect }) => {
           const x = Math.max(0, Math.round(rect.x - bounds.x));
-          const y = Math.max(0, Math.round(rect.y - bounds.y));
+          const y = Math.max(0, Math.round(rect.y - bounds.y - top));
           return { x, y, width: Math.min(width - x, Math.ceil(rect.width)), height: Math.min(height - y, Math.ceil(rect.height)), radius: Math.min(parseFloat(getComputedStyle(part).borderTopLeftRadius), rect.width / 2, rect.height / 2) };
         });
-        const geometry = { captureId, presentation: displayedLayout.presentation, regions };
+        const geometry = { captureId, presentation: displayedLayout.docked ? 'docked' as const : displayedLayout.presentation, regions };
         const signature = JSON.stringify({ width, height, ...geometry });
         if (signature !== previousGeometry.current) {
           previousGeometry.current = signature;
@@ -203,7 +266,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const measure = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(publish); };
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    element.querySelectorAll('.translation-bubble,.action-pill,.more-menu,.compact-feedback').forEach(part => observer.observe(part));
+    element.querySelectorAll('.translation-bubble,.action-pill,.more-menu,.compact-feedback,.dock-tab').forEach(part => observer.observe(part));
     // A hidden WebView may suspend rAF; the first geometry must unlock native show.
     publish();
     return () => { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); };
@@ -213,11 +276,10 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || !captureId) return;
       if (event.key === 'Escape') { event.preventDefault(); if (menuOpen) setMenuOpen(false); else cancelAndDismiss(); }
-      if (event.key === 'Enter' && state.phase === 'confirming' && state.capture && !(event.target instanceof HTMLButtonElement)) start(state.capture);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [cancelAndDismiss, start, state.capture, state.phase, captureId, menuOpen]);
+  }, [cancelAndDismiss, captureId, menuOpen]);
 
   if (!captureId) return null;
   const invokeResult = async (action: 'copy' | 'replace') => {
@@ -233,7 +295,14 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     }
   };
   const changePresentation = () => dispatch({ type: 'LAYOUT', captureId, layout: enlarged ? compactLayout : enlargedLayout });
-  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'}`} data-capture-id={captureId} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging}
+  const expand = () => { if (layoutPhase === 'idle' && !closingCaptureId) setDock({ docked: true, collapsed: false }); };
+  const visit = () => { visited.current = true; };
+  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed}
+    onFocus={event => {
+      // A keyboard focus holds the glass, unless it lands after the pointer already left
+      // (Radix restoring the trigger once the menu closed): that read is over.
+      if (event.target.matches(':focus-visible') && (hovered || !visited.current)) { visit(); setFocusWithin(true); }
+    }} onBlur={event => { if (!(event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget))) setFocusWithin(false); }}
     initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity: closingCaptureId || layoutPhase === 'out' || layoutPhase === 'commit' ? 0 : 1 }}
     transition={{ duration: reduced ? 0 : closingCaptureId ? .12 : layoutPhase === 'out' ? .08 : layoutPhase === 'commit' ? 0 : layoutPhase === 'in' ? .14 : motionTokens.enter, ease: motionTokens.ease }}
     onAnimationComplete={() => {
@@ -246,31 +315,37 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: () => dispatch({ type: 'TOGGLE_COMPARE' }) },
       ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
       ...(state.phase === 'error' ? [{ label: 'Réessayer', run: () => { if (state.capture) start(state.capture); } }] : []),
-      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming || state.phase === 'confirming', run: () => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); } },
+      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming, run: () => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); } },
       { label: 'Réglages', run: () => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.')) },
       { label: 'Fermer', run: cancelAndDismiss, close: true },
     ]}>
-      <div className="translation-bubble" style={{ borderRadius: glass.radius }}
-        onPointerDown={event => dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'), setDragging)}>
-        {state.phase === 'confirming' ? <div className="confirmation" data-reading-surface>
-          <p>Traduire le texte du presse-papiers&nbsp;?</p>
-          <div className="source-preview" tabIndex={0}>{state.capture?.text}</div>
-          <div className="confirmation-actions"><button className="quiet-action" onClick={cancelAndDismiss}>Annuler</button><button className="primary-action" onClick={() => state.capture && start(state.capture)}>Traduire</button></div>
-        </div> : <ReadingSurface streaming={streaming} resetKey={state.requestId} onEnter={() => void invokeResult('copy')}>
-          <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span>{state.capture?.text}</motion.div>}</AnimatePresence>
-          <span className={`translation-text ${state.result || state.error ? '' : 'is-placeholder'}`}>{state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu&nbsp;⋯.</span> : state.result || 'Traduction en cours…'}</span>
-          {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
-        </ReadingSurface>}
-      </div>
-      <motion.div {...pillRise} className="action-pill" aria-label="Actions de traduction">
-        <IconButton label="Copier la traduction" disabled={!ready} data-copied={copied || undefined} onClick={() => void invokeResult('copy')}>
-          <AnimatedIcon name={copied ? 'check' : 'copy'} />
-        </IconButton>
-        {enlarged && <IconButton label="Réduire" onClick={changePresentation}><Icon name="minimize" /></IconButton>}
-        <BubbleMenuTrigger onClick={() => setMenuOpen(value => !value)} pressed={menuVisible} />
-      </motion.div>
+      <AnimatePresence initial={false}>{!collapsed && <motion.div key="body" {...bodyFade} className="glass-body">
+        <div className="translation-bubble" style={{ borderRadius: glass.radius }}
+          onPointerDown={event => { if (!docked) dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'), setDragging); }}>
+          <ReadingSurface streaming={streaming} resetKey={state.requestId} onEnter={() => void invokeResult('copy')}>
+            <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span>{state.capture?.text}</motion.div>}</AnimatePresence>
+            <span className={`translation-text ${state.result || state.error ? '' : 'is-placeholder'}`}>
+              {state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu&nbsp;⋯.</span>
+                : state.result ? <StreamedText text={state.result} streaming={streaming} resetKey={state.requestId} />
+                : <span className="thinking" role="img" aria-label="Traduction en cours"><i /><i /><i /></span>}
+            </span>
+            {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
+          </ReadingSurface>
+        </div>
+        <motion.div {...pillRise} className="action-pill" aria-label="Actions de traduction">
+          <IconButton label="Copier la traduction" disabled={!ready} data-copied={copied || undefined} onClick={() => void invokeResult('copy')}>
+            <AnimatedIcon name={copied ? 'check' : 'copy'} />
+          </IconButton>
+          {enlarged && <IconButton label="Réduire" onClick={changePresentation}><Icon name="minimize" /></IconButton>}
+          <BubbleMenuTrigger onClick={() => setMenuOpen(value => !value)} pressed={menuVisible} />
+        </motion.div>
+      </motion.div>}</AnimatePresence>
     </BubbleMenu>
-    <AnimatePresence>{feedback && !menuVisible && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
+    <AnimatePresence>{feedback && !menuVisible && !collapsed && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
+    {docked && <div className="dock-tab" data-expanded={!collapsed} onPointerEnter={expand}>
+      <button type="button" className="dock-open" aria-label="Afficher la traduction" aria-expanded={!collapsed} onFocus={expand} onClick={expand}><Icon name="languages" size={12} /></button>
+      <button type="button" className="dock-close" aria-label="Fermer" onClick={cancelAndDismiss}><Icon name="close" size={11} /></button>
+    </div>}
     <span className="sr-only" role="status">{streaming ? 'Traduction en cours' : state.phase === 'complete' ? 'Traduction terminée' : copied ? 'Traduction copiée' : ''}</span>
   </motion.div>;
 }

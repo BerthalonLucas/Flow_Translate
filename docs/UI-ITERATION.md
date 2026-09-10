@@ -12,6 +12,18 @@ revue des images produites ; elles décrivent le nouveau design, pas une validat
 Lucas. Le rendu Windows (acrylique réel, contraste sur page blanche, DPI 125/150 %,
 fenêtre Réglages sans cadre) reste à observer sur le bureau.
 
+## Deuxième retour du 10 septembre 2026 (capture d’écran de Lucas)
+
+Quatre points : cadre gris derrière les surfaces (UI-008), bulle qui ne se replie pas
+quand la souris sort (UI-009), animation de streaming laide (UI-010), confirmation
+avant traduction au raccourci (UI-011). La capture GDI du bureau fonctionne désormais
+hors sandbox (`scratchpad/shot.ps1`), ce qui permet d’observer le rendu réel.
+Décisions : plus de matériau DWM (il ignore la région, doc Microsoft), verre `.92` ;
+repli en onglet 44 × 20 au bord bas dans la même fenêtre (fenêtre ancrée par le bas,
+`presentation: 'docked'`), la capsule n’est plus affichée ; fragments de texte qui
+s’installent et point qui respire ; traduction immédiate, raccourci toujours capture.
+Références visuelles régénérées (verre plus opaque, attente, texte des réglages).
+
 ## Retour en conditions réelles du 10 septembre 2026
 
 Lucas a testé l’exécutable du 09-09 : la bulle et la capsule affichaient un titre
