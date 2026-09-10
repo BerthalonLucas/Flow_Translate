@@ -49,33 +49,22 @@ const SCROLLBAR_LINGER = 800;
 const DOCK_AFTER_LEAVE = 500;
 const DOCK_AFTER_REST = 10000;
 
-// Streamed text: each flushed chunk mounts once and settles with its own fade, so the
-// paragraph reads as ink arriving rather than as a reflow. Older chunks never re-animate.
-function StreamedText({ text, streaming, resetKey }: { text: string; streaming: boolean; resetKey: string | null }) {
-  const chunks = useRef<Array<{ id: number; text: string }>>([]);
-  const consumed = useRef(0);
-  const key = useRef(resetKey);
-  if (key.current !== resetKey || text.length < consumed.current) { key.current = resetKey; chunks.current = []; consumed.current = 0; }
-  if (text.length > consumed.current) {
-    chunks.current = [...chunks.current, { id: chunks.current.length, text: text.slice(consumed.current) }];
-    consumed.current = text.length;
-  }
-  return <>{chunks.current.map(chunk => <span key={chunk.id} className="chunk">{chunk.text}</span>)}{streaming && <span className="stream-caret" aria-hidden="true" />}</>;
+// The engine works behind a ring; the whole result then lands at once (deltas are
+// buffered in useTranslation), so the native window resizes a single time.
+function LoadingRing() {
+  return <span className="loading-ring" role="img" aria-label="Traduction en cours"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg></span>;
 }
 
 // The text scrolls inside the glass without a native bar. Radix ScrollArea owns the
 // 3 px indicator geometry; it shows on hover or while scrolling and fades 800 ms later.
-// Edge fades follow the scroll position; a hint chip marks a stream past the ceiling.
-function ReadingSurface({ children, streaming, resetKey, onEnter }: {
-  children: ReactNode; streaming: boolean; resetKey: string | null; onEnter: () => void;
+// Edge fades follow the scroll position.
+function ReadingSurface({ children, streaming, onEnter }: {
+  children: ReactNode; streaming: boolean; onEnter: () => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const [edge, setEdge] = useState<ScrollEdge>('none');
-  const [userScrolled, setUserScrolled] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [scrolling, setScrolling] = useState(false);
-  const rise = useRise(4);
-  useEffect(() => { setUserScrolled(false); }, [resetKey]);
   useLayoutEffect(() => {
     const element = viewport.current;
     const content = element?.firstElementChild;
@@ -89,7 +78,6 @@ function ReadingSurface({ children, streaming, resetKey, onEnter }: {
     let timer = 0;
     const onScroll = () => {
       update();
-      if (element.scrollTop > 0) setUserScrolled(true);
       setScrolling(true);
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setScrolling(false), SCROLLBAR_LINGER);
@@ -110,7 +98,6 @@ function ReadingSurface({ children, streaming, resetKey, onEnter }: {
     <ScrollArea.Scrollbar orientation="vertical" forceMount className="scroll-indicator" style={{ top: 22, bottom: 22, right: 8 }} aria-hidden="true">
       <ScrollArea.Thumb className="scroll-thumb" />
     </ScrollArea.Scrollbar>
-    <AnimatePresence>{streaming && capped && !userScrolled && <motion.span key="hint" {...rise} className="stream-hint" role="status"><i aria-hidden="true" />la suite arrive</motion.span>}</AnimatePresence>
   </ScrollArea.Root>;
 }
 
@@ -245,8 +232,12 @@ function GlassSession({ controller }: { controller: TranslationController }) {
           const rect = travel ? { x: box.x - travel.e, y: box.y - travel.f, width: box.width, height: box.height, bottom: box.bottom - travel.f } : box;
           return [{ part, rect }];
         });
-        const top = Math.min(0, ...parts.map(({ rect }) => rect.y - bounds.y));
-        const height = Math.ceil(Math.max(bounds.height, ...parts.map(({ rect }) => rect.bottom - bounds.y)) - top);
+        // The root padding is the halo that holds the shadows (none in the browser preview).
+        // A part reaching past the root (the menu above a docked glass) keeps its halo too.
+        const rootStyle = getComputedStyle(element);
+        const halo = { top: parseFloat(rootStyle.paddingTop) || 0, bottom: parseFloat(rootStyle.paddingBottom) || 0 };
+        const top = Math.min(0, ...parts.map(({ rect }) => rect.y - bounds.y - halo.top));
+        const height = Math.ceil(Math.max(bounds.height, ...parts.map(({ rect }) => rect.bottom - bounds.y + halo.bottom)) - top);
         const regions: HitRegion[] = parts.map(({ part, rect }) => {
           const x = Math.max(0, Math.round(rect.x - bounds.x));
           const y = Math.max(0, Math.round(rect.y - bounds.y - top));
@@ -320,14 +311,14 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: 'Fermer', run: cancelAndDismiss, close: true },
     ]}>
       <AnimatePresence initial={false}>{!collapsed && <motion.div key="body" {...bodyFade} className="glass-body">
-        <div className="translation-bubble" style={{ borderRadius: glass.radius }}
+        <div className="translation-bubble" style={{ borderRadius: glass.radius }} data-reveal={state.phase === 'complete' && Boolean(state.result)}
           onPointerDown={event => { if (!docked) dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'), setDragging); }}>
-          <ReadingSurface streaming={streaming} resetKey={state.requestId} onEnter={() => void invokeResult('copy')}>
+          <ReadingSurface streaming={streaming} onEnter={() => void invokeResult('copy')}>
             <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span>{state.capture?.text}</motion.div>}</AnimatePresence>
             <span className={`translation-text ${state.result || state.error ? '' : 'is-placeholder'}`}>
               {state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu&nbsp;⋯.</span>
-                : state.result ? <StreamedText text={state.result} streaming={streaming} resetKey={state.requestId} />
-                : <span className="thinking" role="img" aria-label="Traduction en cours"><i /><i /><i /></span>}
+                : state.result ? <span key={state.requestId ?? 'result'} className="reveal">{state.result}</span>
+                : <LoadingRing />}
             </span>
             {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
           </ReadingSurface>

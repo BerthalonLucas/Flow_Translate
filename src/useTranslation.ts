@@ -13,13 +13,13 @@ export function useTranslation(readyOnMount = false) {
   const settingsRef = useRef<Settings | null>(null);
   const settingsReadyRef = useRef<Promise<boolean>>(Promise.resolve(false));
   const handledCaptureRef = useRef<string | null>(null);
-  const pending = useRef({ requestId: '', text: '', timer: 0 });
+  // Deltas are buffered until the stream ends: the glass shows a ring, then the whole
+  // result lands at once (one native resize instead of one per line). An error or an
+  // interruption still surfaces the partial text through flush().
+  const pending = useRef({ requestId: '', text: '' });
   const [initError, setInitError] = useState<string | null>(null);
 
-  const discardPending = useCallback(() => {
-    window.clearTimeout(pending.current.timer);
-    pending.current = { requestId: '', text: '', timer: 0 };
-  }, []);
+  const discardPending = useCallback(() => { pending.current = { requestId: '', text: '' }; }, []);
   const flush = useCallback(() => {
     const queued = pending.current;
     if (queued.text && queued.requestId === requestRef.current) dispatch({ type: 'STREAM', event: { requestId: queued.requestId, kind: 'delta', text: queued.text } });
@@ -67,7 +67,6 @@ export function useTranslation(readyOnMount = false) {
         if (event.kind === 'delta') {
           pending.current.requestId = event.requestId;
           pending.current.text += event.text ?? '';
-          if (!pending.current.timer) pending.current.timer = window.setTimeout(flush, 32);
         } else { flush(); dispatch({ type: 'STREAM', event }); }
       }),
       bridge.on<{ captureId: string }>('overlay-dismiss-requested', ({ captureId }) => {

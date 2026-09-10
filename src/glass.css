@@ -1,17 +1,25 @@
 /* Design handoff « 1a » (2026-09-09): graphite glass holding only the text, opaque
    action pill biting the upper-right edge, internal scrolling without a native bar.
-   2026-09-10: the glass paints its own material (no DWM backdrop: it ignored the
-   window region), docks as a tab on the bottom edge and streams by settling chunks. */
+   2026-09-10: the glass paints its own material (no DWM backdrop), docks as a tab on
+   the bottom edge, waits behind a ring and reveals the whole result at once. The
+   packaged window has no Win32 region any more (a 1-bit mask DWM clipped without
+   anti-aliasing, dropping every shadow): Chromium paints the silhouette with alpha,
+   and the window is larger than the glass by a halo that holds the shadows. */
 .native-overlay { background: transparent; }
 .glass-overlay { position: relative; display: flex; flex-direction: column; align-items: stretch; width: 300px; flex: none; color: var(--text); pointer-events: none; }
 .glass-overlay.is-reader { width: 420px; }
 .glass-overlay > * { pointer-events: auto; }
+/* Halo: root padding sized to the shadows. Rust reads the tight regions for the hit-test,
+   so the halo never catches a click; the browser preview keeps none. */
+.glass-overlay { --halo-x: 0px; --halo-top: 0px; --halo-bottom: 0px; }
+.native-overlay .glass-overlay { --halo-x: 32px; --halo-top: 20px; --halo-bottom: 44px; box-sizing: content-box; padding: var(--halo-top) var(--halo-x) var(--halo-bottom); }
+.native-overlay .glass-overlay[data-collapsed="true"] { padding-top: 8px; }
 /* The 14 px band above the glass belongs to the pill only; the rest is pass-through. */
 .glass-body { position: relative; padding-top: 14px; pointer-events: none; }
 .glass-body > * { pointer-events: auto; }
 .glass-overlay[data-closing="true"], .glass-overlay[data-closing="true"] *, .glass-overlay:not([data-layout-phase="idle"]), .glass-overlay:not([data-layout-phase="idle"]) * { pointer-events: none; }
 /* Docked: the root keeps the window's bottom edge so the tab never moves while the glass above it mounts or leaves. */
-.native-overlay .glass-overlay.is-docked { position: fixed; left: 0; bottom: 0; }
+.native-overlay .glass-overlay.is-docked { position: fixed; left: 0; bottom: 0; padding-bottom: 16px; }
 .translation-bubble { position: relative; display: flex; flex-direction: column; width: 100%; min-height: 51px; max-height: 220px; padding: 0; border: 1px solid var(--glass-border); border-radius: 28px; background: var(--glass-sheen), var(--glass-bg); box-shadow: var(--glass-shadow); cursor: default; }
 .glass-overlay[data-dragging="true"] .translation-bubble { cursor: grabbing; }
 .is-reader .translation-bubble { max-height: 440px; }
@@ -24,25 +32,23 @@
 .translation-copy[data-scroll-edge="middle"] { mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); -webkit-mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); }
 .translation-copy[data-scroll-edge="bottom"] { mask-image: linear-gradient(transparent, #000 22px); -webkit-mask-image: linear-gradient(transparent, #000 22px); }
 .translation-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.translation-text.is-placeholder { color: rgba(250,251,253,.6); }
-/* Streaming: each chunk settles once where it lands; the caret breathes after the last one. */
-.chunk { animation: chunk-in 360ms cubic-bezier(.2,0,0,1) both; }
-@keyframes chunk-in { from { opacity: 0; } 45% { opacity: .55; } to { opacity: 1; } }
-.stream-caret { display: inline-block; width: 6px; height: 6px; margin-left: 4px; vertical-align: 1px; border-radius: 50%; background: var(--accent-cursor); animation: caret-pulse 1000ms ease-in-out infinite; }
-@keyframes caret-pulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
-/* Past the ceiling the caret would sit out of view. */
-.translation-copy[data-capped="true"] .stream-caret { display: none; }
-.thinking { display: inline-flex; align-items: center; gap: 4px; height: 21.6px; vertical-align: top; }
-.thinking i { display: block; width: 5px; height: 5px; border-radius: 50%; background: rgba(250,251,253,.75); animation: think 1100ms ease-in-out infinite; }
-.thinking i:nth-child(2) { animation-delay: 150ms; }
-.thinking i:nth-child(3) { animation-delay: 300ms; }
-@keyframes think { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+.translation-text.is-placeholder { display: block; color: rgba(250,251,253,.6); }
+/* Waiting: a ring turning on its own transform (composited, no layout work). */
+.loading-ring { display: flex; align-items: center; justify-content: center; height: 21.6px; }
+.loading-ring svg { width: 22px; height: 22px; animation: ring-spin 900ms linear infinite; will-change: transform; }
+.loading-ring circle { fill: none; stroke: var(--accent-cursor); stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 42 57; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+/* The result lands whole: the window is already at its final size, the glass opens from the
+   ring height and the text fades in. Paint only, so the ResizeObserver publishes once; the
+   clip reaches past the box to keep the shadow, and holds 65 ms while the native resize lands. */
+.translation-bubble[data-reveal="true"] { animation: glass-open 260ms cubic-bezier(.2,0,0,1) both; }
+@keyframes glass-open { 0%, 25% { clip-path: inset(-24px -36px calc(100% - 51px) -36px round 52px); } 100% { clip-path: inset(-24px -36px -48px -36px round 60px); } }
+.translation-bubble[data-reveal="true"] .reveal { display: inline-block; animation: text-in 180ms ease-out 80ms both; }
+@keyframes text-in { from { opacity: 0; } to { opacity: 1; } }
 .scroll-indicator { width: 3px !important; border-radius: 2px; background: rgba(255,255,255,.07); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
 .reading-area[data-indicator="true"] .scroll-indicator { opacity: 1; }
 .scroll-thumb { border-radius: 2px; background: rgba(255,255,255,.28); transition: background-color 140ms ease; }
 .scroll-indicator:hover .scroll-thumb { background: rgba(255,255,255,.34); }
-.stream-hint { position: absolute; left: 0; right: 0; bottom: 10px; z-index: 1; width: max-content; margin: 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px 0 7px; border-radius: 10px; color: rgba(250,251,253,.85); font-size: 11px; line-height: 1; white-space: nowrap; background: rgba(255,255,255,.14); pointer-events: none; }
-.stream-hint i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-cursor); }
 /* Opaque pill: the only element that never depends on the backdrop. */
 .action-pill { position: absolute; top: 0; right: 16px; z-index: 2; display: flex; align-items: center; gap: 0; height: 28px; padding: 0 2px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); }
 .icon-button { appearance: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 12px; color: var(--text-muted); background: transparent; transition: background-color 140ms ease, color 140ms ease; }
@@ -62,9 +68,9 @@
 .dock-tab button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .dock-tab svg { width: 12px; height: 12px; }
 .dock-close svg { width: 11px; height: 11px; }
-/* Popper geometry is replaced by an absolute anchor under the pill, no portal. Docked, it opens above the pill. */
-.glass-overlay [data-radix-popper-content-wrapper] { position: absolute !important; top: 34px !important; right: 16px !important; left: auto !important; transform: none !important; min-width: 0 !important; width: 196px !important; z-index: 3; }
-.glass-overlay.is-docked [data-radix-popper-content-wrapper] { top: auto !important; bottom: calc(100% + 6px) !important; }
+/* Popper geometry is replaced by an absolute anchor under the pill, no portal; the halo offsets it. Docked, it opens above the pill. */
+.glass-overlay [data-radix-popper-content-wrapper] { position: absolute !important; top: calc(34px + var(--halo-top)) !important; right: calc(16px + var(--halo-x)) !important; left: auto !important; transform: none !important; min-width: 0 !important; width: 196px !important; z-index: 3; }
+.glass-overlay.is-docked [data-radix-popper-content-wrapper] { top: auto !important; bottom: calc(100% + 6px - var(--halo-top)) !important; }
 .more-menu { width: 196px; padding: 4px; border: 1px solid var(--glass-border); border-radius: 16px; color: #f2f3f6; background: var(--menu-bg); box-shadow: 0 12px 32px rgba(0,0,0,.4); outline: none; }
 .menu-slot { display: contents; }
 .menu-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 12px; border-radius: 10px; font-size: 13px; line-height: 1.3; outline: none; cursor: pointer; user-select: none; }

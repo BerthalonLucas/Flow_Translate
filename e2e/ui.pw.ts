@@ -58,7 +58,7 @@ test('clipboard source translates at once, docked above its tab', async ({ page 
   await expect(overlay.locator('.dock-tab')).toBeVisible();
   await expect(overlay.getByRole('button', { name: 'Traduire', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
-  expect(await page.locator('.translation-text .chunk').count()).toBeGreaterThan(0);
+  expect(((await page.locator('.translation-text .reveal').textContent()) ?? '').length).toBeGreaterThan(0);
 });
 
 test('leaving a finished glass docks it as a tab; hovering the tab brings it back', async ({ page }) => {
@@ -81,15 +81,18 @@ test('leaving a finished glass docks it as a tab; hovering the tab brings it bac
   await expect(page.locator('.glass-overlay')).toHaveCount(0);
 });
 
-test('streamed text settles chunk by chunk and keeps the whole result once complete', async ({ page }) => {
+test('a ring turns while the engine streams; the whole result then lands at once and the glass opens', async ({ page }) => {
   await page.goto('/?window=overlay&demo=1&scenario=long');
-  await expect(page.locator('.translation-text .chunk').first()).toBeVisible();
-  await expect(page.locator('.stream-caret')).toHaveCount(1);
-  await expect(page.locator('.thinking')).toHaveCount(0);
+  await expect(page.locator('.loading-ring')).toHaveAttribute('aria-label', 'Traduction en cours');
+  await expect(page.locator('.translation-copy')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('.translation-text .reveal')).toHaveCount(0);
+  expect(await page.locator('.loading-ring svg').evaluate(el => getComputedStyle(el).animationName)).toBe('ring-spin');
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
-  await expect(page.locator('.stream-caret')).toHaveCount(0);
-  expect(await page.locator('.translation-text .chunk').count()).toBeGreaterThan(3);
-  expect(((await page.locator('.translation-text').textContent()) ?? '').length).toBeGreaterThan(200);
+  await expect(page.locator('.loading-ring')).toHaveCount(0);
+  await expect(page.locator('.translation-copy')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('.translation-bubble')).toHaveAttribute('data-reveal', 'true');
+  expect(await page.locator('.translation-bubble').evaluate(el => getComputedStyle(el).animationName)).toBe('glass-open');
+  expect(((await page.locator('.translation-text .reveal').textContent()) ?? '').length).toBeGreaterThan(200);
 });
 
 test('error never enables copy of a partial or absent result', async ({ page }) => {
@@ -109,11 +112,13 @@ test('capsule fits a 200px native viewport without horizontal overflow', async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(200);
 });
 
-test('reduced motion disables the streaming caret and chunk animations', async ({ page }) => {
+test('reduced motion freezes the ring and skips the reveal', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?window=overlay&demo=1&scenario=long');
-  await expect(page.locator('.stream-caret')).toHaveCount(1);
-  const durations = await page.evaluate(() => ['.stream-caret', '.chunk'].map(selector => { const el = document.querySelector(selector); return el ? getComputedStyle(el).animationDuration : 'missing'; }));
+  await expect(page.locator('.loading-ring')).toHaveCount(1);
+  expect(['0s', '1e-05s', '0.00001s']).toContain(await page.locator('.loading-ring svg').evaluate(el => getComputedStyle(el).animationDuration));
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
+  const durations = await page.evaluate(() => ['.translation-bubble', '.translation-text .reveal'].map(selector => { const el = document.querySelector(selector); return el ? getComputedStyle(el).animationDuration : 'missing'; }));
   for (const duration of durations) expect(['0s', '1e-05s', '0.00001s']).toContain(duration);
 });
 
@@ -294,15 +299,15 @@ test('enlarged glass grows from its top-left corner without moving it', async ({
   await expect(page.locator('.translation-bubble')).toHaveCSS('width', '300px');
 });
 
-test('streaming past the ceiling keeps the view at the top and hints at the rest', async ({ page }) => {
+test('a result past the ceiling lands whole and keeps the view at the top', async ({ page }) => {
   await page.goto('/?window=overlay&demo=1&scenario=very-long');
   const content = page.locator('.translation-copy');
-  await expect(page.locator('.stream-hint')).toHaveText('la suite arrive');
-  await expect(content).toHaveAttribute('data-capped', 'true');
-  expect(await content.evaluate(el => el.scrollTop)).toBe(0);
+  await expect(page.locator('.loading-ring')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('.stream-hint')).toHaveCount(0);
+  await expect(content).toHaveAttribute('data-capped', 'true');
+  expect(await content.evaluate(el => el.scrollTop)).toBe(0);
+  await expect(page.locator('.loading-ring')).toHaveCount(0);
 });
 
 

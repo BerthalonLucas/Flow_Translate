@@ -1,7 +1,7 @@
 export const scenarios = [
   { id: 'short', label: 'Traduction courte', issue: 'UI-003', expected: 'Texte compact ; actions satellites ; fermeture explicite sans surface résiduelle.' },
   { id: 'long', label: 'Traduction longue', issue: 'UI-004', expected: 'La bulle grandit jusqu’à 220 px puis le texte défile à la molette ; indicateur discret, Agrandir depuis le menu.' },
-  { id: 'pending', label: 'Attente du moteur', issue: 'UI-010', expected: 'Trois points discrets ; copie désactivée ; annulation possible.' },
+  { id: 'pending', label: 'Attente du moteur', issue: 'UI-010', expected: 'Anneau discret ; copie désactivée ; annulation possible ; le texte arrive d’un bloc.' },
   { id: 'partial', label: 'Réponse interrompue', issue: 'UI-003', expected: 'Texte partiel identifié ; copie et remplacement désactivés.' },
   { id: 'error', label: 'Erreur réseau', issue: 'UI-003', expected: 'Erreur courte, possibilité de réessayer et de fermer.' },
   { id: 'settings', label: 'Réglages', issue: 'UI-005', expected: 'Surface cohérente sur toute la fenêtre ; thème Windows ; aucune marge blanche parasite.' },

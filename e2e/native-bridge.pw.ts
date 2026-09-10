@@ -30,24 +30,30 @@ async function openNativeFixture(page: Page) {
 }
 const geometry = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').at(-1)?.args);
 const resizeCount = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').length);
+// The packaged root carries the shadow halo around the tight regions: 32 px each side,
+// 20 px above and 44 px below (16 px below when docked, 8 px above once folded).
+const HALO = { x: 32, top: 20, bottom: 44, dockedBottom: 16, foldedTop: 8 };
 
-test('IPC fixture: streaming grows the glass line by line to 220px, never auto-enlarges, and orders bounded hit regions', async ({ page }) => {
+test('IPC fixture: the glass keeps its ring size while streaming, resizes once to the 220px ceiling when the result lands, never auto-enlarges, and orders bounded hit regions', async ({ page }) => {
   await openNativeFixture(page);
-  await expect.poll(async () => (await geometry(page))?.width).toBe(300);
+  await expect.poll(async () => (await geometry(page))?.width).toBe(300 + 2 * HALO.x);
   const initial = await geometry(page);
   const initialCount = await resizeCount(page);
   await page.evaluate(async () => {
     for (let i = 0; i < 120; i++) await window.nativeFixture.delta('Une longue traduction. ');
   });
-  await expect(page.locator('.translation-text')).toContainText('Une longue traduction. '.repeat(120));
-  await expect.poll(async () => (await geometry(page))?.height).toBe(234);
-  expect(await resizeCount(page)).toBeGreaterThan(initialCount);
-  expect((await geometry(page))?.width).toBe(300);
-  expect((initial?.height as number)).toBeLessThan(234);
-  const heights = await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').map(call => call.args?.height as number));
-  for (let i = 1; i < heights.length; i++) expect(Math.abs(heights[i] - heights[i - 1])).toBeGreaterThanOrEqual(21);
-  await expect(page.locator('.translation-copy')).toHaveAttribute('data-capped', 'true');
+  // Buffered: nothing lands and nothing resizes before the stream ends.
+  await expect(page.locator('.loading-ring')).toBeVisible();
+  await expect(page.locator('.translation-text')).not.toContainText('Une longue');
+  expect(await resizeCount(page)).toBe(initialCount);
   await page.evaluate(() => window.nativeFixture.done());
+  await expect(page.locator('.translation-text')).toContainText('Une longue traduction. '.repeat(120));
+  await expect.poll(async () => (await geometry(page))?.height).toBe(234 + HALO.top + HALO.bottom);
+  expect(await resizeCount(page)).toBe(initialCount + 1);
+  expect((await geometry(page))?.width).toBe(300 + 2 * HALO.x);
+  expect((initial?.height as number)).toBeLessThan(234 + HALO.top + HALO.bottom);
+  await expect(page.locator('.translation-copy')).toHaveAttribute('data-capped', 'true');
+  await expect(page.locator('.translation-bubble')).toHaveAttribute('data-reveal', 'true');
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   expect((await geometry(page))?.presentation).toBe('contextual');
   await expect(page.locator('.translation-bubble')).toHaveCSS('width', '300px');
@@ -150,15 +156,15 @@ test('IPC fixture: a long source starts compact; only the menu enlarges and the 
   await page.evaluate(() => window.nativeFixture.capture('long-source', 'A long source paragraph with details to translate. '.repeat(20)));
   await expect.poll(async () => (await geometry(page))?.captureId).toBe('long-source');
   expect((await geometry(page))?.presentation).toBe('contextual');
-  await expect(page.locator('.translation-text .thinking')).toHaveAttribute('aria-label', 'Traduction en cours');
+  await expect(page.locator('.translation-text .loading-ring')).toHaveAttribute('aria-label', 'Traduction en cours');
   await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Agrandir', exact: true }).click();
   await expect.poll(async () => (await geometry(page))?.presentation).toBe('reader');
-  await expect.poll(async () => (await geometry(page))?.width).toBe(420);
+  await expect.poll(async () => (await geometry(page))?.width).toBe(420 + 2 * HALO.x);
   await page.evaluate(async () => { await window.nativeFixture.delta('Très court.'); await window.nativeFixture.done(); });
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   expect((await geometry(page))?.presentation).toBe('reader');
-  expect((await geometry(page))?.height as number).toBeLessThanOrEqual(454);
+  expect((await geometry(page))?.height as number).toBeLessThanOrEqual(454 + HALO.top + HALO.bottom);
 });
 
 async function openSettingsFixture(page: Page, fail = false) {
@@ -247,8 +253,8 @@ test('IPC fixture: a finished glass the pointer left docks as one tab region; ho
   const folded = await geometry(page);
   const tabRegions = folded!.regions as Array<{ x: number; y: number; width: number; height: number; radius: number }>;
   expect(tabRegions).toHaveLength(1);
-  expect(tabRegions[0]).toEqual({ x: 128, y: 0, width: 44, height: 20, radius: 10 });
-  expect(folded!.height).toBe(20);
+  expect(tabRegions[0]).toEqual({ x: 128 + HALO.x, y: HALO.foldedTop, width: 44, height: 20, radius: 10 });
+  expect(folded!.height).toBe(HALO.foldedTop + 20 + HALO.dockedBottom);
   await page.locator('.dock-tab').hover();
   await expect(page.locator('.translation-bubble')).toBeVisible();
   await expect(copy).toBeEnabled();
@@ -258,7 +264,7 @@ test('IPC fixture: a finished glass the pointer left docks as one tab region; ho
   expect(open!.presentation).toBe('docked');
   expect(regions[0].width).toBe(300);
   expect(regions[2].width).toBe(44);
-  expect(regions[2].y + regions[2].height).toBe(open!.height);
+  expect(regions[2].y + regions[2].height + HALO.dockedBottom).toBe(open!.height);
   expect(regions[0].y + regions[0].height + 6).toBe(regions[2].y);
   await page.locator('.translation-bubble').hover();
   await page.mouse.move(600, 460);

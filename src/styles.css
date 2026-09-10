@@ -4,7 +4,7 @@
   --glass-bg: rgba(22, 24, 29, .92); /* the packaged window paints only the DOM: no native material behind the glass */
   --glass-sheen: radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.09), transparent 60%);
   --glass-border: rgba(255,255,255,.12);
-  --glass-shadow: 0 16px 40px rgba(0,0,0,.32);
+  --glass-shadow: 0 12px 32px rgba(0,0,0,.34); /* the native halo (glass.css) is sized to this shadow */
   --pill-bg: rgba(40,43,50,.96);
   --menu-bg: rgba(40,43,50,.97);
   --hover: rgba(255,255,255,.12);
