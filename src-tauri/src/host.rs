@@ -8,20 +8,16 @@ use windows::core::{s, w, BOOL};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
-    Graphics::Gdi::{
-        ClientToScreen, CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject,
-        GetMonitorInfoW, GetWindowRgnBox, MonitorFromPoint, SetWindowRgn, HRGN, MONITORINFO,
-        MONITOR_DEFAULTTONEAREST, RGN_ERROR, RGN_OR,
-    },
+    Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST},
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         WindowsAndMessaging::{
             GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
             SetForegroundWindow, SetWindowLongPtrW, ShowWindow, SW_HIDE,
-            SetWindowPos, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-            WS_SYSMENU, WS_THICKFRAME,
+            SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_EX_LAYERED,
+            WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };
@@ -246,15 +242,17 @@ pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
 // The overlay and the capsule never go through Tao's show()/hide(): show() uses
 // SetWindowPos directly so the source keeps its focus, and any later Tao
 // visibility diff rebuilds the styles with WS_CAPTION | WS_SYSMENU (Tao 0.35
-// `WindowFlags::apply_diff`), which DWM then paints as a « FlowTranslate » title
-// over the acrylic backdrop and which drops the window region. Every visibility
-// and focus change therefore stays at the HWND boundary, and `repair_handle`
-// restores the silhouette whenever Tao or Windows touched the frame anyway.
+// `WindowFlags::apply_diff`), which DWM then paints as a « FlowTranslate » title.
+// Every visibility and focus change therefore stays at the HWND boundary, and
+// `repair_handle` strips the caption whenever Tao or Windows touched the frame.
+//
+// The window carries no Win32 region (2026-09-10): a region is a 1-bit mask that DWM
+// clips without anti-aliasing and that drops every shadow outside it (the jagged
+// « cut with a cutter » edges Lucas reported). Chromium paints the silhouette with
+// per-pixel alpha through Tao's DwmEnableBlurBehindWindow transparency; the tight
+// regions the frontend publishes only feed the hit-test below.
 #[derive(Clone)]
 struct Surface {
-    width: u32,
-    height: u32,
-    radius: f64,
     regions: Vec<SurfaceRegion>,
     scale: f64,
 }
@@ -270,11 +268,91 @@ fn remember_surface(handle: isize, surface: Surface) {
     }
 }
 
-fn remembered_surface(handle: isize) -> Option<Surface> {
-    SURFACES
-        .lock()
-        .ok()
-        .and_then(|surfaces| surfaces.iter().find(|(known, _)| *known == handle).map(|(_, surface)| surface.clone()))
+fn surfaces() -> Vec<(isize, Surface)> {
+    SURFACES.lock().map(|surfaces| surfaces.clone()).unwrap_or_default()
+}
+
+/// Whether a client point (physical pixels) lies in one of the rounded surfaces.
+pub fn contains(regions: &[SurfaceRegion], scale: f64, x: f64, y: f64) -> bool {
+    regions.iter().any(|region| {
+        let (left, top) = (region.x * scale, region.y * scale);
+        let (width, height) = (region.width * scale, region.height * scale);
+        if x < left || y < top || x > left + width || y > top + height {
+            return false;
+        }
+        let radius = (region.radius * scale).min(width / 2.).min(height / 2.);
+        let cx = x.clamp(left + radius, left + width - radius);
+        let cy = y.clamp(top + radius, top + height - radius);
+        (x - cx).powi(2) + (y - cy).powi(2) <= radius * radius
+    })
+}
+
+static CURSOR_OVERRIDE: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+
+/// Test hook, honoured only under the WebView2 probe (`FLOWTRANSLATE_CDP_URL` set by
+/// `scripts/test-native-ui.ps1`): a locked session neither moves nor reports the real
+/// cursor, so the probe feeds the hit tester a screen point instead.
+pub fn override_cursor(point: Option<(i32, i32)>) -> Result<(), String> {
+    if std::env::var_os("FLOWTRANSLATE_CDP_URL").is_none() {
+        return Err("Indisponible hors test.".into());
+    }
+    *CURSOR_OVERRIDE.lock().map_err(|_| "Verrou indisponible.".to_string())? = point;
+    Ok(())
+}
+
+fn cursor_position() -> Option<POINT> {
+    if let Some((x, y)) = CURSOR_OVERRIDE.lock().ok().and_then(|point| *point) {
+        return Some(POINT { x, y });
+    }
+    let mut cursor = POINT::default();
+    unsafe { GetCursorPos(&mut cursor).ok()? };
+    Some(cursor)
+}
+
+unsafe fn cursor_inside(hwnd: HWND, surface: &Surface) -> bool {
+    let Some(cursor) = cursor_position() else { return false };
+    let mut origin = POINT::default();
+    if unsafe { !ClientToScreen(hwnd, &mut origin).as_bool() } {
+        return false;
+    }
+    contains(&surface.regions, surface.scale, (cursor.x - origin.x) as f64 + 0.5, (cursor.y - origin.y) as f64 + 0.5)
+}
+
+/// Windows routes the mouse under a layered window that carries WS_EX_TRANSPARENT;
+/// both styles are set and cleared together, only when the state changes.
+unsafe fn pass_through(hwnd: HWND, on: bool) {
+    let mask = (WS_EX_TRANSPARENT | WS_EX_LAYERED).0 as isize;
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = if on { current | mask } else { current & !mask };
+        if next != current {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+        }
+    }
+}
+
+/// Hit-testing without a region: while a surface window is visible, the real cursor is
+/// compared with its rounded surfaces every 8 ms and the pass-through styles follow.
+/// Nothing toggles while the primary button is down: a press inside the glass keeps
+/// its window through the drag, a press outside never lands on it.
+pub fn start_hit_tester() {
+    let _ = std::thread::Builder::new().name("hit-tester".into()).spawn(|| loop {
+        let mut any_visible = false;
+        for (handle, surface) in surfaces() {
+            let hwnd = HWND(handle as *mut _);
+            unsafe {
+                if !IsWindowVisible(hwnd).as_bool() {
+                    continue;
+                }
+                any_visible = true;
+                if GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 {
+                    continue;
+                }
+                pass_through(hwnd, !cursor_inside(hwnd, &surface));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(if any_visible { 8 } else { 50 }));
+    });
 }
 
 pub fn hide(window: &WebviewWindow) -> Result<(), String> {
@@ -307,7 +385,6 @@ pub fn activate(window: &WebviewWindow) -> Result<(), String> {
 pub fn show(
     window: &WebviewWindow,
     rect: Rect,
-    radius: f64,
     regions: &[SurfaceRegion],
     scale: f64,
 ) -> Result<(), String> {
@@ -342,42 +419,17 @@ pub fn show(
             flags,
         )
         .map_err(|_| "Placement indisponible.".to_string())?;
-        // One native region defines acrylic, silhouette and pass-through gaps.
-        let region = make_region(width, height, radius, regions, scale);
-        if SetWindowRgn(hwnd, Some(region), true) == 0 {
-            let _ = DeleteObject(region.into());
-            return Err("Découpe de la fenêtre indisponible.".into());
-        }
-        remember_surface(h.0 as isize, Surface { width, height, radius, regions: regions.to_vec(), scale });
+        // The pass-through state is set before the first frame: the cursor is almost
+        // always outside the glass when it appears, and the hit tester takes over.
+        let surface = Surface { regions: regions.to_vec(), scale };
+        pass_through(hwnd, !cursor_inside(hwnd, &surface));
+        remember_surface(h.0 as isize, surface);
     }
     Ok(())
 }
 
-unsafe fn make_region(width: u32, height: u32, radius: f64, regions: &[SurfaceRegion], scale: f64) -> HRGN {
-    unsafe {
-        if regions.is_empty() {
-            CreateRoundRectRgn(0, 0, width as i32 + 1, height as i32 + 1, (radius * 2.).round() as i32, (radius * 2.).round() as i32)
-        } else {
-            let union = CreateRectRgn(0, 0, 0, 0);
-            for item in regions {
-                let piece = CreateRoundRectRgn(
-                    (item.x * scale).round() as i32,
-                    (item.y * scale).round() as i32,
-                    ((item.x + item.width) * scale).round() as i32 + 1,
-                    ((item.y + item.height) * scale).round() as i32 + 1,
-                    (item.radius * scale * 2.).round() as i32,
-                    (item.radius * scale * 2.).round() as i32,
-                );
-                let _ = CombineRgn(Some(union), Some(union), Some(piece), RGN_OR);
-                let _ = DeleteObject(piece.into());
-            }
-            union
-        }
-    }
-}
-
-/// Strips any caption Tao rebuilt and restores the last region when Windows
-/// dropped it. Safe from any thread: both calls message the window's thread.
+/// Strips any caption Tao rebuilt. Safe from any thread: both calls message the
+/// window's thread.
 pub fn repair_handle(handle: isize) -> Result<(), String> {
     let hwnd = HWND(handle as *mut _);
     unsafe {
@@ -392,20 +444,6 @@ pub fn repair_handle(handle: isize) -> Result<(), String> {
                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
             )
             .map_err(|_| "Fenêtre indisponible.".to_string())?;
-        }
-        if !IsWindowVisible(hwnd).as_bool() {
-            return Ok(());
-        }
-        let mut bounds = RECT::default();
-        if GetWindowRgnBox(hwnd, &mut bounds) != RGN_ERROR {
-            return Ok(());
-        }
-        if let Some(surface) = remembered_surface(handle) {
-            let region = make_region(surface.width, surface.height, surface.radius, &surface.regions, surface.scale);
-            if SetWindowRgn(hwnd, Some(region), true) == 0 {
-                let _ = DeleteObject(region.into());
-                return Err("Découpe de la fenêtre indisponible.".into());
-            }
         }
     }
     Ok(())
@@ -427,21 +465,20 @@ unsafe fn strip_chrome_hwnd(hwnd: HWND) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::Graphics::Gdi::PtInRegion;
 
     #[test]
-    fn union_region_keeps_surfaces_and_pass_through_gap() {
+    fn rounded_surfaces_take_the_cursor_and_the_gaps_let_it_through() {
         let regions = [
             SurfaceRegion { x: 0., y: 20., width: 280., height: 80., radius: 26. },
             SurfaceRegion { x: 210., y: 0., width: 60., height: 18., radius: 9. },
         ];
-        unsafe {
-            let region = make_region(280, 100, 26., &regions, 1.);
-            assert!(PtInRegion(region, 140, 50).as_bool());
-            assert!(PtInRegion(region, 240, 9).as_bool());
-            assert!(!PtInRegion(region, 100, 9).as_bool());
-            assert!(!PtInRegion(region, 0, 20).as_bool());
-            let _ = DeleteObject(region.into());
-        }
+        assert!(contains(&regions, 1., 140.5, 50.5), "glass");
+        assert!(contains(&regions, 1., 240.5, 9.5), "pill");
+        assert!(!contains(&regions, 1., 100.5, 9.5), "gap above the glass");
+        assert!(!contains(&regions, 1., 0.5, 20.5), "outside the corner arc");
+        assert!(contains(&regions, 1., 26.5, 46.5), "corner centre");
+        assert!(contains(&regions, 2., 280.5, 100.5), "scaled glass");
+        assert!(!contains(&regions, 2., 140.5, 19.5), "scaled gap");
+        assert!(!contains(&[], 1., 10., 10.), "no surface");
     }
 }

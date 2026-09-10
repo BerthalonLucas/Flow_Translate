@@ -568,6 +568,12 @@ fn drag_settings(window: tauri::WebviewWindow) -> Result<(), String> {
 fn quit_app(app: AppHandle) {
     app.exit(0);
 }
+/// Probe only (see `host::override_cursor`): screen point the hit tester reads instead
+/// of the real cursor; both `None` restore the real cursor.
+#[tauri::command]
+fn override_cursor(x: Option<i32>, y: Option<i32>) -> Result<(), String> {
+    host::override_cursor(x.zip(y))
+}
 #[tauri::command]
 fn focus_overlay(app: AppHandle) -> Result<(), String> {
     let capture_id = {
@@ -800,7 +806,7 @@ fn position(
         // Docked glass and unanchored captures rest bottom-centre on the tab; the capsule
         // window is no longer shown. Anchored glass keeps its drag position or its anchor.
         let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Docked || cap.anchor.is_none(), i.manual, cap.anchor) {
-            (true, _, _) | (_, _, None) => (placement::docked(work, w, h, s), None, s),
+            (true, _, _) | (_, _, None) => (placement::docked(work, w, h), None, s),
             (false, Some(manual), _) => (to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }), None, s),
             (false, None, Some(anchor)) => {
                 // Design « 1a »: compact and enlarged glass share the anchored top-left
@@ -849,7 +855,7 @@ fn finish_position(
         let result = (|| -> Result<(), String> {
           if apply_capsule {
             if let Some(window) = handle.get_webview_window("capsule") {
-                if let Some(capsule) = capsule { host::show(&window, capsule, 19. * scale, &[], scale)?; }
+                if let Some(capsule) = capsule { host::show(&window, capsule, &[], scale)?; }
                 else { host::hide(&window)?; }
             } else {
                 return Err("Capsule indisponible.".into());
@@ -860,7 +866,7 @@ fn finish_position(
             handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
           if apply_overlay {
             let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
-            host::show(&window, rect, 28. * scale, &regions, scale)?;
+            host::show(&window, rect, &regions, scale)?;
           }
           let mut i = state.inner.lock().map_err(|_| lock_error())?;
           if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
@@ -1038,6 +1044,7 @@ pub fn run() {
                     });
                 }
             }
+            host::start_hit_tester();
             if let Some(w) = app.get_webview_window("settings") {
                 let window = w.clone();
                 w.on_window_event(move |event| {
@@ -1078,6 +1085,7 @@ pub fn run() {
             complete_overlay_dismiss,
             open_settings,
             focus_overlay,
+            override_cursor,
             resize_overlay,
             resize_settings,
             drag_settings,

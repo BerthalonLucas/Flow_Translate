@@ -24,6 +24,20 @@ repli en onglet 44 × 20 au bord bas dans la même fenêtre (fenêtre ancrée pa
 s’installent et point qui respire ; traduction immédiate, raccourci toujours capture.
 Références visuelles régénérées (verre plus opaque, attente, texte des réglages).
 
+## Troisième retour du 10 septembre 2026 (fluidité et bords)
+
+Les contours ont disparu ; restent des bords « coupés au cutter », crénelés (UI-012) et un
+streaming saccadé (UI-010, Lucas préfère une roue puis le texte d’un bloc). Diagnostic sans
+capture (bureau inaccessible aux process de capture dans cette session) : la fenêtre est
+déjà transparente par pixel (Tao, `DwmEnableBlurBehindWindow`), mais `SetWindowRgn`
+découpait la boîte exacte du DOM avec un masque 1 bit : ombres supprimées, bordure
+tranchée, arcs GDI en escalier, visibles pixel par pixel à 100 %. La région ne servait
+qu’au hit-test. Décisions de Lucas : plus de région, halo d’ombre dans la fenêtre,
+hit-test par sondage du curseur (`WS_EX_TRANSPARENT | WS_EX_LAYERED`, spike validé par
+`WindowFromPoint` sur l’onglet réel) ; anneau puis verre qui s’ouvre en DOM pur avec un
+seul resize natif ; repli, dépli et menu inchangés pour ce lot. Référence visuelle
+`pending-*` régénérée (anneau).
+
 ## Retour en conditions réelles du 10 septembre 2026
 
 Lucas a testé l’exécutable du 09-09 : la bulle et la capsule affichaient un titre

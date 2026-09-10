@@ -41,8 +41,10 @@ pub fn overlay(
 /// Docked window: bottom-centre of the work area, 8 logical px above its bottom edge.
 /// The frontend keeps the tab on the window's bottom edge, so a taller window only
 /// moves the top edge.
-pub fn docked(work: Rect, width: f64, height: f64, scale: f64) -> Rect {
-    clamp(work, work.x + (work.width - width) / 2., work.y + work.height - height - 8. * scale, width, height)
+/// Bottom-centre, resting on the work area: the window's own bottom halo (frontend
+/// padding for the tab shadow) keeps the tab off the taskbar.
+pub fn docked(work: Rect, width: f64, height: f64) -> Rect {
+    clamp(work, work.x + (work.width - width) / 2., work.y + work.height - height, width, height)
 }
 
 pub fn clamp(work: Rect, x: f64, y: f64, width: f64, height: f64) -> Rect {
@@ -118,10 +120,9 @@ mod tests {
     #[test]
     fn docked_window_rests_on_the_bottom_edge_of_a_negative_work_area() {
         let work = Rect { x: -1600., y: -200., width: 1600., height: 1200. };
-        assert_eq!(docked(work, 300., 40., 1.), Rect { x: -950., y: 952., width: 300., height: 40. });
-        // Growing upward: same bottom edge for a taller window, scaled margin.
-        let tall = docked(work, 300., 260., 1.);
-        assert_eq!(tall.y + tall.height, 992.);
-        assert_eq!(docked(work, 300., 40., 2.).y + 40., 984.);
+        assert_eq!(docked(work, 300., 40.), Rect { x: -950., y: 960., width: 300., height: 40. });
+        // Growing upward: same bottom edge for a taller window.
+        let tall = docked(work, 300., 260.);
+        assert_eq!(tall.y + tall.height, 1000.);
     }
 }
