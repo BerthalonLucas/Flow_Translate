@@ -41,5 +41,6 @@ Object.assign(window, { nativeFixture: {
   requestId: () => request.id,
   holdCopy: () => { heldCopy = true; },
   releaseCopy: () => { resolveCopy?.(); heldCopy = false; },
+  near: (near: boolean) => emit('glass-near', { near }),
 } });
 await import('../src/main');

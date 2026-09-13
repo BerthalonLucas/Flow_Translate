@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { menu as menuLayout } from '../src/layout';
 
 for (const reducedMotion of ['no-preference', 'reduce'] as const) {
   test(`preview backgrounds and copy feedback preserve the capture and pill bounds (${reducedMotion})`, async ({ page }) => {
@@ -68,14 +69,19 @@ test('leaving a finished glass docks it as a tab; hovering the tab brings it bac
   await page.locator('.translation-copy').hover();
   await page.mouse.move(5, 5);
   await expect(page.locator('.dock-tab')).toBeVisible({ timeout: 3000 });
-  await expect(page.locator('.translation-bubble')).toHaveCount(0);
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'true');
+  // The body fades in place and then leaves the page; the tab does not move.
+  await expect(page.locator('.translation-bubble')).toBeHidden();
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-folded', 'true');
+  await expect(page.locator('.glass-body')).toHaveAttribute('inert', '');
   const tab = await page.locator('.dock-tab').boundingBox();
   expect(tab?.width).toBe(44);
   expect(tab?.height).toBe(20);
   await page.locator('.dock-tab').hover();
   await expect(page.locator('.translation-bubble')).toBeVisible();
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'false');
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-folded', 'false');
+  expect(await page.locator('.dock-tab').boundingBox()).toEqual(tab);
   await expect(copy).toBeEnabled();
   await page.getByRole('button', { name: 'Fermer', exact: true }).click();
   await expect(page.locator('.glass-overlay')).toHaveCount(0);
@@ -86,13 +92,52 @@ test('a ring turns while the engine streams; the whole result then lands at once
   await expect(page.locator('.loading-ring')).toHaveAttribute('aria-label', 'Traduction en cours');
   await expect(page.locator('.translation-copy')).toHaveAttribute('aria-busy', 'true');
   await expect(page.locator('.translation-text .reveal')).toHaveCount(0);
-  expect(await page.locator('.loading-ring svg').evaluate(el => getComputedStyle(el).animationName)).toBe('ring-spin');
+  expect(await page.locator('.loading-ring svg').evaluate(el => [getComputedStyle(el).animationName, getComputedStyle(el).animationDuration])).toEqual(['ring-spin', '1.4s']);
+  expect(await page.locator('.loading-ring circle').evaluate(el => [getComputedStyle(el).animationName, getComputedStyle(el).animationDuration, getComputedStyle(el).animationDirection])).toEqual(['ring-breathe', '1.2s', 'alternate']);
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
   await expect(page.locator('.loading-ring')).toHaveCount(0);
   await expect(page.locator('.translation-copy')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('.translation-bubble')).toHaveAttribute('data-reveal', 'true');
   expect(await page.locator('.translation-bubble').evaluate(el => getComputedStyle(el).animationName)).toBe('glass-open');
   expect(((await page.locator('.translation-text .reveal').textContent()) ?? '').length).toBeGreaterThan(200);
+});
+
+test('a menu action holds the glass two seconds even when it moved out from under the pointer', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1&scenario=long');
+  const copy = page.getByRole('button', { name: 'Copier la traduction', exact: true });
+  await expect(copy).toBeEnabled();
+  await page.locator('.translation-copy').hover();
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Agrandir', exact: true }).click();
+  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '420px');
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(1100);
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'false');
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'true', { timeout: 3000 });
+});
+
+test('a pointer resting beside the glass keeps it open; it folds once the pointer is 32 px away', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await page.locator('.translation-copy').hover();
+  const box = (await page.locator('.glass-overlay').boundingBox())!;
+  await page.mouse.move(box.x + box.width + 16, box.y + box.height / 2);
+  await page.waitForTimeout(900);
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'false');
+  await page.mouse.move(box.x + box.width + 80, box.y + box.height / 2);
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'true', { timeout: 3000 });
+});
+
+test('the original reads at 14 px on a light field and the text keeps 22 px from the rounded edge', async ({ page }) => {
+  await page.goto('/?window=overlay&demo=1');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Afficher l’original', exact: true }).click();
+  const original = page.locator('.original-copy');
+  await expect(original).toHaveCSS('font-size', '14px');
+  await expect(original).toHaveCSS('color', 'rgba(250, 251, 253, 0.85)');
+  await expect(original).toHaveCSS('background-color', 'rgba(255, 255, 255, 0.05)');
+  await expect(page.locator('.translation-copy')).toHaveCSS('padding', '16px 22px 13px');
 });
 
 test('error never enables copy of a partial or absent result', async ({ page }) => {
@@ -198,6 +243,10 @@ test('long text stays in the 220px compact glass and the menu overlays it under 
   expect(Math.round(menuBounds!.y - before!.y)).toBe(20);
   expect(Math.round(before!.x + before!.width - (menuBounds!.x + menuBounds!.width))).toBe(16);
   expect(menuBounds!.width).toBe(196);
+  // Six entries at most: the menu fits the reserve the native window keeps for it.
+  expect(await menu.getByRole('menuitem').count()).toBe(6);
+  expect(menuBounds!.height).toBeLessThanOrEqual(menuLayout.reserve);
+  await expect(menu).toHaveCSS('background-color', 'rgba(24, 26, 31, 0.96)');
   expect(await menu.evaluate(el => !!el.closest('.glass-overlay'))).toBe(true);
   expect(await menu.evaluate(el => !!el.closest('.translation-bubble'))).toBe(false);
   await expect(page.locator('.glass-overlay')).toHaveCSS('transform', 'none');

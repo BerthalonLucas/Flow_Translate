@@ -51,6 +51,71 @@ réparation au niveau HWND (`host::activate`, `host::repair_handle`), et message
 d’erreur réseau lisible (`inference::unreachable_message`). Le probe natif vérifie
 maintenant styles et région après affichage et après `focus_overlay`.
 
+## Quatrième retour du 13 septembre 2026 (vidéo en conditions réelles)
+
+Lucas a filmé 40 s d’usage réel de la 0.1.6 (capture presse-papiers, verre ancré en bas)
+et relevé six points, consignés UI-013 à UI-018. Deux mécanismes dominent : un bandeau
+de titre classique peint sur la fenêtre de la bulle à chaque changement d’activation
+(UI-016 ; image par image, il apparaît dans la même image que la perte de focus et
+persiste jusqu’au redimensionnement suivant) et un repli déclenché par la fermeture du
+menu, le pointeur n’étant plus sur une surface (UI-018). Le bandeau a été reproduit le
+soir même sur le bureau déverrouillé (`release/ui-evidence/band-repro/`) : le style ne
+change jamais, c’est le repeint par défaut de `WM_NCACTIVATE` (Tao → `DefWindowProc`)
+qui dessine une barre de titre basique dans la surface de la fenêtre ; le même message
+envoyé avec lParam = -1 ne dessine rien, ce qui fixe le correctif (sous-classe du HWND). Les autres sont des réglages de
+rythme et de design (anneau, cadrage du texte, menu, original).
+
+Ce qui définit une interface fluide pour FlowTranslate, base des prochains lots :
+
+1. Une seule fenêtre native par bulle, qui ne change ni de taille ni de style pendant une
+   interaction : tout mouvement est une propriété composée (opacité, transform,
+   clip-path) animée dans le DOM ; le redimensionnement natif n’a lieu qu’à l’arrivée du
+   résultat. Le hit-test par régions le permet : une fenêtre plus grande que le verre ne
+   coûte rien.
+2. Windows ne peint jamais rien : ni bandeau, ni cadre, ni fond (silhouette 100 % DOM).
+3. Chaque transition a une durée et une courbe connues : entrée 180 ms, sortie 100 ms,
+   survol 120 ms, anneau environ 1,4 s par tour ; rien n’est instantané, sauf sous
+   mouvement réduit.
+4. L’interface ne disparaît jamais sous l’utilisateur : une action accorde un délai de
+   grâce (2 s) ; la sortie du pointeur est jugée sur la silhouette et son halo, pas sur
+   les boîtes serrées ; un retour rapide annule le repli.
+5. Lecture : jamais de texte au ras d’un bord arrondi, coupures aux séparateurs,
+   contraste d’au moins 4,5:1 pour l’original.
+6. Réactivité : moins de 100 ms entre le geste et le premier retour visuel (menu, survol,
+   Réglages).
+
+### Lot « fluidité » 0.1.7 (13 septembre 2026)
+
+Le lot applique les six critères en une fois, sans matériau natif nouveau.
+
+- Natif : `host::silence_frame` sous-classe le HWND de la bulle et de la capsule et
+  répond à `WM_NCACTIVATE` avec lParam = -1 (plus de bandeau, UI-016) ; le sondeur du
+  curseur émet `glass-near` quand le curseur entre ou sort d’une zone de 32 px autour
+  des surfaces ; la fenêtre est **réservée** : 484 × 758 ancrée en bas (menu au-dessus de
+  la pilule, verre agrandi, onglet), plancher de 334 px ancrée au texte (menu sous la
+  pilule), plafond 640 × 800. `host::show` est scindé en `place` (rectangle) et
+  `set_regions` (surfaces) : repli, dépli, menu et arrivée d’un résultat compact ne
+  coûtent plus aucun `SetWindowPos`. La décision dessus/dessous tient compte de la
+  réserve, et seul le verre est contraint à la zone de travail : la réserve
+  transparente peut la dépasser sans pousser le verre sur son ancre.
+- Front : le corps du verre reste monté et se replie en fondu (opacité et 6 px de
+  translation, `inert` aussitôt, `visibility: hidden` après le fondu) ; les régions
+  sont projetées dans la fenêtre finale sans attendre de redimensionnement ; deux
+  secondes de grâce après toute action, sortie jugée sur `glass-near` ; anneau à 1,4 s
+  par tour avec un arc qui respire ; `<wbr>` après les séparateurs des longues
+  séquences (`src/text.ts`) et marge de 22 px ; menu dans le graphite du verre ;
+  original à 14 px sur fond clair.
+- Preuves : Vitest (`text.test.ts`), Playwright (grâce, proximité, fenêtre constante
+  entre repli, dépli et menu, coupures aux séparateurs, durées de l’anneau, corps replié
+  `toBeHidden()`), `cargo test` (côté avec réserve, décalage des régions sur écran bas,
+  `near`), références visuelles régénérées après inspection (`short`, `long`, `pending`,
+  `menu`, `error`, `partial`, réglages pour le numéro de version), probe natif PASS avec
+  le contrôle « frame silent » (`-Poke`, différence 0, rect inchangé, menu sans
+  redimensionnement sur trois cycles), rejeu du protocole du bandeau sur le nouvel
+  exécutable (`release/ui-evidence/band-replay-0.1.7` : scénario L différence 0 ;
+  Réglages ouverts et fermés sous le watcher, 47 captures à luminance constante, un seul
+  rect). Le jugement à l’œil de Lucas reste la dernière étape.
+
 ## Correction de méthode après retour de Lucas
 
 L’entrée par défaut de `/lab.html` est désormais la liste des **défauts signalés**,

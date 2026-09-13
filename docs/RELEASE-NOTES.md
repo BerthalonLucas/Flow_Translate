@@ -1,3 +1,24 @@
+# 0.1.7 — fluidité : plus de bandeau, fenêtre réservée, délai de grâce
+
+Plus de barre de titre « FlowTranslate » peinte sur la bulle quand une autre fenêtre
+prend ou rend le focus : le HWND est sous-classé et `WM_NCACTIVATE` n’a plus le droit
+de repeindre (cause établie et reproduite dans `release/ui-evidence/band-repro/`).
+
+La fenêtre native est réservée une fois pour toutes : 484 × 758 px ancrée en bas (menu
+au-dessus de la pilule, verre agrandi, onglet), au moins 334 px ancrée au texte (menu
+sous la pilule). Le repli en onglet, le dépli, le menu et l’arrivée d’un résultat
+compact ne redimensionnent plus rien : seules les surfaces cliquables changent. Le
+corps du verre reste monté et se replie en fondu ; l’onglet ne bouge jamais.
+
+Après une action (Agrandir, Original, copie, clic), le verre reste ouvert au moins
+deux secondes ; la sortie du pointeur est jugée à 32 px autour du verre et de sa
+pilule, mesurée nativement par le sondeur du curseur.
+
+Anneau d’attente à 1,4 s par tour avec un arc qui respire. Les chemins, URL et
+identifiants se coupent après leurs séparateurs, jamais au milieu d’un mot ; 22 px
+entre le texte et le bord arrondi. Menu dans le graphite du verre, survol fondu ;
+original à 14 px sur fond clair.
+
 # 0.1.6 — onglet, bords lissés, attente en anneau
 
 La bulle se replie en un onglet de 44 × 20 px au bord bas de l’écran quand la

@@ -15,6 +15,9 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.connectOverCDP(endpoint);
 const report = { status: 'running', cycles: [], notChecked: ['desktop composition of the anti-aliased edges and shadows', 'foreground focus', 'monitor DPI', 'animation frame times', 'real selection capture'] };
 const chromeStyles = ['CAPTION', 'THICKFRAME', 'SYSMENU', 'MINIMIZEBOX', 'MAXIMIZEBOX'];
+// Screen pixels sampled in the top band may drift by a hair (composition, cursor shadow);
+// the title band Windows used to paint moves them by dozens of levels.
+const FRAME_SILENT_TOLERANCE = 2;
 // Top-level HWNDs of the test process: physical geometry, region box, caption and pass-through styles.
 const probeArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve(dirname(fileURLToPath(import.meta.url)), 'inspect-native-windows.ps1')];
 const inspectNative = () => {
@@ -27,6 +30,10 @@ const hitTest = (x, y) => JSON.parse(execFileSync('powershell', [...probeArgs, '
 // A locked session (LogonUI) neither moves nor reports the real cursor: the probe then feeds the
 // hit tester through the test-only `override_cursor` command and says so in the report.
 const sessionLocked = () => { const check = hitTest(700, 700); return check.cursor.x !== 700 || check.cursor.y !== 700; };
+// Sends WM_NCACTIVATE(FALSE, 0) to the HWND (scenario L of release/ui-evidence/band-repro) and
+// compares the screen under its top band before and after: since 0.1.7 the subclass keeps
+// DefWindowProc from painting a title band there.
+const poke = hwnd => JSON.parse(execFileSync('powershell', [...probeArgs, '-Poke', String(parseInt(hwnd, 16)), '-Out', output], { encoding: 'utf8' }));
 try {
   const overlayTargets = () => browser.contexts().flatMap(context => context.pages()).filter(page => /tauri\.localhost/.test(page.url()) && new URL(page.url()).searchParams.get('window') === 'overlay');
   await expect.poll(() => overlayTargets().length, { timeout: 10000, message: 'Expected exactly one packaged FlowTranslate overlay' }).toBe(1);
@@ -81,10 +88,24 @@ try {
     await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('focus_overlay'));
     await page.waitForTimeout(400);
     result.framelessAfterFocus = await expectFrameless('after focus_overlay');
+    if (locked) report.frameSilent = 'not checked (session locked: the screen cannot be captured)';
+    else {
+      // The cursor rests on the glass so nothing folds or moves during the two captures.
+      const frameless = result.framelessAfterFocus;
+      await pointCursor(frameless.inside.x, frameless.inside.y);
+      await page.waitForTimeout(150);
+      const silent = poke(frameless.hwnd);
+      report.frameSilent = silent;
+      expect(silent.windowMoved, 'the window kept its rect across WM_NCACTIVATE').toBe(false);
+      expect(silent.meanDiff, 'WM_NCACTIVATE(FALSE, 0) paints nothing in the top band').toBeLessThanOrEqual(FRAME_SILENT_TOLERANCE);
+      result.framelessAfterPoke = await expectFrameless('after WM_NCACTIVATE');
+    }
   }
   await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
   await expect(page.getByRole('menu')).toBeVisible();
   result.menuSize = await nativeSize();
+  // The window is reserved: the menu opens in it without a native resize.
+  expect(result.menuSize, 'menu opens without a resize').toEqual(beforeSize);
   if (cycle === 0) await page.screenshot({ path: resolve(output, 'webview-menu.png') });
   await page.getByRole('menuitem', { name: 'Fermer', exact: true }).click();
   await expect(page.locator('.glass-overlay')).toHaveCount(0);
@@ -96,7 +117,7 @@ try {
   result.nativeHidden = true;
   }
   report.status = 'passed';
-  console.log('PASS: 3 real WebView2 cycles, frameless HWND without region, cursor let through in the halo and taken on the glass after show and focus_overlay, menus, DOM close and native windows hidden. Desktop composition not established.');
+  console.log(`PASS: 3 real WebView2 cycles, frameless HWND without region, cursor let through in the halo and taken on the glass after show and focus_overlay, frame silent under WM_NCACTIVATE (${typeof report.frameSilent === 'string' ? report.frameSilent : `mean diff ${report.frameSilent.meanDiff}`}), menus without a resize, DOM close and native windows hidden. Desktop composition not established.`);
 } catch (error) {
   report.status = 'failed';
   report.error = String(error.message);
