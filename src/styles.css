@@ -6,7 +6,7 @@
   --glass-border: rgba(255,255,255,.12);
   --glass-shadow: 0 12px 32px rgba(0,0,0,.34); /* the native halo (glass.css) is sized to this shadow */
   --pill-bg: rgba(40,43,50,.96);
-  --menu-bg: rgba(40,43,50,.97);
+  --menu-bg: rgba(24,26,31,.96);
   --hover: rgba(255,255,255,.12);
   --pressed: rgba(255,255,255,.16);
   --text: #fafbfd;

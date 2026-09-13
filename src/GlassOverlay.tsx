@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { bridge } from './bridge';
-import { compactLayout, enlargedLayout, glass } from './layout';
+import { anchoredFloor, compactLayout, dock, enlargedLayout, glass } from './layout';
+import { breakable } from './text';
 import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton, motionTokens, useFade, useRise } from './ui';
 import type { HitRegion, Presentation } from './types';
 import type { TranslationController } from './useTranslation';
@@ -45,14 +46,25 @@ type ScrollEdge = 'top' | 'middle' | 'bottom' | 'none';
 const SCROLLBAR_LINGER = 800;
 // The glass docks as a tab on the bottom edge once the pointer has left it, or after a
 // quiet read when the pointer never came. Streaming, the menu, a drag or a keyboard
-// focus (`:focus-visible`, not the focus a click leaves behind) hold it.
+// focus (`:focus-visible`, not the focus a click leaves behind) hold it. So does a
+// pointer resting within 32 px of a surface (the halo, judged natively by the hit
+// tester), and any click holds the glass two seconds: an action that moves the glass
+// out from under the pointer must not fold it at once.
 const DOCK_AFTER_LEAVE = 500;
 const DOCK_AFTER_REST = 10000;
+const GRACE_AFTER_ACTION = 2000;
+const NEAR_MARGIN = 32;
 
 // The engine works behind a ring; the whole result then lands at once (deltas are
 // buffered in useTranslation), so the native window resizes a single time.
 function LoadingRing() {
   return <span className="loading-ring" role="img" aria-label="Traduction en cours"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg></span>;
+}
+
+// Long runs (paths, URLs, identifiers) get a break opportunity after their separators,
+// so the glass wraps them there instead of cutting a word at its rounded edge.
+function Breakable({ text }: { text: string }) {
+  return <>{breakable(text).map((piece, index) => index ? <Fragment key={index}><wbr />{piece}</Fragment> : piece)}</>;
 }
 
 // The text scrolls inside the glass without a native bar. Radix ScrollArea owns the
@@ -110,12 +122,21 @@ export function GlassOverlay({ controller }: { controller: TranslationController
 type ViewLayout = { presentation: Presentation; docked: boolean; collapsed: boolean };
 const sameView = (a: ViewLayout, b: ViewLayout) => a.presentation === b.presentation && a.docked === b.docked && a.collapsed === b.collapsed;
 
+// Entrance travel is paint only: regions use the resting layout.
+function travel(node: Element | null) {
+  if (!node) return { x: 0, y: 0 };
+  const transform = getComputedStyle(node).transform;
+  if (!transform || transform === 'none') return { x: 0, y: 0 };
+  const matrix = new DOMMatrix(transform);
+  return { x: matrix.e, y: matrix.f };
+}
+
 function GlassSession({ controller }: { controller: TranslationController }) {
   const { state, dispatch, start, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
   const captureId = state.capture?.id;
   // Clipboard captures have no anchor: they open above the tab right away.
-  const [dock, setDock] = useState(() => ({ docked: state.capture?.source === 'clipboard', collapsed: false }));
-  const desiredLayout: ViewLayout = { presentation: state.layout.presentation, docked: dock.docked, collapsed: dock.collapsed };
+  const [dockState, setDock] = useState(() => ({ docked: state.capture?.source === 'clipboard', collapsed: false }));
+  const desiredLayout: ViewLayout = { presentation: state.layout.presentation, docked: dockState.docked, collapsed: dockState.collapsed };
   const [displayedLayout, setDisplayedLayout] = useState(desiredLayout);
   const [layoutPhase, setLayoutPhase] = useState<'idle' | 'out' | 'commit' | 'in'>('idle');
   const targetLayout = useRef(desiredLayout);
@@ -128,12 +149,15 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [near, setNear] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
+  // Folded once the body has faded: hidden from pointer, focus and assistive technology.
+  const [folded, setFolded] = useState(false);
   const visited = useRef(false);
+  const lastAction = useRef(Number.NEGATIVE_INFINITY);
   const root = useRef<HTMLDivElement>(null);
   const previousGeometry = useRef('');
   const fade = useFade('feedback');
-  const bodyFade = useFade();
   const pillRise = useRise(4, 'surface', 0.06);
   const reduced = useReducedMotion();
   const active = useRef({ requestId: state.requestId, closing: closingCaptureId });
@@ -141,6 +165,8 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const enlarged = displayedLayout.presentation === 'reader';
   const docked = displayedLayout.docked;
   const collapsed = docked && displayedLayout.collapsed;
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
   const ready = state.phase === 'complete' && !closingCaptureId && layoutPhase === 'idle';
   const streaming = state.phase === 'streaming';
   const settled = state.phase === 'complete' || state.phase === 'error' || state.phase === 'cancelled';
@@ -152,6 +178,12 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     if (foldOnly || reduced) setDisplayedLayout(desiredLayout);
     else setLayoutPhase('out');
   }, [desiredLayout, displayedLayout, layoutPhase, reduced, closingCaptureId]);
+  // The body is always mounted: unfolding shows it before its fade; folding hides it once
+  // the fade is over (or at once when nothing animates), see onAnimationComplete below.
+  useLayoutEffect(() => {
+    if (!collapsed) setFolded(false);
+    else if (reduced || layoutPhase !== 'idle') setFolded(true);
+  }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setMenuOpen(false); setFeedback(null); setCopied(false); }, [captureId, state.requestId]);
   useEffect(() => {
     if (!feedback) return;
@@ -185,11 +217,31 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     document.documentElement.addEventListener('pointerleave', gone);
     return () => { window.removeEventListener('pointerover', over, true); document.documentElement.removeEventListener('pointerleave', gone); };
   }, []);
+  // Leaving is judged on the silhouette, not on the tight surfaces: natively the hit
+  // tester reports whether the cursor rests within 32 px of a surface (`glass-near`,
+  // on change only); the browser preview measures the pointer against the root box.
   useEffect(() => {
-    if (collapsed || held) return;
-    const timer = window.setTimeout(() => setDock({ docked: true, collapsed: true }), visited.current ? DOCK_AFTER_LEAVE : DOCK_AFTER_REST);
+    if (bridge.native) {
+      let disposed = false;
+      const listening = bridge.on<{ near: boolean }>('glass-near', ({ near }) => { if (!disposed) setNear(near); });
+      return () => { disposed = true; void listening.then(unlisten => unlisten()); };
+    }
+    const move = (event: PointerEvent) => {
+      const box = root.current?.getBoundingClientRect();
+      setNear(Boolean(box) && event.clientX >= box!.left - NEAR_MARGIN && event.clientX <= box!.right + NEAR_MARGIN && event.clientY >= box!.top - NEAR_MARGIN && event.clientY <= box!.bottom + NEAR_MARGIN);
+    };
+    const gone = () => setNear(false);
+    window.addEventListener('pointermove', move);
+    document.documentElement.addEventListener('pointerleave', gone);
+    return () => { window.removeEventListener('pointermove', move); document.documentElement.removeEventListener('pointerleave', gone); };
+  }, []);
+  useEffect(() => {
+    if (collapsed || held || near) return;
+    const grace = GRACE_AFTER_ACTION - (performance.now() - lastAction.current);
+    const delay = visited.current ? Math.max(DOCK_AFTER_LEAVE, grace) : DOCK_AFTER_REST;
+    const timer = window.setTimeout(() => setDock({ docked: true, collapsed: true }), delay);
     return () => window.clearTimeout(timer);
-  }, [collapsed, held]);
+  }, [collapsed, held, near]);
 
   // The glass never takes focus when it appears. When the native window is focused
   // (a click inside it), the reading surface becomes the keyboard target.
@@ -216,34 +268,40 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const publish = () => {
         if (active.current.closing) return;
         const bounds = element.getBoundingClientRect();
-        const width = Math.ceil(bounds.width);
-        // Order is a bridge invariant: Rust anchors the glass (region zero). The menu
-        // overlays the text and may reach past the glass: the window grows to hold it,
-        // upward when docked (the root then keeps the window's bottom edge).
-        const selectors = ['.translation-bubble', '.action-pill', '.more-menu', '.compact-feedback', '.dock-tab'];
+        // Order is a bridge invariant: Rust anchors the glass (region zero). Folded, only
+        // the tab takes the cursor: the body is still fading, so its state decides, not
+        // its visibility.
+        const selectors = collapsed ? ['.dock-tab'] : ['.translation-bubble', '.action-pill', '.more-menu', '.compact-feedback', '.dock-tab'];
         const parts = selectors.flatMap(selector => {
           const part = element.querySelector<HTMLElement>(selector);
           if (!part) return [];
           const style = getComputedStyle(part);
           if (style.visibility === 'hidden') return [];
-          // Entrance travel (pill, menu) is paint only: regions use the resting layout.
-          const travel = style.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : null;
+          // Entrance travel (pill, menu) and the body's fade travel are paint only.
+          const own = travel(part);
+          const body = travel(part.closest('.glass-body'));
           const box = part.getBoundingClientRect();
-          const rect = travel ? { x: box.x - travel.e, y: box.y - travel.f, width: box.width, height: box.height, bottom: box.bottom - travel.f } : box;
-          return [{ part, rect }];
+          const rect = { x: box.x - own.x - body.x, y: box.y - own.y - body.y, width: box.width, height: box.height, bottom: box.bottom - own.y - body.y };
+          return [{ part, rect, radius: parseFloat(style.borderTopLeftRadius) }];
         });
         // The root padding is the halo that holds the shadows (none in the browser preview).
-        // A part reaching past the root (the menu above a docked glass) keeps its halo too.
         const rootStyle = getComputedStyle(element);
-        const halo = { top: parseFloat(rootStyle.paddingTop) || 0, bottom: parseFloat(rootStyle.paddingBottom) || 0 };
-        const top = Math.min(0, ...parts.map(({ rect }) => rect.y - bounds.y - halo.top));
-        const height = Math.ceil(Math.max(bounds.height, ...parts.map(({ rect }) => rect.bottom - bounds.y + halo.bottom)) - top);
-        const regions: HitRegion[] = parts.map(({ part, rect }) => {
-          const x = Math.max(0, Math.round(rect.x - bounds.x));
-          const y = Math.max(0, Math.round(rect.y - bounds.y - top));
-          return { x, y, width: Math.min(width - x, Math.ceil(rect.width)), height: Math.min(height - y, Math.ceil(rect.height)), radius: Math.min(parseFloat(getComputedStyle(part).borderTopLeftRadius), rect.width / 2, rect.height / 2) };
+        const haloBox = { top: parseFloat(rootStyle.paddingTop) || 0, bottom: parseFloat(rootStyle.paddingBottom) || 0 };
+        // The window is reserved (src/layout.ts): anchored, it holds the parts with their
+        // halo and never less than the floor that keeps the menu under the pill; docked, it
+        // is the constant reserve, the root projected centred on its bottom edge (the menu
+        // lives in the space above the pill). Neither a fold, an unfold nor a menu resizes it.
+        const overshoot = docked ? 0 : Math.min(0, ...parts.map(({ rect }) => rect.y - bounds.y - haloBox.top));
+        const measured = Math.ceil(Math.max(bounds.height, ...parts.map(({ rect }) => rect.bottom - bounds.y + haloBox.bottom)) - overshoot);
+        const width = docked ? dock.width : Math.ceil(bounds.width);
+        const height = docked ? dock.height : Math.max(measured, anchoredFloor);
+        const offset = docked ? { x: (dock.width - bounds.width) / 2, y: dock.height - bounds.height } : { x: 0, y: -overshoot };
+        const regions: HitRegion[] = parts.map(({ rect, radius }) => {
+          const x = Math.max(0, Math.round(rect.x - bounds.x + offset.x));
+          const y = Math.max(0, Math.round(rect.y - bounds.y + offset.y));
+          return { x, y, width: Math.min(width - x, Math.ceil(rect.width)), height: Math.min(height - y, Math.ceil(rect.height)), radius: Math.min(radius, rect.width / 2, rect.height / 2) };
         });
-        const geometry = { captureId, presentation: displayedLayout.docked ? 'docked' as const : displayedLayout.presentation, regions };
+        const geometry = { captureId, presentation: docked ? 'docked' as const : displayedLayout.presentation, regions };
         const signature = JSON.stringify({ width, height, ...geometry });
         if (signature !== previousGeometry.current) {
           previousGeometry.current = signature;
@@ -261,7 +319,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     // A hidden WebView may suspend rAF; the first geometry must unlock native show.
     publish();
     return () => { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [captureId, displayedLayout, layoutPhase, menuOpen, feedback]);
+  }, [captureId, displayedLayout, docked, collapsed, layoutPhase, menuOpen, feedback]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -273,8 +331,11 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   }, [cancelAndDismiss, captureId, menuOpen]);
 
   if (!captureId) return null;
+  const touch = () => { lastAction.current = performance.now(); };
+  const act = (run: () => void) => () => { touch(); run(); };
   const invokeResult = async (action: 'copy' | 'replace') => {
     if (!ready || !state.requestId) return;
+    touch();
     const requestId = state.requestId;
     const stillCurrent = () => active.current.requestId === requestId && !active.current.closing;
     try {
@@ -285,10 +346,11 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       if (stillCurrent()) setFeedback(action === 'copy' ? 'La copie a été refusée.' : 'Remplacement indisponible. Utilisez Copier.');
     }
   };
-  const changePresentation = () => dispatch({ type: 'LAYOUT', captureId, layout: enlarged ? compactLayout : enlargedLayout });
+  const changePresentation = () => { touch(); dispatch({ type: 'LAYOUT', captureId, layout: enlarged ? compactLayout : enlargedLayout }); };
   const expand = () => { if (layoutPhase === 'idle' && !closingCaptureId) setDock({ docked: true, collapsed: false }); };
   const visit = () => { visited.current = true; };
-  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed}
+  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed} data-folded={folded}
+    onClickCapture={touch}
     onFocus={event => {
       // A keyboard focus holds the glass, unless it lands after the pointer already left
       // (Radix restoring the trigger once the menu closed): that read is over.
@@ -303,21 +365,25 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     }}>
     <BubbleMenu open={menuVisible} onOpenChange={setMenuOpen} actions={[
       { label: enlarged ? 'Réduire' : 'Agrandir', run: changePresentation },
-      { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: () => dispatch({ type: 'TOGGLE_COMPARE' }) },
+      { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: act(() => dispatch({ type: 'TOGGLE_COMPARE' })) },
       ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
-      ...(state.phase === 'error' ? [{ label: 'Réessayer', run: () => { if (state.capture) start(state.capture); } }] : []),
-      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming, run: () => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); } },
-      { label: 'Réglages', run: () => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.')) },
+      ...(state.phase === 'error' ? [{ label: 'Réessayer', run: act(() => { if (state.capture) start(state.capture); }) }] : []),
+      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming, run: act(() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); }) },
+      { label: 'Réglages', run: act(() => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.'))) },
       { label: 'Fermer', run: cancelAndDismiss, close: true },
     ]}>
-      <AnimatePresence initial={false}>{!collapsed && <motion.div key="body" {...bodyFade} className="glass-body">
+      {/* Folding is a fade in place (paint only): the window keeps its size and the tab its spot. */}
+      <motion.div className="glass-body" inert={collapsed} initial={false}
+        animate={collapsed ? { opacity: 0, y: 6 } : { opacity: 1, y: 0 }}
+        transition={{ duration: reduced || layoutPhase !== 'idle' ? 0 : collapsed ? motionTokens.exit : motionTokens.enter, ease: motionTokens.ease }}
+        onAnimationComplete={() => setFolded(collapsedRef.current)}>
         <div className="translation-bubble" style={{ borderRadius: glass.radius }} data-reveal={state.phase === 'complete' && Boolean(state.result)}
           onPointerDown={event => { if (!docked) dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'), setDragging); }}>
           <ReadingSurface streaming={streaming} onEnter={() => void invokeResult('copy')}>
-            <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span>{state.capture?.text}</motion.div>}</AnimatePresence>
+            <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span><Breakable text={state.capture?.text ?? ''} /></motion.div>}</AnimatePresence>
             <span className={`translation-text ${state.result || state.error ? '' : 'is-placeholder'}`}>
               {state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu&nbsp;⋯.</span>
-                : state.result ? <span key={state.requestId ?? 'result'} className="reveal">{state.result}</span>
+                : state.result ? <span key={state.requestId ?? 'result'} className="reveal"><Breakable text={state.result} /></span>
                 : <LoadingRing />}
             </span>
             {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
@@ -330,7 +396,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
           {enlarged && <IconButton label="Réduire" onClick={changePresentation}><Icon name="minimize" /></IconButton>}
           <BubbleMenuTrigger onClick={() => setMenuOpen(value => !value)} pressed={menuVisible} />
         </motion.div>
-      </motion.div>}</AnimatePresence>
+      </motion.div>
     </BubbleMenu>
     <AnimatePresence>{feedback && !menuVisible && !collapsed && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
     {docked && <div className="dock-tab" data-expanded={!collapsed} onPointerEnter={expand}>
