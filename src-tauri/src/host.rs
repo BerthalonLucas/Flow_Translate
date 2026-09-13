@@ -2,25 +2,65 @@
 use crate::types::{Rect, SurfaceRegion};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Mutex;
-use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Emitter, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri::window::{Color, Effect, EffectsBuilder};
 use windows::core::{s, w, BOOL};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::{
-    Foundation::{HWND, POINT, RECT},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST},
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
+        Shell::{DefSubclassProc, SetWindowSubclass},
         WindowsAndMessaging::{
             GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
             SetForegroundWindow, SetWindowLongPtrW, ShowWindow, SW_HIDE,
             SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CAPTION, WS_EX_LAYERED,
-            WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_NCACTIVATE, WM_NCPAINT,
+            WS_CAPTION, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+            WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };
+
+// Undocumented UxTheme requests to draw the caption or the frame (0x00AE / 0x00AF).
+const WM_NCUAHDRAWCAPTION: u32 = 0x00AE;
+const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
+const SILENT_FRAME_SUBCLASS: usize = 0x466C_6F77;
+
+// Reproduced on 2026-09-13 (release/ui-evidence/band-repro): every activation change made
+// DefWindowProc paint a basic title band over the top of the frameless overlay, caption
+// styles or not, and nothing repainted it before the next resize. The same message with
+// lParam = -1 (« do not repaint ») painted nothing. This subclass is installed after Tao's,
+// so comctl32 calls it first: WM_NCACTIVATE still reaches Tao (activation bookkeeping,
+// Focused events) but DefWindowProc receives -1; the non-client paint requests are dropped.
+unsafe extern "system" fn silent_frame_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_NCACTIVATE => DefSubclassProc(hwnd, msg, wparam, LPARAM(-1)),
+            WM_NCPAINT | WM_NCUAHDRAWCAPTION | WM_NCUAHDRAWFRAME => LRESULT(0),
+            _ => DefSubclassProc(hwnd, msg, wparam, lparam),
+        }
+    }
+}
+
+/// Keeps Windows from ever painting a frame on this window. Call from the window's thread.
+pub fn silence_frame(window: &WebviewWindow) -> Result<(), String> {
+    let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
+    unsafe {
+        SetWindowSubclass(hwnd, Some(silent_frame_proc), SILENT_FRAME_SUBCLASS, 0)
+            .ok()
+            .map_err(|_| "Cadre natif non neutralisé.".to_string())
+    }
+}
 
 /// Material behind the glass. `DWMWA_SYSTEMBACKDROP_TYPE` (Tauri's `Effect::Acrylic`
 /// on Windows 11) paints the material behind the *entire window bounds*, so the
@@ -309,13 +349,39 @@ fn cursor_position() -> Option<POINT> {
     Some(cursor)
 }
 
-unsafe fn cursor_inside(hwnd: HWND, surface: &Surface) -> bool {
-    let Some(cursor) = cursor_position() else { return false };
+/// Whether a client point lies within `margin` logical pixels of one of the surfaces
+/// (their bounding boxes, inflated): the glass counts a pointer resting in its shadow as
+/// still there, so leaving is judged on the silhouette rather than on the tight boxes.
+pub fn near(regions: &[SurfaceRegion], scale: f64, x: f64, y: f64, margin: f64) -> bool {
+    let m = margin * scale;
+    regions.iter().any(|region| {
+        x >= region.x * scale - m
+            && y >= region.y * scale - m
+            && x <= (region.x + region.width) * scale + m
+            && y <= (region.y + region.height) * scale + m
+    })
+}
+
+const NEAR_MARGIN: f64 = 32.;
+
+/// Cursor in client coordinates (physical pixels, pixel centre).
+unsafe fn cursor_client(hwnd: HWND) -> Option<(f64, f64)> {
+    let cursor = cursor_position()?;
     let mut origin = POINT::default();
     if unsafe { !ClientToScreen(hwnd, &mut origin).as_bool() } {
-        return false;
+        return None;
     }
-    contains(&surface.regions, surface.scale, (cursor.x - origin.x) as f64 + 0.5, (cursor.y - origin.y) as f64 + 0.5)
+    Some(((cursor.x - origin.x) as f64 + 0.5, (cursor.y - origin.y) as f64 + 0.5))
+}
+
+unsafe fn cursor_inside(hwnd: HWND, surface: &Surface) -> bool {
+    unsafe { cursor_client(hwnd) }
+        .is_some_and(|(x, y)| contains(&surface.regions, surface.scale, x, y))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct GlassNear {
+    near: bool,
 }
 
 /// Windows routes the mouse under a layered window that carries WS_EX_TRANSPARENT;
@@ -334,24 +400,41 @@ unsafe fn pass_through(hwnd: HWND, on: bool) {
 /// Hit-testing without a region: while a surface window is visible, the real cursor is
 /// compared with its rounded surfaces every 8 ms and the pass-through styles follow.
 /// Nothing toggles while the primary button is down: a press inside the glass keeps
-/// its window through the drag, a press outside never lands on it.
-pub fn start_hit_tester() {
-    let _ = std::thread::Builder::new().name("hit-tester".into()).spawn(|| loop {
-        let mut any_visible = false;
-        for (handle, surface) in surfaces() {
-            let hwnd = HWND(handle as *mut _);
-            unsafe {
-                if !IsWindowVisible(hwnd).as_bool() {
-                    continue;
+/// its window through the drag, a press outside never lands on it. The overlay also
+/// learns, on change only, whether the cursor rests within 32 px of one of its surfaces
+/// (`glass-near`): the frontend holds the glass open while it does. No point is logged.
+pub fn start_hit_tester(app: AppHandle, overlay: isize) {
+    let _ = std::thread::Builder::new().name("hit-tester".into()).spawn(move || {
+        let mut was_near: Option<bool> = None;
+        loop {
+            let mut any_visible = false;
+            for (handle, surface) in surfaces() {
+                let hwnd = HWND(handle as *mut _);
+                unsafe {
+                    if !IsWindowVisible(hwnd).as_bool() {
+                        if handle == overlay {
+                            was_near = None;
+                        }
+                        continue;
+                    }
+                    any_visible = true;
+                    let client = cursor_client(hwnd);
+                    if handle == overlay {
+                        let near = client.is_some_and(|(x, y)| near(&surface.regions, surface.scale, x, y, NEAR_MARGIN));
+                        if was_near != Some(near) {
+                            was_near = Some(near);
+                            let _ = app.emit_to("overlay", "glass-near", GlassNear { near });
+                        }
+                    }
+                    if GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 {
+                        continue;
+                    }
+                    let inside = client.is_some_and(|(x, y)| contains(&surface.regions, surface.scale, x, y));
+                    pass_through(hwnd, !inside);
                 }
-                any_visible = true;
-                if GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 {
-                    continue;
-                }
-                pass_through(hwnd, !cursor_inside(hwnd, &surface));
             }
+            std::thread::sleep(std::time::Duration::from_millis(if any_visible { 8 } else { 50 }));
         }
-        std::thread::sleep(std::time::Duration::from_millis(if any_visible { 8 } else { 50 }));
     });
 }
 
@@ -382,12 +465,10 @@ pub fn activate(window: &WebviewWindow) -> Result<(), String> {
     repair_handle(handle)
 }
 
-pub fn show(
-    window: &WebviewWindow,
-    rect: Rect,
-    regions: &[SurfaceRegion],
-    scale: f64,
-) -> Result<(), String> {
+/// Sizes, moves and shows the window (frameless, topmost, never activated). Only called
+/// when the rectangle changes: the reserved window keeps its size through every fold,
+/// unfold or menu, so those cost no `SetWindowPos` at all.
+pub fn place(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
     let width = rect.width.round().max(1.) as u32;
     let height = rect.height.round().max(1.) as u32;
     window
@@ -400,32 +481,38 @@ pub fn show(
         })
         .map_err(|_| "Placement indisponible.".to_string())?;
     unsafe {
-        let h = window
-            .hwnd()
-            .map_err(|_| "Fenêtre indisponible.".to_string())?;
-        let hwnd = HWND(h.0);
+        let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
         let chrome_changed = strip_chrome_hwnd(hwnd);
         let mut flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW;
         if chrome_changed {
             flags |= SWP_FRAMECHANGED;
         }
-        SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            0,
-            0,
-            0,
-            0,
-            flags,
-        )
-        .map_err(|_| "Placement indisponible.".to_string())?;
-        // The pass-through state is set before the first frame: the cursor is almost
-        // always outside the glass when it appears, and the hit tester takes over.
-        let surface = Surface { regions: regions.to_vec(), scale };
-        pass_through(hwnd, !cursor_inside(hwnd, &surface));
-        remember_surface(h.0 as isize, surface);
+        SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags)
+            .map_err(|_| "Placement indisponible.".to_string())?;
     }
     Ok(())
+}
+
+/// Publishes the surfaces the hit tester reads. The pass-through state is set at once:
+/// the cursor is almost always outside the glass when it appears, and a surface that
+/// just vanished under the pointer must stop catching clicks before the next poll.
+pub fn set_regions(window: &WebviewWindow, regions: &[SurfaceRegion], scale: f64) -> Result<(), String> {
+    let h = window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?;
+    let hwnd = HWND(h.0);
+    let surface = Surface { regions: regions.to_vec(), scale };
+    unsafe { pass_through(hwnd, !cursor_inside(hwnd, &surface)) };
+    remember_surface(h.0 as isize, surface);
+    Ok(())
+}
+
+pub fn show(
+    window: &WebviewWindow,
+    rect: Rect,
+    regions: &[SurfaceRegion],
+    scale: f64,
+) -> Result<(), String> {
+    place(window, rect)?;
+    set_regions(window, regions, scale)
 }
 
 /// Strips any caption Tao rebuilt. Safe from any thread: both calls message the
@@ -465,6 +552,25 @@ unsafe fn strip_chrome_hwnd(hwnd: HWND) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pointer_counts_as_near_within_the_margin_around_any_surface() {
+        let regions = [
+            SurfaceRegion { x: 32., y: 34., width: 300., height: 120., radius: 28. },
+            SurfaceRegion { x: 160., y: 200., width: 44., height: 20., radius: 10. },
+        ];
+        // Just outside the glass box, inside the margin; the corner is judged on the box.
+        assert!(near(&regions, 1., 20., 40., 32.));
+        assert!(near(&regions, 1., 32., 34., 32.));
+        assert!(near(&regions, 1., 340., 160., 32.));
+        // Beyond the margin, and in the gap between the two surfaces once the margin is spent.
+        assert!(!near(&regions, 1., -1., 40., 32.));
+        assert!(!near(&regions, 1., 500., 500., 32.));
+        assert!(!near(&regions, 1., 100., 300., 32.));
+        // The margin is logical: at 150 % it stretches with the surfaces.
+        assert!(near(&regions, 1.5, 0., 51., 32.));
+        assert!(!near(&regions, 1.5, 0., 0., 32.));
+    }
 
     #[test]
     fn rounded_surfaces_take_the_cursor_and_the_gaps_let_it_through() {

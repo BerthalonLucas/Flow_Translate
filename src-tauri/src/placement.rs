@@ -1,15 +1,19 @@
 use crate::types::{PlacementSide, Rect};
 
+/// Places the glass (region zero) beside its anchor. `extent` is how far the window
+/// reaches below the glass top (physical): the menu space is reserved under the pill
+/// since 2026-09-13, so the side is chosen on the whole window, not on the glass alone.
 pub fn overlay(
     anchor: Rect,
     work: Rect,
     width: f64,
     height: f64,
+    extent: f64,
     hint: Option<PlacementSide>,
 ) -> (Rect, PlacementSide) {
     let gap = 8.0;
     let decision_height = if hint.is_none() {
-        height.max(220.0)
+        height.max(220.0).max(extent)
     } else {
         height
     };
@@ -75,13 +79,23 @@ mod tests {
             width: 20.,
             height: 20.,
         };
-        let (r, s) = overlay(a, work, 280., 200., None);
+        let (r, s) = overlay(a, work, 280., 200., 200., None);
         assert_eq!(s, PlacementSide::Above);
         assert!(r.x + r.width <= 1000.);
         assert_eq!(
-            overlay(a, work, 280., 300., Some(s)).1,
+            overlay(a, work, 280., 300., 300., Some(s)).1,
             PlacementSide::Above
         );
+    }
+    #[test]
+    fn the_reserved_window_below_the_glass_decides_the_side() {
+        let work = Rect { x: 0., y: 0., width: 1000., height: 800. };
+        // 300 px of room below the anchor: a 120 px glass fits, a 334 px window does not.
+        let a = Rect { x: 400., y: 480., width: 20., height: 20. };
+        assert_eq!(overlay(a, work, 280., 120., 120., None).1, PlacementSide::Below);
+        assert_eq!(overlay(a, work, 280., 120., 334., None).1, PlacementSide::Above);
+        // A chosen side is kept whatever the extent.
+        assert_eq!(overlay(a, work, 280., 120., 334., Some(PlacementSide::Below)).1, PlacementSide::Below);
     }
     #[test]
     fn reserves_long_result_on_first_choice() {
@@ -97,7 +111,7 @@ mod tests {
             width: 20.,
             height: 20.,
         };
-        assert_eq!(overlay(a, work, 280., 40., None).1, PlacementSide::Above);
+        assert_eq!(overlay(a, work, 280., 40., 40., None).1, PlacementSide::Above);
     }
     #[test]
     fn manual_position_stays_in_offset_work_area_after_resize() {

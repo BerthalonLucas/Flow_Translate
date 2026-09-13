@@ -620,7 +620,8 @@ async fn resize_overlay(
     presentation: Option<Presentation>,
     regions: Option<Vec<SurfaceRegion>>,
 ) -> Result<(), String> {
-    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. || width > 640. || height > 480. {
+    // The window reserves the menu and, docked, the enlarged glass: 484 × 758 at rest.
+    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. || width > 640. || height > 800. {
         return Err("Dimensions invalides.".into());
     }
     if let Some(items) = regions.as_ref() { validate_regions(items, width, height)?; }
@@ -779,7 +780,7 @@ fn position(
     height: f64,
     placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
 ) -> Result<(), String> {
-    let (capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule) = {
+    let (capture_id, rect, capsule, scale, regions, apply_rect, apply_regions, apply_capsule) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible {
             return Ok(());
@@ -798,33 +799,65 @@ fn position(
         let regions = i.regions.clone();
         let surface = regions.first().copied().unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 28. });
         let (glass_w, glass_h) = (surface.width * s, surface.height * s);
-        let to_host = |glass: Rect| placement::clamp(work, glass.x - surface.x * s, glass.y - surface.y * s, w, h);
+        // The glass stays in the work area; the transparent reserve around it (halo, menu
+        // space) may leave it, over the taskbar or off-screen, so the window is never
+        // pushed over its anchor by the clamp.
+        let to_host = |glass: Rect| {
+            let glass = placement::clamp(work, glass.x, glass.y, glass_w, glass_h);
+            Rect { x: glass.x - surface.x * s, y: glass.y - surface.y * s, width: w, height: h }
+        };
         i.size = (width, height);
         if i.dragging {
             return Ok(());
         }
         // Docked glass and unanchored captures rest bottom-centre on the tab; the capsule
         // window is no longer shown. Anchored glass keeps its drag position or its anchor.
+        // How far the window reaches below the glass top: the menu space reserved under
+        // the pill counts when the side is chosen (the glass would otherwise be pushed up
+        // over its anchor by the clamp near the bottom edge).
+        let extent = h - surface.y * s;
+        let mut regions = regions;
         let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Docked || cap.anchor.is_none(), i.manual, cap.anchor) {
-            (true, _, _) | (_, _, None) => (placement::docked(work, w, h), None, s),
+            (true, _, _) | (_, _, None) => {
+                let rect = placement::docked(work, w, h);
+                // A work area shorter than the reserved window truncates it from the top
+                // while the frontend keeps its root on the window's bottom edge.
+                if rect.height < h {
+                    regions = shift_regions(&regions, (rect.height - h) / s);
+                }
+                (rect, None, s)
+            }
             (false, Some(manual), _) => (to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }), None, s),
             (false, None, Some(anchor)) => {
                 // Design « 1a »: compact and enlarged glass share the anchored top-left
                 // corner; a larger glass is shifted by the clamp, never recentred.
                 if i.side.is_none() {
-                    i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, None).1);
+                    i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, extent, None).1);
                 }
-                let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, i.side);
+                let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, extent, i.side);
                 i.side = Some(side);
                 (to_host(glass), None, s)
             }
         };
-        let overlay_key = (result.0, regions.clone());
-        let apply_overlay = i.last_overlay.as_ref() != Some(&overlay_key);
+        let apply_rect = i.last_overlay.as_ref().is_none_or(|last| last.0 != result.0);
+        let apply_regions = i.last_overlay.as_ref().is_none_or(|last| last.1 != regions);
         let apply_capsule = i.last_capsule.as_ref() != Some(&result.1);
-        (capture_id, result.0, result.1, result.2, regions, apply_overlay, apply_capsule)
+        (capture_id, result.0, result.1, result.2, regions, apply_rect, apply_regions, apply_capsule)
     };
-    finish_position(app, capture_id, rect, capsule, scale, regions, apply_overlay, apply_capsule, placed)
+    finish_position(app, capture_id, rect, capsule, scale, regions, apply_rect, apply_regions, apply_capsule, placed)
+}
+
+/// Moves regions by `dy` logical pixels, clipping whatever leaves the window through its top.
+fn shift_regions(regions: &[SurfaceRegion], dy: f64) -> Vec<SurfaceRegion> {
+    regions
+        .iter()
+        .filter_map(|region| {
+            let top = region.y + dy;
+            let clipped = (-top).max(0.);
+            let height = region.height - clipped;
+            (height > 0.).then(|| SurfaceRegion { x: region.x, y: top.max(0.), width: region.width, height, radius: region.radius.min(height / 2.) })
+        })
+        .collect()
 }
 
 fn finish_position(
@@ -834,7 +867,8 @@ fn finish_position(
     capsule: Option<Rect>,
     scale: f64,
     regions: Vec<SurfaceRegion>,
-    apply_overlay: bool,
+    apply_rect: bool,
+    apply_regions: bool,
     apply_capsule: bool,
     placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
 ) -> Result<(), String> {
@@ -864,15 +898,17 @@ fn finish_position(
           host::escape_scope(source_window,
             handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0),
             handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
-          if apply_overlay {
+          if apply_rect || apply_regions {
             let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
-            host::show(&window, rect, &regions, scale)?;
+            // Folds, unfolds and menus only change the surfaces: no SetWindowPos.
+            if apply_rect { host::place(&window, rect)?; }
+            host::set_regions(&window, &regions, scale)?;
           }
           let mut i = state.inner.lock().map_err(|_| lock_error())?;
           if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
               return Err("La capture n’est plus active.".into());
           }
-          if apply_overlay { i.last_overlay = Some((rect, regions)); }
+          if apply_rect || apply_regions { i.last_overlay = Some((rect, regions)); }
           if apply_capsule { i.last_capsule = Some(capsule); }
           Ok(())
         })();
@@ -1034,6 +1070,7 @@ pub fn run() {
             for label in ["overlay", "capsule"] {
                 if let Some(w) = app.get_webview_window(label) {
                     host::apply_glass(&w);
+                    host::silence_frame(&w)?;
                     let native = host::handle(&w);
                     w.on_window_event(move |event| {
                         if matches!(event, tauri::WindowEvent::Focused(_)) {
@@ -1044,7 +1081,7 @@ pub fn run() {
                     });
                 }
             }
-            host::start_hit_tester();
+            host::start_hit_tester(app.handle().clone(), app.get_webview_window("overlay").map(|w| host::handle(&w)).unwrap_or(0));
             if let Some(w) = app.get_webview_window("settings") {
                 let window = w.clone();
                 w.on_window_event(move |event| {
@@ -1102,6 +1139,24 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {
+        let regions = [
+            SurfaceRegion { x: 92., y: 500., width: 300., height: 200., radius: 28. },
+            SurfaceRegion { x: 220., y: 722., width: 44., height: 20., radius: 10. },
+        ];
+        // 758 px reserved, 700 px available: everything moves 58 px up.
+        let shifted = shift_regions(&regions, -58.);
+        assert_eq!(shifted[0].y, 442.);
+        assert_eq!(shifted[1].y, 664.);
+        assert_eq!(shifted.len(), 2);
+        // A surface leaving through the top is clipped, its radius kept plausible; one
+        // entirely above the window disappears.
+        let clipped = shift_regions(&regions, -560.);
+        assert_eq!(clipped.len(), 2);
+        assert_eq!((clipped[0].y, clipped[0].height), (0., 140.));
+        assert_eq!(shift_regions(&regions, -730.).len(), 1);
+    }
     #[test]
     fn stale_cancel_preserves_current() {
         let mut i = Inner::new(Settings::default());
