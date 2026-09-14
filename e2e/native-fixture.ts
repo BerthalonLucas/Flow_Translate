@@ -5,7 +5,8 @@ import type { Capture, Settings, TranslationRequest } from '../src/types';
 
 let settings: Settings = { targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false, connectionExpanded: false,
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
-const capture = (id: string, text = 'Example selection'): Capture => ({ id, text, source: 'selection', canReplace: true, anchor: null });
+// Like Rust since 0.1.8: canReplace is false until the second capture step (`capture-target`).
+const capture = (id: string, text = 'Example selection'): Capture => ({ id, text, source: 'selection', canReplace: false, anchor: null });
 const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
 let request: TranslationRequest;
 let currentCapture = capture('first');
@@ -42,5 +43,8 @@ Object.assign(window, { nativeFixture: {
   holdCopy: () => { heldCopy = true; },
   releaseCopy: () => { resolveCopy?.(); heldCopy = false; },
   near: (near: boolean) => emit('glass-near', { near }),
+  target: (captureId: string, canReplace: boolean) => emit('capture-target', { captureId, canReplace }),
+  notice: (message: string) => emit('capture-notice', { message }),
+  replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality', targetLanguage: 'fr' } }; return emit('capture', currentCapture); },
 } });
 await import('../src/main');

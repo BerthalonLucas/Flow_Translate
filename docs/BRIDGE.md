@@ -8,7 +8,10 @@ Rust structs serialize camelCase. Rust command names are snake_case; invoke argu
 type Mode = 'fast' | 'quality';
 type Language = 'fr' | 'en';
 type Rect = { x: number; y: number; width: number; height: number }; // physical screen pixels, final visible character (or final visible line if character unavailable), logical text order
-type Capture = { id: string; text: string; source: 'selection'|'clipboard'; canReplace: boolean; anchor: Rect|null };
+type Replay = { requestId: string; translatedText: string; mode: Mode; targetLanguage: Language }; // a result shown again from the tray: complete at once, no translation
+type Capture = { id: string; text: string; source: 'selection'|'clipboard'; canReplace: boolean; anchor: Rect|null; replay?: Replay };
+type CaptureTarget = { captureId: string; canReplace: boolean }; // second capture step
+type CaptureNotice = { message: string };
 type Profile = { endpoint: string; model: string; apiKey: string }; // key decrypted only to settings; never browser mock persistence
 type Settings = { targetLanguage: Language; mode: Mode; shortcut: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; profiles: Record<Mode,Profile> }; // connectionExpanded: settings UI fold state, persisted like any other field
 type StreamEvent = { requestId: string; kind: 'delta'|'done'|'error'; text?: string; message?: string };
@@ -23,7 +26,7 @@ type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:n
 - `get_settings() -> Settings`
 - `frontend_ready() -> Capture|null`: overlay-only handshake, called after event listeners register. Marks overlay ready and returns pending capture, if any. Frontend deduplicates capture IDs. Never recapture clipboard as a startup fallback.
 - `save_settings({settings}) -> void` (validate URL/model/shortcut before saving; DPAPI-protect credentials)
-- `capture_text() -> Capture` (also usable from preview/test controls)
+- `capture_text() -> Capture` (also usable from preview/test controls). Since 2026-09-14 the capture has two steps: the UIA selection (text, anchor) opens the window at once with `canReplace: false`; the document offsets and the Win32 control are read afterwards and published by `capture-target`. Without a UIA selection Rust copies for the user (synthetic Ctrl+Insert after the shortcut chord is released, clipboard sequence watched ≤ 350 ms, previous text restored without feeding Win+V unless something else wrote in between), else accepts a copy the user made himself less than 3 s before (`host::track_clipboard`), else fails with « Rien à traduire dans la fenêtre active. » shown as a notice, never as a MessageBox.
 - `translate({request:{id,captureId,text,targetLanguage,mode}}) -> void`: starts background streaming and returns promptly. Emits `translation` StreamEvent. Register listeners before invoking. At most one active request; starting another cancels the prior one. Validate capture/text identity. Desktop demo may be explicitly started through CLI `--demo`, never silently substitute a mock for failed inference.
 - `cancel_translation({requestId}) -> void`
 - `copy_result({requestId}) -> void`: Rust copies only a completed known translation, never arbitrary frontend-supplied replacement text.
@@ -44,6 +47,9 @@ type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:n
 
 ## Events and windows
 
+- `capture-target` carries `{captureId, canReplace}`: the native target of a selection capture, read behind the shown window; a stale capture id is ignored; « Remplacer » is offered only after it arrives true.
+- `capture-notice` carries `{message}`: nothing to translate, protected field, oversized selection, source window changed. Without an open glass Rust first places the overlay window as a pill alone (420×64 logical, bottom centre of the cursor's screen, no surface: the mouse passes through) and hides it after 4 s; with an open glass the frontend shows the message as feedback. Replaces the MessageBox (2026-09-14).
+- A `capture` with `replay` (tray « Revoir la dernière traduction », kept 10 min after the glass closed) is shown complete by the frontend without invoking `translate`; `copy_result` accepts its request id.
 - `capture` carries Capture to overlay, after it is ready; every capture starts translation at once in React (the clipboard confirmation step was removed on 2026-09-10). The global shortcut always captures the current selection, clipboard fallback included; it no longer focuses an existing glass.
 - `translation` carries StreamEvent. React ignores stale request IDs. Rust emits done only on normal, non-truncated completion.
 - `settings-changed` carries Settings after successful persistence.

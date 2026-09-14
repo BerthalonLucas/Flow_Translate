@@ -9,6 +9,7 @@ for (const theme of ['light', 'dark']) {
       else if (['error', 'partial'].includes(scenario.id)) await expect(page.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'error');
       else if (scenario.id === 'pending') await expect(page.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'streaming');
       else if (scenario.id === 'capsule') await expect(page.locator('.capsule')).toBeVisible();
+      else if (scenario.id === 'notice') await expect(page.locator('.notice-pill')).toHaveText('Rien à traduire dans la fenêtre active.');
       else await expect(page.getByRole('heading', { name: 'Traduction', exact: true })).toBeVisible();
       if (scenario.id === 'history') await expect(page.locator('html')).toHaveAttribute('data-lab-ready', 'true');
       await expect(page).toHaveScreenshot(`${scenario.id}-${theme}.png`);

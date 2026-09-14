@@ -17,6 +17,9 @@ declare global {
       holdCopy: () => void;
       releaseCopy: () => void;
       near: (near: boolean) => Promise<void>;
+      target: (captureId: string, canReplace: boolean) => Promise<void>;
+      notice: (message: string) => Promise<void>;
+      replay: (id: string) => Promise<void>;
     };
   }
 }
@@ -342,4 +345,66 @@ test('IPC fixture: a long path breaks after its separators in the result and in 
   await expect(page.locator('.original-copy')).toContainText('The binary is at');
   expect(await page.locator('.original-copy wbr').count()).toBe(10);
   expect(await wrapped('.original-copy')).toMatchObject({ split: 0 });
+});
+
+// Since 0.1.8 a capture arrives in two steps: the text and its anchor open the window,
+// the native target (document offsets, Win32 control) follows and decides « Remplacer ».
+test('IPC fixture: « Remplacer » waits for the second capture step and ignores a stale target', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); });
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.nativeFixture.target('someone-else', true));
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.nativeFixture.target('first', true));
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toBeEnabled();
+});
+
+test('IPC fixture: a notice without a glass is a lone pill that never asks for a window resize', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(() => window.nativeFixture.dismissEvent('first'));
+  await expect(page.locator('.glass-overlay')).toHaveCount(0);
+  const before = await resizeCount(page);
+  await page.evaluate(() => window.nativeFixture.notice('Rien à traduire dans la fenêtre active.'));
+  const pill = page.locator('.notice-pill');
+  await expect(pill).toHaveText('Rien à traduire dans la fenêtre active.');
+  await expect(pill).toHaveCSS('font-size', '13px');
+  await expect(page.locator('.glass-overlay')).toHaveCount(0);
+  expect(await resizeCount(page)).toBe(before);
+  // Rust hides its window after four seconds; the pill leaves on the same clock.
+  await expect(pill).toHaveCount(0, { timeout: 6000 });
+  // A capture replaces a notice at once.
+  await page.evaluate(() => window.nativeFixture.notice('Champ protégé : capture refusée.'));
+  await expect(page.locator('.notice-pill')).toBeVisible();
+  await page.evaluate(() => window.nativeFixture.capture('after-notice'));
+  await expect(page.locator('.notice-pill')).toHaveCount(0);
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-capture-id', 'after-notice');
+});
+
+test('IPC fixture: a notice while the glass is open reads as feedback in the glass', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); });
+  await page.evaluate(() => window.nativeFixture.notice('Rien à traduire dans la fenêtre active.'));
+  await expect(page.locator('.compact-feedback')).toHaveText('Rien à traduire dans la fenêtre active.');
+  await expect(page.locator('.notice-pill')).toHaveCount(0);
+  await expect(page.locator('.translation-text')).toHaveText('Bonjour');
+});
+
+test('IPC fixture: a replayed result is complete at once and asks for no translation', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(() => window.nativeFixture.dismissEvent('first'));
+  await expect(page.locator('.glass-overlay')).toHaveCount(0);
+  const translations = () => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'translate').length);
+  const before = await translations();
+  await page.evaluate(() => window.nativeFixture.replay('again'));
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-capture-id', 'again');
+  await expect(page.locator('.translation-text')).toHaveText('Exemple de sélection');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  expect(await translations()).toBe(before);
+  await expect.poll(async () => (await geometry(page))?.presentation).toBe('docked');
 });

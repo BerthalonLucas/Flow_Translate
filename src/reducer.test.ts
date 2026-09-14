@@ -42,6 +42,26 @@ describe('translationReducer', () => {
     state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done' } });
     expect(state).toMatchObject({ phase: 'complete', replacementValid: false });
   });
+  it('offers replacement only once the native target arrives, for the current capture', () => {
+    const pending = { ...selected, canReplace: false };
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: pending });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality', targetLanguage: 'fr' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done' } });
+    expect(state.replacementValid).toBe(false);
+    expect(translationReducer(state, { type: 'TARGET', captureId: 'other', canReplace: true })).toEqual(state);
+    state = translationReducer(state, { type: 'TARGET', captureId: 'c1', canReplace: true });
+    expect(state).toMatchObject({ replacementValid: true, capture: { canReplace: true } });
+    const invalidated = translationReducer(state, { type: 'INVALIDATE', message: 'La sélection a changé.' });
+    expect(translationReducer(invalidated, { type: 'TARGET', captureId: 'c1', canReplace: true }).replacementValid).toBe(false);
+  });
+  it('keeps a target that arrives before the result for the done event', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { ...selected, canReplace: false } });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality', targetLanguage: 'fr' });
+    state = translationReducer(state, { type: 'TARGET', captureId: 'c1', canReplace: true });
+    expect(state.replacementValid).toBe(false);
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done' } });
+    expect(state.replacementValid).toBe(true);
+  });
   it('rejects a late layout measurement belonging to an older capture', () => {
     const current = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected, layout: { presentation: 'contextual' } });
     expect(translationReducer(current, { type: 'LAYOUT', captureId: 'obsolete', layout: { presentation: 'reader' } })).toEqual(current);
