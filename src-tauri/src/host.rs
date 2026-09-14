@@ -705,8 +705,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_clipboard_sequence_is_readable_from_a_worker_thread() {
-        // Zero means no access to the window station: the freshness rule and the
-        // synthetic copy would both be blind.
+        // Zero means no access to the window station's clipboard: on a desktop the
+        // freshness rule and the synthetic copy would both be blind, so a worker thread
+        // must read it too. A CI runner without an interactive desktop reads zero from
+        // every thread; there is nothing to check there.
+        if clipboard_sequence() == 0 {
+            eprintln!("no clipboard sequence in this session (no interactive window station): skipped");
+            return;
+        }
         let sequence = std::thread::spawn(clipboard_sequence).join().unwrap();
         assert_ne!(sequence, 0);
     }
