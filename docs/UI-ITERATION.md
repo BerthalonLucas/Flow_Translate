@@ -161,6 +161,44 @@ fait désormais sur `BerthalonLucas/Flow_Translate` (toutes les branches poussé
   (`KEYEVENTF_EXTENDEDKEY`), sinon Chromium lit Ctrl+Pavé0. Word, Outlook, Teams, Discord
   restent au jugement de Lucas.
 
+### Lot « lecture calibrée » 0.2.0 (14 septembre 2026)
+
+- Deux formes décidées une fois, sur le vrai texte (`src/layout.ts`, `src/GlassOverlay.tsx`) :
+  attente en pilule seule (60 × 28, spinner de shadcn : `LoaderCircle` 18 px un tour par seconde, balayage après 1,5 s ; les trois points du premier jet, jugés hideux par Lucas, sont retirés) ; à
+  l’arrivée du résultat, mesure hors écran à 380 px : ≤ 8 lignes → verre court déplié
+  depuis la pilule (16/24) ; sinon lecteur en bande bas centre, large de la moitié de la
+  zone de travail de l’écran courant, haute d’au plus 45 %, lignes entières (22/33). Plus
+  de « Agrandir/Réduire », d’onglet ni de repli : le verre part de lui-même.
+- Budget de lecture puis fondu : `readingBudget` (orientation + 350 ms par mot, 5 s à
+  30 s / 90 s), réglage « Fermeture automatique », sortie de la souris après une visite
+  → 4 s au plus, jamais moins de 2,5 s ; assombrissement 55 % en 600 ms, tenue 1,4 s,
+  fondu 300 ms ; toute approche, molette ou touche rend 100 % et 5 s ; épingle dans la
+  pilule du lecteur. Commande `overlay_dimming` : Échap redevient celui de l’utilisateur
+  pendant l’assombrissement.
+- Réglages « Taille du texte » (Normale 16/24 · 22/33, Grande 18/27 · 24/36, Très grande
+  20/30 · 26/39) et « Fermeture automatique » (Rapide, Normale, Lente, Jamais),
+  persistés (`text_size`, `auto_close`), lus par la bulle via `settings-changed`.
+- Fenêtre et écrans (`lib.rs`, `host.rs`) : `Presentation::Anchored | Bottom`, plafond de
+  `resize_overlay` = zone de travail courante, réserve par capture (444 × ≥ 334 ancrée ;
+  bande + 64 × réserve menu + pilule + bande maximale en bas), `frame` = empreinte du
+  verre ancrée par Rust dès la pilule d’attente ; `capture.screen` porte la zone logique
+  et l’échelle. Les formes du bas prennent l’écran du curseur et le suivent : le sondeur
+  relève `MonitorFromPoint`, `screen_changed` adopte le nouvel écran, émet `work-area`
+  et replace la fenêtre ; un verre ancré ne suit jamais.
+- Typographie : `#e8eaef`, interlettrage 0, `text-wrap: pretty`, un seul graphite
+  `rgba(24,26,31,.96)` pour verre, pilule et menu, liseré à 20 %, plus de sheen.
+- Preuves : `cargo test` (plafond, cadre), Vitest (`layout.test.ts`), Playwright
+  (`ui.pw.ts`, `native-bridge.pw.ts`, `reported-defects.pw.ts` UI-021 à UI-024,
+  `workbench.pw.ts`, `overlay.layout.spec.mjs`), références visuelles régénérées et
+  regardées (`short`, `long`, `pending`, `menu`, `settings`, `reader-1920`,
+  `reader-2560`). Probe natif `scripts/test-native-ui.ps1` sur le build 0.2.0 : PASS (3 cycles,
+  fenêtre ancrée 444 × 334 identique avant et après le menu, bandeau silencieux à 0,
+  fermeture DOM puis HWND masqués). Le probe prend désormais un contrôle sans message
+  avant le `WM_NCACTIVATE` : une vidéo derrière la fenêtre faisait varier la bande
+  entre deux captures (diff de 2 à 124 sans aucun message), ce que la tolérance fixe de
+  2 prenait pour un bandeau peint. Preuve multi-écrans dans `docs/UI-ISSUES.md`,
+  UI-024 : la bande suit le curseur de DISPLAY3 à DISPLAY1, DISPLAY2 et retour.
+
 ## Correction de méthode après retour de Lucas
 
 L’entrée par défaut de `/lab.html` est désormais la liste des **défauts signalés**,

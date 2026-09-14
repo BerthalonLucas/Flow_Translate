@@ -16,24 +16,53 @@ test('the frame band is documented as native-only with its established cause', a
   await expect(page.getByText('Établie le 13/09/2026', { exact: false })).toBeVisible();
 });
 
-test('the fold after « Agrandir » is reproducible in the workbench and holds two seconds', async ({ page }) => {
-  await page.goto('/lab.html?issue=grace');
+// UI-021 (« Agrandir » useless): a long result is a reader band from the start, half the
+// frame wide, without any enlarge control.
+test('a long translation reads as a band, half the frame wide, without « Agrandir »', async ({ page }) => {
+  await page.goto('/lab.html?issue=reader');
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'complete');
+  await expect(frame.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
+  const inner = await frame.locator('html').evaluate(() => window.innerWidth);
+  expect(inner).toBeGreaterThanOrEqual(956);
+  await expect(frame.locator('.translation-bubble')).toHaveCSS('width', `${Math.round(inner / 2)}px`);
+  await frame.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await expect(frame.getByRole('menuitem', { name: 'Agrandir' })).toHaveCount(0);
+  await expect(frame.getByRole('menuitem', { name: 'Afficher l’original', exact: true })).toBeVisible();
+});
+
+// UI-022 (the glass stays too long): read, leave, gone within four seconds.
+test('a glass the pointer visited dims within four seconds of its departure and then leaves', async ({ page }) => {
+  await page.goto('/lab.html?issue=duration');
   const frame = page.frameLocator('iframe');
   await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'complete');
   await frame.locator('.translation-copy').hover();
-  await frame.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await frame.getByRole('menuitem', { name: 'Agrandir', exact: true }).click();
-  await expect(frame.locator('.translation-bubble')).toHaveCSS('width', '420px');
-  await page.mouse.move(2, 2);
   await page.waitForTimeout(1100);
-  await expect(frame.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'false');
-  await expect(frame.locator('.glass-overlay')).toHaveAttribute('data-collapsed', 'true', { timeout: 3000 });
+  await page.mouse.move(2, 2);
+  await expect(frame.locator('.glass-overlay')).toHaveAttribute('data-dimming', 'true', { timeout: 5000 });
+  await expect(frame.locator('.glass-overlay')).toHaveCount(0, { timeout: 4000 });
+});
+
+// UI-023 (loading): shadcn's spinner in a pill alone, no ring in a big glass.
+test('waiting shows a turning spinner in a pill of 60 × 28', async ({ page }) => {
+  await page.goto('/lab.html?issue=loading');
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'streaming');
+  const pill = frame.locator('.wait-pill');
+  expect(await pill.boundingBox()).toMatchObject({ width: 60, height: 28 });
+  expect(await pill.locator('svg').count()).toBe(1);
+  expect(await pill.locator('svg').evaluate(el => getComputedStyle(el).animationName)).toBe('wait-spin');
+  await expect(frame.locator('.loading-ring')).toHaveCount(0);
+  await expect(frame.locator('.translation-bubble')).toHaveCount(0);
 });
 
 test('native-only defects do not present a web simulation as a reproduction', async ({ page }) => {
+  for (const issue of ['residual', 'screens']) {
+    await page.goto(`/lab.html?issue=${issue}`);
+    await expect(page.getByText('Pas de reproduction web pour ce défaut.', { exact: true })).toBeVisible();
+    await expect(page.locator('iframe')).toHaveCount(0);
+  }
   await page.goto('/lab.html?issue=residual');
-  await expect(page.getByText('Pas de reproduction web pour ce défaut.', { exact: true })).toBeVisible();
-  await expect(page.locator('iframe')).toHaveCount(0);
   await expect(page.getByText('Établie pour la fermeture', { exact: false })).toBeVisible();
 });
 

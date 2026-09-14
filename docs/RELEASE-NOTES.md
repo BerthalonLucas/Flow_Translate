@@ -1,3 +1,24 @@
+# 0.2.0 — lecture calibrée : deux formes, un temps de lecture, la bande suit la souris
+
+Plus d’anneau ni de grande fenêtre vide pendant l’attente : une pilule de 60 × 28 avec
+un spinner net (celui de shadcn), au coin de l’endroit où le verre va s’ouvrir. Le résultat arrivé,
+la forme est décidée une fois sur le vrai texte : jusqu’à huit lignes, un verre court
+(380 px, 16/24) se déplie depuis la pilule à côté de la sélection ; au-delà, une bande de
+lecture se pose en bas au centre de l’écran, large de la moitié de la zone de travail et
+haute d’au plus 45 %, en 22/33, avec défilement. Plus de « Agrandir », plus d’onglet, plus
+de repli.
+
+La bulle s’efface d’elle-même au bout du temps de lecture estimé (350 ms par mot, entre
+5 s et 30 s pour un verre court, 90 s pour la bande), puis s’assombrit et fond ; quand la
+souris l’a visitée puis la quitte, elle part en quatre secondes au plus. Un clic, la
+molette ou une touche la retiennent ; l’épingle de la bande la garde. Les Réglages
+proposent « Taille du texte » (Normale, Grande, Très grande) et « Fermeture automatique »
+(Rapide, Normale, Lente, Jamais).
+
+La bande apparaît sur l’écran où est la souris et la suit d’un écran à l’autre ; un verre
+court reste près de sa sélection. Typographie plus fine (`#e8eaef`, un seul graphite pour
+verre, pilule et menu).
+
 # 0.1.8 — capture directe : plus de Ctrl+C, plus de boîte de dialogue
 
 Le raccourci suffit : sans sélection lisible par UI Automation (Teams, Discord, Word,
