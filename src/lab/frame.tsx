@@ -28,6 +28,11 @@ function OverlayFixture() {
       return () => window.clearInterval(timer);
     }
     const capture = { id: `lab-${scenario}`, text: scenario === 'long' ? 'Please review the updated proposal. '.repeat(20) : 'Could you send the updated proposal before Thursday?', source: 'selection' as const, canReplace: true, anchor: { x: 400, y: 300, width: 20, height: 16 } };
+    if (params.get('screen')) {
+      // A screen other than the viewport (e.g. 2560x1400): what Rust would send with the capture.
+      const [width, height] = params.get('screen')!.split('x').map(Number);
+      Object.assign(capture, { screen: { width, height, scale: 1 } });
+    }
     bridge.setDemoCapture(capture, scenario === 'long' || scenario === 'error' || scenario === 'pending' || scenario === 'partial' ? scenario : 'normal');
     controller.receiveCapture(capture);
   }, [controller]);

@@ -1,13 +1,13 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Settings, StreamEvent, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false, connectionExpanded: false,
+  targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -100,6 +100,8 @@ export const bridge = {
   focusOverlay: () => command<void>('focus_overlay'),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
   resize: (width: number, height: number, geometry: OverlayGeometry) => command<void>('resize_overlay', { width, height, ...geometry }),
+  // The reading budget is spent: Rust frees Escape while the glass dims; an approach re-arms it.
+  dimming: (dimming: boolean) => command<void>('overlay_dimming', { dimming }),
   checkConnection: (mode: Mode) => command<ConnectionStatus>('check_connection', { mode }),
   getHistory: () => command<HistoryEntry[]>('get_history'),
   deleteHistory: (id: string | null) => command<void>('delete_history', { id }),
@@ -107,4 +109,6 @@ export const bridge = {
   setDemoCapture: (capture: Capture, scenario: DemoScenario = 'normal') => { demoCapture = capture; demoScenario = scenario; },
   // Browser preview only: what Rust emits when the shortcut finds nothing to translate.
   demoNotice: (message: string) => { if (!native) emit('capture-notice', { message }); },
+  // Browser preview only: what Rust emits when the cursor changes screen under a bottom form.
+  demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
 };
