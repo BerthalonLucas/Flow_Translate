@@ -153,8 +153,13 @@ fait désormais sur `BerthalonLucas/Flow_Translate` (toutes les branches poussé
 - Preuves : `cargo test` (`fresh`), Vitest (`TARGET`), Playwright (pont IPC :
   `capture-target`, avis seul sans redimensionnement, avis dans le verre, rejeu sans
   `translate` ; atelier : scénario `notice`, défaut UI-020), références visuelles
-  `notice-*`. La matrice applicative réelle (Edge, Chrome, Word, Outlook, Teams, Discord,
-  VS Code, Windows Terminal, Bloc-notes) se fait sur le build 0.1.8.
+  `notice-*`. Matrice réelle du 14/09 sur le build 0.1.8 (`scripts/capture-matrix.ps1`,
+  table dans `docs/UI-ISSUES.md`, UI-019) : Bloc-notes et Chrome par UIA (≈ 450 ms,
+  ancrés), VS Code par la copie synthétique (438 ms, presse-papiers restauré), copie de
+  moins de 3 s acceptée dans le Bloc-notes sans sélection et dans Windows Terminal, avis
+  au-delà. La matrice a révélé que l’Insert injecté devait être un scan code étendu
+  (`KEYEVENTF_EXTENDEDKEY`), sinon Chromium lit Ctrl+Pavé0. Word, Outlook, Teams, Discord
+  restent au jugement de Lucas.
 
 ## Correction de méthode après retour de Lucas
 

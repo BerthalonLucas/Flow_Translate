@@ -9,7 +9,8 @@ type Mode = 'fast' | 'quality';
 type Language = 'fr' | 'en';
 type Rect = { x: number; y: number; width: number; height: number }; // physical screen pixels, final visible character (or final visible line if character unavailable), logical text order
 type Replay = { requestId: string; translatedText: string; mode: Mode; targetLanguage: Language }; // a result shown again from the tray: complete at once, no translation
-type Capture = { id: string; text: string; source: 'selection'|'clipboard'; canReplace: boolean; anchor: Rect|null; replay?: Replay };
+type Capture = { id: string; text: string; source: 'selection'|'clipboard'; origin?: 'uia'|'copy'|'fresh'|'replay'|'demo'; canReplace: boolean; anchor: Rect|null; replay?: Replay };
+// origin: how Rust obtained the text; shown nowhere, exposed as data-origin on .glass-overlay for the real capture matrix.
 type CaptureTarget = { captureId: string; canReplace: boolean }; // second capture step
 type CaptureNotice = { message: string };
 type Profile = { endpoint: string; model: string; apiKey: string }; // key decrypted only to settings; never browser mock persistence
