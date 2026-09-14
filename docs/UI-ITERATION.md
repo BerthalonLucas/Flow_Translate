@@ -199,6 +199,20 @@ fait désormais sur `BerthalonLucas/Flow_Translate` (toutes les branches poussé
   2 prenait pour un bandeau peint. Preuve multi-écrans dans `docs/UI-ISSUES.md`,
   UI-024 : la bande suit le curseur de DISPLAY3 à DISPLAY1, DISPLAY2 et retour.
 
+### Lot « release et moteurs » 0.2.1 (14 septembre 2026)
+
+- Saccade signalée par Lucas sur la 0.2.0 (UI-025) : la pilule d’attente se posait près
+  de la sélection puis tout filait en bas. L’emplacement est décidé dès la capture sur le
+  texte source (`decidePlacement`), la bande naît en bas sans bouger ; Rust émet
+  `work-area` si l’écran du curseur n’est pas celui de la sélection.
+- Publication : `.github/workflows/release.yml` (tag `v*` ou lancement manuel) construit
+  l’installateur NSIS, calcule son SHA-256 et crée la release GitHub avec la note de
+  version. README réécrit (installer, brancher un moteur, utiliser, construire) ;
+  `docs/ENDPOINTS.md` décrit la requête exacte, la réponse attendue et les réglages
+  pour vLLM, llama.cpp, LM Studio, Ollama et les services en ligne. `top_k` et
+  `repetition_penalty` sont retirés de la requête et renvoyés sans eux quand un serveur
+  strict les refuse (`inference::rejects_extended_sampling`).
+
 ## Correction de méthode après retour de Lucas
 
 L’entrée par défaut de `/lab.html` est désormais la liste des **défauts signalés**,
