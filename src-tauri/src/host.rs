@@ -1,17 +1,23 @@
 //! Windows geometry only: UIA rectangles and Win32 placement stay physical.
 use crate::types::{Rect, SurfaceRegion};
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri::window::{Color, Effect, EffectsBuilder};
 use windows::core::{s, w, BOOL};
+use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST},
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
-        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+            KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
+            VK_INSERT, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+        },
         Shell::{DefSubclassProc, SetWindowSubclass},
         WindowsAndMessaging::{
             GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
@@ -110,23 +116,6 @@ pub fn apply_glass(window: &WebviewWindow) {
 
 pub fn foreground() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
-}
-pub fn show_capture_error(message: &str) {
-    use windows::{
-        core::{w, HSTRING},
-        Win32::UI::WindowsAndMessaging::{
-            MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
-        },
-    };
-    let message = HSTRING::from(message);
-    unsafe {
-        let _ = MessageBoxW(
-            None,
-            &message,
-            w!("FlowTranslate"),
-            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
-        );
-    }
 }
 pub fn window_rect(handle: isize) -> Option<Rect> {
     let mut r = RECT::default();
@@ -233,13 +222,12 @@ pub fn compensate_pointer_drag(
     Ok(unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 })
 }
 
-pub fn monitor(anchor: Option<Rect>, source: isize) -> (Rect, f64) {
-    let location = anchor.or_else(|| window_rect(source)).unwrap_or(Rect {
-        x: 0.,
-        y: 0.,
-        width: 1.,
-        height: 1.,
-    });
+/// Work area and scale of the monitor holding `location`; without one, the monitor
+/// under the cursor (the bottom band opens on the screen the mouse is on).
+pub fn monitor(location: Option<Rect>) -> (Rect, f64) {
+    let location = location
+        .or_else(|| cursor_position().map(|p| Rect { x: p.x as f64, y: p.y as f64, width: 1., height: 1. }))
+        .unwrap_or(Rect { x: 0., y: 0., width: 1., height: 1. });
     unsafe {
         let m = MonitorFromPoint(
             POINT {
@@ -547,6 +535,130 @@ unsafe fn strip_chrome_hwnd(hwnd: HWND) -> bool {
     }
     unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, frameless) };
     true
+}
+
+
+// ---------------------------------------------------------------------------------
+// Clipboard freshness and the synthetic copy (2026-09-14, direct capture)
+//
+// Without a UIA selection the shortcut used to read whatever the clipboard held,
+// silently: hence Lucas's Ctrl+C reflex. The capture now copies for him with a
+// synthetic Ctrl+Insert (the CUA copy chord: every Windows control, Chromium, Office,
+// Qt, Java and both consoles honour it, and unlike Ctrl+C it never becomes SIGINT in a
+// terminal), then reads and restores the clipboard. `GetClipboardSequenceNumber` tells
+// whether the target actually copied; the context watcher samples the same counter so
+// a copy the user made himself less than three seconds ago still counts as fresh.
+// Nothing here logs or keeps any clipboard text.
+
+static CLIPBOARD_SEEN: AtomicU32 = AtomicU32::new(0);
+static CLIPBOARD_CHANGED_AT: AtomicU64 = AtomicU64::new(0);
+static CLIPBOARD_SUPPRESSED_UNTIL: AtomicU64 = AtomicU64::new(0);
+static CLOCK: OnceLock<Instant> = OnceLock::new();
+
+/// Milliseconds since the first call: a monotonic clock shared by the watcher and the
+/// capture, never 0 (0 means « never » in the atomics above).
+pub fn now_ms() -> u64 {
+    let start = CLOCK.get_or_init(Instant::now);
+    start.elapsed().as_millis() as u64 + 1
+}
+
+pub fn clipboard_sequence() -> u32 {
+    unsafe { GetClipboardSequenceNumber() }
+}
+
+/// Called by the context watcher every 35 ms: dates the last clipboard change that is
+/// not one of ours (the synthetic copy and the restoration are suppressed).
+pub fn track_clipboard() {
+    let sequence = clipboard_sequence();
+    let previous = CLIPBOARD_SEEN.swap(sequence, Ordering::AcqRel);
+    if previous == 0 || previous == sequence {
+        return;
+    }
+    let now = now_ms();
+    if now >= CLIPBOARD_SUPPRESSED_UNTIL.load(Ordering::Acquire) {
+        CLIPBOARD_CHANGED_AT.store(now, Ordering::Release);
+    }
+}
+
+/// When the clipboard last changed by the user's hand, in `now_ms` time (None: never seen).
+pub fn clipboard_changed_at() -> Option<u64> {
+    match CLIPBOARD_CHANGED_AT.load(Ordering::Acquire) {
+        0 => None,
+        at => Some(at),
+    }
+}
+
+/// The clipboard changes of the next `window` are ours: the watcher must not date them.
+pub fn suppress_clipboard_tracking(window: Duration) {
+    CLIPBOARD_SUPPRESSED_UNTIL.store(now_ms() + window.as_millis() as u64, Ordering::Release);
+    // Resynchronise so the next sample compares against the current counter.
+    CLIPBOARD_SEEN.store(clipboard_sequence(), Ordering::Release);
+}
+
+fn modifiers_down() -> bool {
+    [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
+        .iter()
+        .any(|key| unsafe { GetAsyncKeyState(key.0 as i32) } < 0)
+}
+
+/// The shortcut chord is still physically held when its handler runs: an Insert sent
+/// under Ctrl+Alt would be another chord. Waits, at most `timeout`, for every modifier
+/// to be released; false when the user keeps them down.
+pub fn wait_modifiers_released(timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while modifiers_down() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+fn key_input(key: VIRTUAL_KEY, up: bool) -> INPUT {
+    let scan = unsafe { MapVirtualKeyW(key.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: scan,
+                dwFlags: if up { KEYEVENTF_KEYUP | KEYEVENTF_SCANCODE } else { KEYEVENTF_SCANCODE },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+/// Sends Ctrl+Insert to the foreground window: the copy chord, never SIGINT.
+pub fn send_copy_chord() -> Result<(), String> {
+    let inputs = [
+        key_input(VK_CONTROL, false),
+        key_input(VK_INSERT, false),
+        key_input(VK_INSERT, true),
+        key_input(VK_CONTROL, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        return Err("La copie synthétique a été bloquée.".into());
+    }
+    Ok(())
+}
+
+/// Waits, at most `timeout`, for the clipboard counter to leave `before`.
+pub fn wait_clipboard_change(before: u32, timeout: Duration) -> Option<u32> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let now = clipboard_sequence();
+        if now != before {
+            return Some(now);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[cfg(test)]
