@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
-import type { Capture, Language, Mode, Settings, StreamEvent } from './types';
+import type { Capture, CaptureNotice, CaptureTarget, Language, Mode, Settings, StreamEvent } from './types';
+
+// A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
+const NOTICE_MS = 4000;
+export type Notice = { id: number; message: string };
 
 export function useTranslation(readyOnMount = false) {
   const [state, dispatch] = useReducer(translationReducer, initialTranslationState);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeTimer = useRef(0);
   const [closingCaptureId, setClosingCaptureId] = useState<string | null>(null);
   const closingRef = useRef<string | null>(null);
   const requestRef = useRef<string | null>(null);
@@ -28,8 +34,13 @@ export function useTranslation(readyOnMount = false) {
 
   useEffect(() => {
     settingsReadyRef.current = bridge.getSettings().then(next => { settingsRef.current = next; setSettings(next); return true; }).catch(() => false);
-    return discardPending;
+    return () => { discardPending(); window.clearTimeout(noticeTimer.current); };
   }, [discardPending]);
+  const showNotice = useCallback((message: string) => {
+    window.clearTimeout(noticeTimer.current);
+    setNotice({ id: Date.now(), message });
+    noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+  }, []);
 
   const start = useCallback((capture: Capture, forced?: { mode?: Mode; targetLanguage?: Language }) => {
     const mode = forced?.mode ?? settingsRef.current?.mode ?? 'quality';
@@ -52,7 +63,18 @@ export function useTranslation(readyOnMount = false) {
     captureRef.current = capture;
     closingRef.current = null;
     setClosingCaptureId(null);
+    window.clearTimeout(noticeTimer.current);
+    setNotice(null);
     dispatch({ type: 'CAPTURE', capture });
+    if (capture.replay) {
+      // A result shown again from the tray: complete at once, nothing to translate.
+      const { requestId, translatedText, mode, targetLanguage } = capture.replay;
+      requestRef.current = requestId;
+      dispatch({ type: 'START', requestId, mode, targetLanguage });
+      dispatch({ type: 'STREAM', event: { requestId, kind: 'delta', text: translatedText } });
+      dispatch({ type: 'STREAM', event: { requestId, kind: 'done' } });
+      return;
+    }
     // The shortcut translates at once, clipboard fallback included: no confirmation step.
     start(capture);
   }, [discardPending, start]);
@@ -81,6 +103,8 @@ export function useTranslation(readyOnMount = false) {
       bridge.on<{ captureId: string; message: string }>('target-invalidated', invalidation => {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       }),
+      bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
+      bridge.on<CaptureNotice>('capture-notice', ({ message }) => showNotice(message)),
     ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
       else {
@@ -95,7 +119,7 @@ export function useTranslation(readyOnMount = false) {
       }
     }).catch(() => { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); });
     return () => { disposed = true; off.forEach(unlisten => unlisten()); };
-  }, [discardPending, flush, readyOnMount, receiveCapture]);
+  }, [discardPending, flush, readyOnMount, receiveCapture, showNotice]);
 
   const cancelAndDismiss = useCallback(() => { void bridge.dismiss().catch(() => setInitError('La fermeture a échoué. Réessayez.')); }, []);
   const completeDismiss = useCallback((captureId: string) => {
@@ -107,7 +131,7 @@ export function useTranslation(readyOnMount = false) {
     void bridge.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
-  return { state, settings, dispatch, receiveCapture, start, cancelAndDismiss, completeDismiss, closingCaptureId, initError };
+  return { state, settings, dispatch, receiveCapture, start, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;

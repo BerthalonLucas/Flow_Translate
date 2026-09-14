@@ -3,7 +3,7 @@ import { listen as tauriListen } from '@tauri-apps/api/event';
 import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Settings, StreamEvent, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -104,5 +104,7 @@ export const bridge = {
   getHistory: () => command<HistoryEntry[]>('get_history'),
   deleteHistory: (id: string | null) => command<void>('delete_history', { id }),
   on: event,
-  setDemoCapture: (capture: Capture, scenario: DemoScenario = 'normal') => { demoCapture = capture; demoScenario = scenario; }
+  setDemoCapture: (capture: Capture, scenario: DemoScenario = 'normal') => { demoCapture = capture; demoScenario = scenario; },
+  // Browser preview only: what Rust emits when the shortcut finds nothing to translate.
+  demoNotice: (message: string) => { if (!native) emit('capture-notice', { message }); },
 };

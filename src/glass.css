@@ -87,6 +87,11 @@
 .menu-separator { display: block; height: 1px; margin: 3px 8px; background: rgba(255,255,255,.08); }
 .menu-close { color: rgba(242,243,246,.75); }
 .menu-close svg { width: 13px; height: 13px; }
+/* A notice without a glass: one pill, never clickable, centred in the 420 × 64 window Rust places at the bottom of the cursor's screen. */
+.notice-root { display: grid; place-items: center; pointer-events: none; }
+.native-overlay .notice-root { position: fixed; inset: 0; }
+.standalone-demo > .notice-root { position: absolute; inset: auto 0 24px 0; }
+.notice-pill { margin: 0; padding: 7px 14px; border: 1px solid var(--glass-border); border-radius: 16px; color: var(--text); font-size: 13px; line-height: 18px; white-space: nowrap; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
 .compact-feedback { align-self: flex-end; z-index: 2; max-width: calc(100% - 32px); margin: 8px 16px 0 0; padding: 6px 10px; border: 1px solid var(--glass-border); border-radius: 12px; color: var(--error-text); font-size: 12px; line-height: 16px; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
 .glass-overlay:has(.more-menu) > .compact-feedback { visibility: hidden; }
 /* The original reads like the translation, one size down, on a lighter field (contrast above 4.5:1 on the glass). */
