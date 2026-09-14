@@ -1,4 +1,4 @@
-use crate::types::{Capture, CaptureSource, Rect, StoredCapture, TargetIdentity, Win32Target};
+use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetIdentity, Win32Target};
 use arboard::Clipboard;
 use uiautomation::{patterns::UITextPattern, variants::SafeArray, UIAutomation, UIElement};
 use uiautomation::{
@@ -103,6 +103,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             id: Uuid::new_v4().to_string(),
             text: "Bonjour, ceci est une démonstration FlowTranslate.".into(),
             source: CaptureSource::Selection,
+            origin: CaptureOrigin::Demo,
             can_replace: false,
             anchor: Some(Rect {
                 x: 640.0,
@@ -151,6 +152,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             id: Uuid::new_v4().to_string(),
                             text: text.clone(),
                             source: CaptureSource::Selection,
+                            origin: CaptureOrigin::Uia,
                             can_replace: false,
                             anchor,
                             replay: None,
@@ -225,10 +227,23 @@ fn restore_clipboard(text: &str) {
 fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
     let pressed_at = crate::host::now_ms();
     let changed_at = crate::host::clipboard_changed_at();
-    let text = synthetic_copy(source_window)
-        .or_else(|| fresh(changed_at, pressed_at, FRESH_COPY_MS).then(read_clipboard).flatten())
+    let copied = synthetic_copy(source_window);
+    let (text, origin) = match &copied {
+        Ok(text) => (Some(text.clone()), CaptureOrigin::Copy),
+        Err(_) => (fresh(changed_at, pressed_at, FRESH_COPY_MS).then(read_clipboard).flatten(), CaptureOrigin::Fresh),
+    };
+    let text = text
         .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| "Rien à traduire dans la fenêtre active.".to_string())?;
+        .ok_or_else(|| {
+            let mut message = "Rien à traduire dans la fenêtre active.".to_string();
+            // For the real capture matrix only (FLOWTRANSLATE_CAPTURE_TRACE): which step of
+            // the synthetic copy gave up and how old the user's last copy is. Never any text.
+            if std::env::var_os("FLOWTRANSLATE_CAPTURE_TRACE").is_some() {
+                let age = changed_at.map(|at| pressed_at.saturating_sub(at));
+                message.push_str(&format!(" [copy: {}; last user copy: {:?} ms ago]", copied.as_ref().err().copied().unwrap_or("ok"), age));
+            }
+            message
+        })?;
     if text.chars().count() > 6000 {
         return Err("Sélection trop longue (6 000 caractères).".into());
     }
@@ -237,6 +252,7 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
         id: Uuid::new_v4().to_string(),
         text,
         source: CaptureSource::Clipboard,
+        origin,
         can_replace: false,
         anchor: None,
         replay: None,
@@ -250,26 +266,30 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
 /// Sends the copy chord to the source window and reads what it copied, then restores
 /// the previous text unless something else wrote the clipboard in between (SPEC:
 /// restoration never overwrites newer content). A previous non-text content (image,
-/// files) cannot be put back and stays replaced by the copy.
-fn synthetic_copy(source_window: isize) -> Option<String> {
+/// files) cannot be put back and stays replaced by the copy. The error names the step
+/// that gave up, for the capture matrix.
+fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
     if source_window == 0 || crate::host::foreground() != source_window {
-        return None;
+        return Err("source window lost");
     }
     let previous = read_clipboard();
     crate::host::suppress_clipboard_tracking(OWN_TRAFFIC);
     let before = crate::host::clipboard_sequence();
-    if !crate::host::wait_modifiers_released(CHORD_RELEASE) || crate::host::foreground() != source_window {
-        return None;
+    if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
+        return Err("modifiers still down");
     }
-    crate::host::send_copy_chord().ok()?;
-    let after = crate::host::wait_clipboard_change(before, COPY_SETTLE)?;
+    if crate::host::foreground() != source_window {
+        return Err("source window lost after the chord");
+    }
+    crate::host::send_copy_chord().map_err(|_| "SendInput refused")?;
+    let after = crate::host::wait_clipboard_change(before, COPY_SETTLE).ok_or("no clipboard change")?;
     let copied = read_clipboard().filter(|text| !text.trim().is_empty());
     if let Some(previous) = previous {
         if crate::host::clipboard_sequence() == after {
             restore_clipboard(&previous);
         }
     }
-    copied
+    copied.ok_or("copied nothing readable")
 }
 
 pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {

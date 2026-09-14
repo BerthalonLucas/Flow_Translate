@@ -15,7 +15,7 @@ use windows::Win32::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-            KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
+            KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
             VK_INSERT, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
         },
         Shell::{DefSubclassProc, SetWindowSubclass},
@@ -615,15 +615,20 @@ pub fn wait_modifiers_released(timeout: Duration) -> bool {
     true
 }
 
-fn key_input(key: VIRTUAL_KEY, up: bool) -> INPUT {
+/// `extended`: the navigation Insert is E0 52; without the flag the same scan code is
+/// the numpad 0/Ins, which Chromium reads as Ctrl+Numpad0 (matrix of 2026-09-14).
+fn key_input(key: VIRTUAL_KEY, extended: bool, up: bool) -> INPUT {
     let scan = unsafe { MapVirtualKeyW(key.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    let mut flags = KEYEVENTF_SCANCODE;
+    if extended { flags |= KEYEVENTF_EXTENDEDKEY; }
+    if up { flags |= KEYEVENTF_KEYUP; }
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: key,
                 wScan: scan,
-                dwFlags: if up { KEYEVENTF_KEYUP | KEYEVENTF_SCANCODE } else { KEYEVENTF_SCANCODE },
+                dwFlags: flags,
                 time: 0,
                 dwExtraInfo: 0,
             },
@@ -634,10 +639,10 @@ fn key_input(key: VIRTUAL_KEY, up: bool) -> INPUT {
 /// Sends Ctrl+Insert to the foreground window: the copy chord, never SIGINT.
 pub fn send_copy_chord() -> Result<(), String> {
     let inputs = [
-        key_input(VK_CONTROL, false),
-        key_input(VK_INSERT, false),
-        key_input(VK_INSERT, true),
-        key_input(VK_CONTROL, true),
+        key_input(VK_CONTROL, false, false),
+        key_input(VK_INSERT, true, false),
+        key_input(VK_INSERT, true, true),
+        key_input(VK_CONTROL, false, true),
     ];
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
@@ -664,6 +669,15 @@ pub fn wait_clipboard_change(before: u32, timeout: Duration) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn the_clipboard_sequence_is_readable_from_a_worker_thread() {
+        // Zero means no access to the window station: the freshness rule and the
+        // synthetic copy would both be blind.
+        let sequence = std::thread::spawn(clipboard_sequence).join().unwrap();
+        assert_ne!(sequence, 0);
+    }
 
     #[test]
     fn the_pointer_counts_as_near_within_the_margin_around_any_surface() {

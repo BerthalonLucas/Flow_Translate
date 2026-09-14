@@ -55,6 +55,8 @@ pub struct Capture {
     pub id: String,
     pub text: String,
     pub source: CaptureSource,
+    /// How the text was obtained; shown nowhere, read by the real capture matrix.
+    pub origin: CaptureOrigin,
     pub can_replace: bool,
     pub anchor: Option<Rect>,
     /// A result shown again (tray « Revoir la dernière traduction »): the frontend
@@ -94,6 +96,18 @@ pub struct CaptureNotice {
 pub enum CaptureSource {
     Selection,
     Clipboard,
+}
+
+/// uia: the UI Automation selection; copy: the synthetic Ctrl+Insert; fresh: a copy the
+/// user made less than three seconds before; replay: the tray; demo: `--demo*`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureOrigin {
+    Uia,
+    Copy,
+    Fresh,
+    Replay,
+    Demo,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

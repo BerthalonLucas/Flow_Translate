@@ -353,6 +353,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
         id: Uuid::new_v4().to_string(),
         text: result.source_text.clone(),
         source: CaptureSource::Clipboard,
+        origin: CaptureOrigin::Replay,
         can_replace: false,
         anchor: None,
         replay: Some(Replay {

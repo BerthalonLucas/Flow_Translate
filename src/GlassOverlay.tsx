@@ -360,7 +360,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const changePresentation = () => { touch(); dispatch({ type: 'LAYOUT', captureId, layout: enlarged ? compactLayout : enlargedLayout }); };
   const expand = () => { if (layoutPhase === 'idle' && !closingCaptureId) setDock({ docked: true, collapsed: false }); };
   const visit = () => { visited.current = true; };
-  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed} data-folded={folded}
+  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-origin={state.capture?.origin} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed} data-folded={folded}
     onClickCapture={touch}
     onFocus={event => {
       // A keyboard focus holds the glass, unless it lands after the pointer already left
