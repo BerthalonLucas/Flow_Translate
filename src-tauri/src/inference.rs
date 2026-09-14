@@ -85,6 +85,26 @@ fn api_url(base: &str, route: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+/// Sampling fields beyond the OpenAI contract: recommended by the Hy-MT2 model cards and
+/// understood by vLLM, llama.cpp and most local servers. An endpoint that rejects unknown
+/// fields (the OpenAI API answers 400) gets the request once more without them.
+const EXTENDED_SAMPLING: [&str; 2] = ["top_k", "repetition_penalty"];
+
+fn request_body(profile: &Profile, prompt: &str, extended: bool) -> Value {
+    let mut body = json!({"model":profile.model,"messages":[{"role":"user","content":prompt}],"stream":true,
+        "temperature":0.7,"top_p":0.6,"max_tokens":4096});
+    if extended {
+        body["top_k"] = json!(20);
+        body["repetition_penalty"] = json!(1.05);
+    }
+    body
+}
+
+/// A client error whose message names one of the extended fields: strict OpenAI contract.
+fn rejects_extended_sampling(status: u16, detail: &str) -> bool {
+    (400..500).contains(&status) && EXTENDED_SAMPLING.iter().any(|field| detail.contains(field))
+}
+
 pub async fn stream<F>(
     profile: Profile,
     text: String,
@@ -101,28 +121,34 @@ where
         Language::En => "English",
     };
     let prompt = format!("Translate the following text into {target}. Note that you should only output the translated result without any additional explanation:\n{text}");
-    let body = json!({"model":profile.model,"messages":[{"role":"user","content":prompt}],"stream":true,
-        "temperature":0.7,"top_p":0.6,"top_k":20,"repetition_penalty":1.05,"max_tokens":4096});
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|_| "Impossible de créer le client HTTP.".to_string())?;
-    let mut req = client.post(endpoint).json(&body);
-    if !profile.api_key.is_empty() {
-        req = req.bearer_auth(&profile.api_key);
-    }
-    if cancel.is_cancelled() {
-        return Err("Traduction annulée.".into());
-    }
-    let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|unreachable_message(&profile.endpoint, &e))?};
-    if !response.status().is_success() {
-        return Err(format!(
-            "Le serveur a répondu HTTP {}.",
-            response.status().as_u16()
-        ));
-    }
+    let mut extended = true;
+    let response = loop {
+        let mut req = client.post(endpoint.clone()).json(&request_body(&profile, &prompt, extended));
+        if !profile.api_key.is_empty() {
+            req = req.bearer_auth(&profile.api_key);
+        }
+        if cancel.is_cancelled() {
+            return Err("Traduction annulée.".into());
+        }
+        let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|unreachable_message(&profile.endpoint, &e))?};
+        if response.status().is_success() {
+            break response;
+        }
+        let status = response.status().as_u16();
+        // The server's own message decides the retry; it is never logged nor shown.
+        let detail = response.text().await.unwrap_or_default();
+        if extended && rejects_extended_sampling(status, &detail) {
+            extended = false;
+            continue;
+        }
+        return Err(format!("Le serveur a répondu HTTP {status}."));
+    };
     let mut bytes = response.bytes_stream();
     let mut decoder = SseDecoder::default();
     let mut result = String::new();
@@ -228,6 +254,23 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_extended_sampling_fields_are_dropped_on_a_strict_endpoint() {
+        let profile = Profile { endpoint: "http://127.0.0.1:8001/v1".into(), model: "m".into(), api_key: String::new() };
+        let full = request_body(&profile, "p", true);
+        assert_eq!(full["top_k"], 20);
+        assert_eq!(full["repetition_penalty"], 1.05);
+        let strict = request_body(&profile, "p", false);
+        assert!(strict.get("top_k").is_none());
+        assert!(strict.get("repetition_penalty").is_none());
+        assert_eq!(strict["temperature"], 0.7);
+        assert_eq!(strict["stream"], true);
+        assert!(rejects_extended_sampling(400, "Unrecognized request argument supplied: top_k"));
+        assert!(rejects_extended_sampling(422, "repetition_penalty: extra inputs are not permitted"));
+        assert!(!rejects_extended_sampling(400, "model not found"));
+        assert!(!rejects_extended_sampling(500, "top_k"));
+    }
     #[tokio::test]
     #[ignore = "requires a running local FlowTranslate vLLM profile"]
     async fn live_vllm_stream_and_cancel() {
