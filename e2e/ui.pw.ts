@@ -108,6 +108,8 @@ test('the spinner turns while the engine streams; a long result then lands whole
   await expect(pill).toHaveAttribute('aria-label', 'Traduction en cours');
   expect(await pill.boundingBox()).toMatchObject({ width: 60, height: 28 });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'pending');
+  // A long source waits at the bottom from the start (UI-025): the band is born there.
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-placement', 'bottom');
   await expect(page.locator('.translation-bubble')).toHaveCount(0);
   expect(await pill.locator('svg').count()).toBe(1);
   expect(await pill.locator('svg').evaluate(el => [getComputedStyle(el).animationName, getComputedStyle(el).animationDuration, getComputedStyle(el).animationTimingFunction, Number(el.getAttribute('width'))])).toEqual(['wait-spin', '1s', 'linear', 18]);
@@ -115,6 +117,7 @@ test('the spinner turns while the engine streams; a long result then lands whole
   await expect(pill).toHaveCount(0);
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-placement', 'bottom');
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-moving', 'false');
   await expect(page.locator('.translation-copy')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('.translation-bubble')).toHaveAttribute('data-reveal', 'true');
   expect(await page.locator('.translation-bubble').evaluate(el => getComputedStyle(el).animationName)).toBe('band-in');

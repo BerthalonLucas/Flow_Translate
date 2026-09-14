@@ -164,7 +164,28 @@ test('IPC fixture: reduced motion closes immediately through the same handshake'
 // A long result becomes a reader band: the window moves to the bottom reserve sized from
 // the capture's screen (half the width, 45 % of the height), invisible until Rust has
 // placed it; a `work-area` event (the cursor changed screen) resizes the band.
-test('IPC fixture: a long result moves to the bottom as a reader sized from its screen; a work-area event resizes it', async ({ page }) => {
+// UI-025: the placement is decided at the capture on the source text, so a long selection
+// waits at the bottom from the start and the band is born there without any move.
+test('IPC fixture: a long source waits at the bottom from the start; the band is born there without a move', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.setViewportSize({ width: 1100, height: 800 });
+  const reserve = bottomReserve(fixtureScreen, 'normal');
+  await page.evaluate(() => window.nativeFixture.capture('long-source', 'Une longue sélection à traduire. '.repeat(40)));
+  await expect.poll(async () => (await geometry(page))?.captureId).toBe('long-source');
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-placement', 'bottom');
+  const initial = await geometry(page);
+  expect([initial!.width, initial!.height, initial!.presentation]).toEqual([reserve.width, reserve.height, 'bottom']);
+  expect((initial!.regions as Region[])[0]).toMatchObject({ x: (reserve.width - 60) / 2, width: 60, height: 28 });
+  await page.evaluate(async () => { await window.nativeFixture.delta('Une longue traduction. '.repeat(120)); await window.nativeFixture.done(); });
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-moving', 'false');
+  const landed = await geometry(page);
+  expect([landed!.width, landed!.height, landed!.presentation]).toEqual([reserve.width, reserve.height, 'bottom']);
+  expect((landed!.regions as Region[])[0]).toMatchObject({ x: halo.x, width: readerMetrics(fixtureScreen, 'normal').width });
+});
+
+// A short source translated long is the rare case that still moves.
+test('IPC fixture: a long result from a short source moves to the bottom as a reader sized from its screen; a work-area event resizes it', async ({ page }) => {
   await openNativeFixture(page);
   // The preview viewport must hold the 1024 px reserve for the pill to be clickable.
   await page.setViewportSize({ width: 1100, height: 800 });

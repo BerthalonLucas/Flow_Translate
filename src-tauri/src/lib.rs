@@ -759,15 +759,20 @@ async fn resize_overlay(
     }
     if let Some(items) = regions.as_ref() { validate_regions(items, width, height)?; }
     if let Some(frame) = frame.as_ref() { validate_frame(frame, width, height)?; }
+    let mut changed_screen: Option<Screen> = None;
     {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if capture_id.as_ref().is_some_and(|id| i.capture.as_ref().is_none_or(|capture| &capture.public.id != id)) {
             return Ok(());
         }
         if let Some(presentation) = presentation {
-            // A form that moves to the bottom takes the cursor's screen from then on.
+            // A form that moves to the bottom takes the cursor's screen from then on; when
+            // that is not the selection's screen, the frontend learns the new work area.
             if presentation == Presentation::Bottom && i.presentation != Presentation::Bottom {
                 let (work, scale, monitor) = host::monitor_at(None);
+                if monitor != i.monitor {
+                    changed_screen = Some(Screen { width: work.width / scale, height: work.height / scale, scale });
+                }
                 i.work = work;
                 i.scale = scale;
                 i.monitor = monitor;
@@ -779,6 +784,9 @@ async fn resize_overlay(
             return Err("Dimensions invalides.".into());
         }
         if let Some(regions) = regions { i.regions = regions; i.frame = frame; i.measured = true; }
+    }
+    if let Some(screen) = changed_screen {
+        let _ = app.emit_to("overlay", "work-area", screen);
     }
     let (placed_tx, placed_rx) = tokio::sync::oneshot::channel();
     position(&app, &state, width, height, Some(placed_tx))?;

@@ -1,4 +1,4 @@
-import type { AutoClose, Form, Screen, TextSize } from './types';
+import type { AutoClose, Form, Presentation, Screen, TextSize } from './types';
 
 // Calibrated reading (2026-09-14): two forms decided once, on the real result. The short
 // glass (≤ 8 lines at 380 px) opens beside the selection; anything longer is a reader
@@ -49,6 +49,13 @@ export function readerMetrics(screen: Pick<Screen, 'width' | 'height'>, preset: 
 // ≤ 8 lines at the short width read beside the selection; more is a reader.
 export function decideForm(lines: number): Exclude<Form, 'pending'> {
   return lines <= COMPACT_MAX_LINES ? 'short' : 'reader';
+}
+// Where the wait pill and then the glass live is decided at the capture, on the source
+// text: a translation is about as long as its source, so a source past the short glass
+// waits at the bottom from the start and the band is born there, without any jump from
+// the selection (UI-025). A capture without an anchor lives at the bottom anyway.
+export function decidePlacement(anchored: boolean, sourceLines: number): Presentation {
+  return anchored && sourceLines <= COMPACT_MAX_LINES ? 'anchored' : 'bottom';
 }
 
 // The native window is reserved once per form so a menu or feedback never resizes it:
