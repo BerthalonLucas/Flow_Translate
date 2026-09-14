@@ -40,12 +40,10 @@
 /* Words break at spaces or at the <wbr> the frontend places after a long run's separators; a letter-level cut is the last resort. */
 .translation-text { white-space: pre-wrap; overflow-wrap: break-word; }
 .translation-text.is-placeholder { display: block; }
-/* Waiting: three dots hopping in turn (900 ms, 120 ms apart), on their own transform (composited). */
-.wait-dots { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; }
-.wait-dots i { display: block; width: 4px; height: 4px; border-radius: 50%; background: var(--accent-cursor); animation: wait-hop 900ms ease-in-out infinite; will-change: transform; }
-.wait-dots i:nth-child(2) { animation-delay: 120ms; }
-.wait-dots i:nth-child(3) { animation-delay: 240ms; }
-@keyframes wait-hop { 0%, 55%, 100% { transform: translateY(0); opacity: .5; } 25% { transform: translateY(-4px); opacity: 1; } }
+/* Waiting: shadcn's spinner (lucide LoaderCircle, one turn per second, linear), white on the pill. */
+.wait-spinner { display: inline-flex; align-items: center; justify-content: center; height: 28px; color: #fff; }
+.wait-spinner svg { display: block; animation: wait-spin 1s linear infinite; will-change: transform; }
+@keyframes wait-spin { to { transform: rotate(360deg); } }
 /* The waiting pill alone: 60 × 28 where the action pill will stand (anchored), or centred (bottom); a progress sweep after 1.5 s. */
 .wait-pill { position: absolute; top: 0; right: 16px; display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 28px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); overflow: hidden; }
 .is-pending .glass-body { min-height: 42px; }
@@ -53,7 +51,7 @@
 .wait-pill[data-slow="true"]::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, transparent, var(--accent-cursor), transparent); animation: wait-sweep 1400ms linear infinite; }
 @keyframes wait-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 .wait-inline { display: block; height: var(--copy-line); }
-.wait-inline .wait-dots { height: var(--copy-line); }
+.wait-inline .wait-spinner { height: var(--copy-line); }
 /* The result lands whole: the window is already at its final size, the short glass opens from the
    pill row and the text fades in. Paint only, so the ResizeObserver publishes once; the clip
    reaches past the box to keep the shadow, and holds 65 ms while the native resize lands. */

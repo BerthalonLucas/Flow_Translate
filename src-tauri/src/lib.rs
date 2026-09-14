@@ -452,7 +452,7 @@ fn translate(
         let id = request.id.clone();
         let result = if demo {
             let output = if demo_long {
-                "Voici une réponse synthétique suffisamment longue pour exercer le lecteur bas. Elle contient plusieurs phrases, des retours naturels et assez de texte pour vérifier que la surface principale reste stable lorsque la pilule et le menu se chevauchent visuellement. Aucun appel d’inférence réel n’est effectué dans ce mode de démonstration."
+                "Voici une réponse synthétique assez longue pour dépasser les huit lignes du verre court et ouvrir la bande de lecture en bas de l’écran du curseur. Elle contient plusieurs phrases, des retours naturels et assez de texte pour vérifier que la bande reste stable lorsque la pilule et le menu se chevauchent visuellement, que le défilement fonctionne à la molette et que le budget de lecture se calcule sur le nombre de mots. Aucun appel d’inférence réel n’est effectué dans ce mode de démonstration : le texte est fixe, sans rapport avec la sélection, et sert uniquement à vérifier la géométrie, le suivi de l’écran de la souris et la sortie en deux temps de la bande une fois le temps de lecture écoulé."
             } else { match request.target_language {
                 Language::Fr => "Pourriez-vous envoyer la proposition mise à jour avant jeudi ?",
                 Language::En => "Could you send the updated proposal before Thursday?",

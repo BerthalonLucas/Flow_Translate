@@ -69,7 +69,7 @@ const defects = [
     id: 'loading', title: 'Chargement en anneau dans une grande fenêtre', code: 'UI-023', scope: 'Web + Windows',
     image: 'overlay-reported.png',
     observed: 'Pendant l’inférence, une bulle entière s’ouvrait pour un simple anneau ; Lucas veut « des pointillés qui sautent » dans un petit encart.',
-    steps: ['Lancer une traduction dont le moteur ne répond pas.', 'Une pilule seule de 60 × 28 avec trois points qui sautent tour à tour, là où la pilule d’actions se posera.', 'Après 1,5 s, un trait de progression balaie le bas de la pilule ; Échap annule.'],
+    steps: ['Lancer une traduction dont le moteur ne répond pas.', 'Une pilule seule de 60 × 28 avec le spinner de shadcn (LoaderCircle, un tour par seconde), là où la pilule d’actions se posera.', 'Après 1,5 s, un trait de progression balaie le bas de la pilule ; Échap annule.'],
     cause: 'Le verre n’existe plus avant le résultat : la pilule d’attente est publiée seule à Rust, qui ancre l’empreinte du futur verre (frame) et non la pilule ; le verre court s’ouvre depuis cette ligne (clip-path 260 ms), la bande monte de 8 px en fondu.',
     boundary: 'La pilule et ses points se voient ici. La réservation de la fenêtre native et l’ouverture sans second placement se vérifient par le pont IPC.',
     scenario: 'pending',

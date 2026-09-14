@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Switch from '@radix-ui/react-switch';
 import * as ToggleGroup from '@radix-ui/react-toggle-group';
-import { Check, ChevronDown, Clipboard, Copy, Ellipsis, Languages, Pin, PinOff, X } from 'lucide-react';
+import { Check, ChevronDown, Clipboard, Copy, Ellipsis, Languages, LoaderCircle, Pin, PinOff, X } from 'lucide-react';
 
 // Animate paint, never the dimensions/scale that the native ResizeObserver measures.
 export const motionTokens = { enter: 0.18, feedback: 0.14, exit: 0.1, ease: [0.2, 0, 0, 1] as const };
@@ -27,11 +27,11 @@ export function useRise(y: number, kind: 'surface' | 'feedback' = 'surface', del
   };
 }
 
-const icons = { copy: Copy, more: Ellipsis, close: X, clipboard: Clipboard, check: Check, chevron: ChevronDown, pin: Pin, unpin: PinOff, languages: Languages };
+const icons = { copy: Copy, more: Ellipsis, close: X, clipboard: Clipboard, check: Check, chevron: ChevronDown, pin: Pin, unpin: PinOff, languages: Languages, spinner: LoaderCircle };
 export type IconName = keyof typeof icons;
 export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
   const Glyph = icons[name];
-  return <Glyph aria-hidden="true" size={size} strokeWidth={name === 'check' ? 1.9 : 1.7} />;
+  return <Glyph aria-hidden="true" size={size} strokeWidth={name === 'check' ? 1.9 : name === 'spinner' ? 2.4 : 1.7} />;
 }
 
 export function AnimatedIcon({ name }: { name: IconName }) {

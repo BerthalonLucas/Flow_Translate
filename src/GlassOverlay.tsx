@@ -50,11 +50,12 @@ const SLOW_AFTER = 1500;
 
 // Three dots hopping in turn (900 ms cycle, 120 ms apart): the whole result lands at
 // once behind them (deltas are buffered in useTranslation), so the window resizes once.
-function WaitDots() {
-  return <span className="wait-dots" aria-hidden="true"><i /><i /><i /></span>;
+// The wait is shadcn's spinner: lucide's LoaderCircle turning once a second, large enough to read at a glance.
+function WaitSpinner() {
+  return <span className="wait-spinner" aria-hidden="true"><Icon name="spinner" size={18} /></span>;
 }
 function WaitPill({ slow }: { slow: boolean }) {
-  return <span className="wait-pill" role="img" aria-label="Traduction en cours" data-slow={slow}><WaitDots /></span>;
+  return <span className="wait-pill" role="img" aria-label="Traduction en cours" data-slow={slow}><WaitSpinner /></span>;
 }
 
 // Long runs (paths, URLs, identifiers) get a break opportunity after their separators,
@@ -445,7 +446,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
               <span className={`translation-text ${state.result || state.error ? '' : 'is-placeholder'}`}>
                 {state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu&nbsp;⋯.</span>
                   : state.result ? <span key={state.requestId ?? 'result'} className="reveal"><Breakable text={state.result} /></span>
-                  : <span className="wait-inline" role="img" aria-label="Traduction en cours"><WaitDots /></span>}
+                  : <span className="wait-inline" role="img" aria-label="Traduction en cours"><WaitSpinner /></span>}
               </span>
               {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
             </ReadingSurface>
