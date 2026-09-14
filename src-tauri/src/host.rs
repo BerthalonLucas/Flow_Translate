@@ -10,7 +10,7 @@ use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
-    Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST},
+    Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST},
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{
@@ -225,17 +225,39 @@ pub fn compensate_pointer_drag(
 /// Work area and scale of the monitor holding `location`; without one, the monitor
 /// under the cursor (the bottom band opens on the screen the mouse is on).
 pub fn monitor(location: Option<Rect>) -> (Rect, f64) {
+    let (work, scale, _) = monitor_at(location);
+    (work, scale)
+}
+
+/// The monitor under `location` (its centre), or under the cursor when None: work area
+/// in physical pixels, DPI scale and the HMONITOR that identifies the screen.
+pub fn monitor_at(location: Option<Rect>) -> (Rect, f64, isize) {
     let location = location
         .or_else(|| cursor_position().map(|p| Rect { x: p.x as f64, y: p.y as f64, width: 1., height: 1. }))
         .unwrap_or(Rect { x: 0., y: 0., width: 1., height: 1. });
-    unsafe {
-        let m = MonitorFromPoint(
+    let handle = unsafe {
+        MonitorFromPoint(
             POINT {
                 x: (location.x + location.width / 2.) as i32,
                 y: (location.y + location.height / 2.) as i32,
             },
             MONITOR_DEFAULTTONEAREST,
-        );
+        )
+    };
+    let (work, scale) = monitor_info(handle.0 as isize);
+    (work, scale, handle.0 as isize)
+}
+
+/// The screen under the cursor (test override honoured), as an HMONITOR value.
+pub fn cursor_monitor() -> isize {
+    let Some(p) = cursor_position() else { return 0 };
+    unsafe { MonitorFromPoint(POINT { x: p.x, y: p.y }, MONITOR_DEFAULTTONEAREST).0 as isize }
+}
+
+/// Work area (physical) and DPI scale of a screen known by its HMONITOR.
+pub fn monitor_info(handle: isize) -> (Rect, f64) {
+    let m = HMONITOR(handle as *mut _);
+    unsafe {
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -391,9 +413,12 @@ unsafe fn pass_through(hwnd: HWND, on: bool) {
 /// its window through the drag, a press outside never lands on it. The overlay also
 /// learns, on change only, whether the cursor rests within 32 px of one of its surfaces
 /// (`glass-near`): the frontend holds the glass open while it does. No point is logged.
-pub fn start_hit_tester(app: AppHandle, overlay: isize) {
+/// `on_screen` is called from the poller's thread whenever the cursor changes screen
+/// while a surface is visible (2026-09-14): the bottom forms follow the mouse.
+pub fn start_hit_tester(app: AppHandle, overlay: isize, on_screen: impl Fn(&AppHandle, isize) + Send + 'static) {
     let _ = std::thread::Builder::new().name("hit-tester".into()).spawn(move || {
         let mut was_near: Option<bool> = None;
+        let mut last_monitor = 0isize;
         loop {
             let mut any_visible = false;
             for (handle, surface) in surfaces() {
@@ -419,6 +444,13 @@ pub fn start_hit_tester(app: AppHandle, overlay: isize) {
                     }
                     let inside = client.is_some_and(|(x, y)| contains(&surface.regions, surface.scale, x, y));
                     pass_through(hwnd, !inside);
+                }
+            }
+            if any_visible {
+                let monitor = cursor_monitor();
+                if monitor != 0 && monitor != last_monitor {
+                    last_monitor = monitor;
+                    on_screen(&app, monitor);
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(if any_visible { 8 } else { 50 }));

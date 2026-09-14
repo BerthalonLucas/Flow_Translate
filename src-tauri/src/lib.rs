@@ -35,6 +35,11 @@ struct Inner {
     source_rect: Option<Rect>,
     work: Rect,
     scale: f64,
+    /// The screen (HMONITOR) `work` describes; the bottom forms follow the cursor's.
+    monitor: isize,
+    /// The rectangle Rust anchors beside the selection (window-relative, logical);
+    /// region zero when absent. Lets the waiting pill stand where the glass will open.
+    frame: Option<SurfaceRegion>,
     size: (f64, f64),
     manual: Option<ManualPlacement>,
     dragging: bool,
@@ -77,10 +82,12 @@ impl Inner {
                 height: 1080.,
             },
             scale: 1.,
+            monitor: 0,
+            frame: None,
             size: (280., 90.),
             manual: None,
             dragging: false,
-            presentation: Presentation::Contextual,
+            presentation: Presentation::Anchored,
             regions: Vec::new(),
             pending_dismiss: None,
             dismiss_generation: 0,
@@ -221,10 +228,13 @@ fn store_capture(
     captured: StoredCapture,
     source: isize,
 ) -> Result<Capture, String> {
+    let mut captured = captured;
+    // An anchored capture opens on its selection's screen; the others on the cursor's.
+    // The frontend sizes the reader band from that screen (`Capture.screen`).
+    let (work, scale, monitor) = host::monitor_at(captured.public.anchor);
+    captured.public.screen = Some(Screen { width: work.width / scale, height: work.height / scale, scale });
     let public = captured.public.clone();
     let deferred = captured.target.clone().filter(|_| !state.demo);
-    // An anchored capture opens on its selection's screen; the others on the cursor's.
-    let (work, scale) = host::monitor(public.anchor);
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         i.cancel(None);
@@ -237,10 +247,12 @@ fn store_capture(
         i.source_rect = host::window_rect(source);
         i.work = work;
         i.scale = scale;
+        i.monitor = monitor;
+        i.frame = None;
         i.size = (280., 90.);
         i.manual = None;
         i.dragging = false;
-        i.presentation = Presentation::Contextual;
+        i.presentation = Presentation::Anchored;
         i.regions.clear();
         i.pending_dismiss = None;
         i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
@@ -362,6 +374,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             mode: result.mode,
             target_language: result.target_language,
         }),
+        screen: None,
     };
     let capture_id = public.id.clone();
     store_capture(app, &state, StoredCapture { public, target: None }, host::foreground())?;
@@ -727,6 +740,9 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+/// The frontend reserves the window once per form (src/layout.ts): anchored, the short
+/// glass with the menu under its pill; bottom, the reader band with the menu above its
+/// pill. The ceiling is the current screen's work area (2026-09-14), no longer 640 × 800.
 #[tauri::command]
 async fn resize_overlay(
     app: AppHandle,
@@ -736,23 +752,94 @@ async fn resize_overlay(
     capture_id: Option<String>,
     presentation: Option<Presentation>,
     regions: Option<Vec<SurfaceRegion>>,
+    frame: Option<SurfaceRegion>,
 ) -> Result<(), String> {
-    // The window reserves the menu and, docked, the enlarged glass: 484 × 758 at rest.
-    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. || width > 640. || height > 800. {
+    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. {
         return Err("Dimensions invalides.".into());
     }
     if let Some(items) = regions.as_ref() { validate_regions(items, width, height)?; }
+    if let Some(frame) = frame.as_ref() { validate_frame(frame, width, height)?; }
     {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if capture_id.as_ref().is_some_and(|id| i.capture.as_ref().is_none_or(|capture| &capture.public.id != id)) {
             return Ok(());
         }
-        if let Some(presentation) = presentation { i.presentation = presentation; }
-        if let Some(regions) = regions { i.regions = regions; i.measured = true; }
+        if let Some(presentation) = presentation {
+            // A form that moves to the bottom takes the cursor's screen from then on.
+            if presentation == Presentation::Bottom && i.presentation != Presentation::Bottom {
+                let (work, scale, monitor) = host::monitor_at(None);
+                i.work = work;
+                i.scale = scale;
+                i.monitor = monitor;
+                i.manual = None;
+            }
+            i.presentation = presentation;
+        }
+        if !fits(width, height, i.work, i.scale) {
+            return Err("Dimensions invalides.".into());
+        }
+        if let Some(regions) = regions { i.regions = regions; i.frame = frame; i.measured = true; }
     }
     let (placed_tx, placed_rx) = tokio::sync::oneshot::channel();
     position(&app, &state, width, height, Some(placed_tx))?;
     placed_rx.await.map_err(|_| "Placement interrompu.".to_string())?
+}
+
+/// A window never larger than the work area it will rest on (logical against physical).
+fn fits(width: f64, height: f64, work: Rect, scale: f64) -> bool {
+    width * scale <= work.width + 1. && height * scale <= work.height + 1.
+}
+
+fn validate_frame(frame: &SurfaceRegion, width: f64, height: f64) -> Result<(), String> {
+    let values = [frame.x, frame.y, frame.width, frame.height];
+    if values.iter().any(|value| !value.is_finite())
+        || frame.x < 0. || frame.y < 0. || frame.width <= 0. || frame.height <= 0.
+        || frame.x + frame.width > width + 0.01 || frame.y + frame.height > height + 0.01 {
+        return Err("Cadre d’ancrage invalide.".into());
+    }
+    Ok(())
+}
+
+/// The reading budget is spent: the frontend dims the glass before it leaves. While it
+/// dims, Escape is the user's again (no scope); an approach re-arms it through `position`.
+#[tauri::command]
+fn overlay_dimming(app: AppHandle, state: State<'_, AppState>, dimming: bool) -> Result<(), String> {
+    if dimming {
+        host::close_escape_scope();
+        return Ok(());
+    }
+    let source = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible { return Ok(()); }
+        i.source_window
+    };
+    host::escape_scope(
+        source,
+        app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0),
+        app.get_webview_window("capsule").map(|window| host::handle(&window)).unwrap_or(0),
+    );
+    Ok(())
+}
+
+/// The cursor changed screen while the glass is visible (hit tester, 2026-09-14): a
+/// bottom form follows it, the frontend learns the new work area to size the band; an
+/// anchored glass belongs to its selection and stays.
+fn screen_changed(app: &AppHandle, monitor: isize) {
+    let state = app.state::<AppState>();
+    let (work, scale) = host::monitor_info(monitor);
+    let size = {
+        let Ok(mut i) = state.inner.lock() else { return };
+        if !i.visible || i.dragging || i.capture.is_none() || i.monitor == monitor || i.presentation != Presentation::Bottom {
+            return;
+        }
+        i.monitor = monitor;
+        i.work = work;
+        i.scale = scale;
+        i.manual = None;
+        i.size
+    };
+    let _ = app.emit_to("overlay", "work-area", Screen { width: work.width / scale, height: work.height / scale, scale });
+    let _ = position(app, &state, size.0, size.1, None);
 }
 
 fn validate_regions(regions: &[SurfaceRegion], width: f64, height: f64) -> Result<(), String> {
@@ -914,7 +1001,7 @@ fn position(
         let work = i.work;
         let (w, h) = (width * s, height * s);
         let regions = i.regions.clone();
-        let surface = regions.first().copied().unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 28. });
+        let surface = i.frame.or_else(|| regions.first().copied()).unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 28. });
         let (glass_w, glass_h) = (surface.width * s, surface.height * s);
         // The glass stays in the work area; the transparent reserve around it (halo, menu
         // space) may leave it, over the taskbar or off-screen, so the window is never
@@ -934,7 +1021,7 @@ fn position(
         // over its anchor by the clamp near the bottom edge).
         let extent = h - surface.y * s;
         let mut regions = regions;
-        let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Docked || cap.anchor.is_none(), i.manual, cap.anchor) {
+        let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Bottom || cap.anchor.is_none(), i.manual, cap.anchor) {
             (true, _, _) | (_, _, None) => {
                 let rect = placement::docked(work, w, h);
                 // A work area shorter than the reserved window truncates it from the top
@@ -1209,7 +1296,7 @@ pub fn run() {
                     });
                 }
             }
-            host::start_hit_tester(app.handle().clone(), app.get_webview_window("overlay").map(|w| host::handle(&w)).unwrap_or(0));
+            host::start_hit_tester(app.handle().clone(), app.get_webview_window("overlay").map(|w| host::handle(&w)).unwrap_or(0), screen_changed);
             if let Some(w) = app.get_webview_window("settings") {
                 let window = w.clone();
                 w.on_window_event(move |event| {
@@ -1252,6 +1339,7 @@ pub fn run() {
             focus_overlay,
             override_cursor,
             resize_overlay,
+            overlay_dimming,
             resize_settings,
             drag_settings,
             quit_app,
@@ -1315,6 +1403,23 @@ mod tests {
         assert!(!i.complete_pending_dismiss("old", 7));
         assert_eq!(i.pending_dismiss, Some(("new".into(), 8)));
         assert!(i.complete_pending_dismiss("new", 8));
+    }
+    #[test]
+    fn the_window_never_exceeds_the_work_area_of_its_screen() {
+        let work = Rect { x: 0., y: 0., width: 2560., height: 1400. };
+        // Half of a 2560 px screen plus the halos, 45 % of its height plus the reserve: fits.
+        assert!(fits(1344., 930., work, 1.));
+        assert!(!fits(2600., 400., work, 1.));
+        // At 150 % the same logical window is larger than a 1920 × 1040 work area.
+        assert!(!fits(1344., 930., Rect { x: -1920., y: 40., width: 1920., height: 1040. }, 1.5));
+        assert!(fits(1280., 693., Rect { x: -1920., y: 40., width: 1920., height: 1040. }, 1.5));
+    }
+    #[test]
+    fn the_anchor_frame_must_lie_inside_the_window() {
+        let frame = SurfaceRegion { x: 32., y: 34., width: 380., height: 28., radius: 0. };
+        assert!(validate_frame(&frame, 444., 334.).is_ok());
+        assert!(validate_frame(&SurfaceRegion { width: 420., ..frame }, 444., 334.).is_err());
+        assert!(validate_frame(&SurfaceRegion { y: -1., ..frame }, 444., 334.).is_err());
     }
     #[test]
     fn regions_reject_nan_and_out_of_bounds() {

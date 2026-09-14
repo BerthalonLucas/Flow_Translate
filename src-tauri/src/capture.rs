@@ -105,6 +105,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             source: CaptureSource::Selection,
             origin: CaptureOrigin::Demo,
             can_replace: false,
+            screen: None,
             anchor: Some(Rect {
                 x: 640.0,
                 y: 420.0,
@@ -155,6 +156,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             origin: CaptureOrigin::Uia,
                             can_replace: false,
                             anchor,
+                            screen: None,
                             replay: None,
                         };
                         let target = Some(TargetIdentity {
@@ -255,6 +257,7 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
         origin,
         can_replace: false,
         anchor: None,
+        screen: None,
         replay: None,
     };
     Ok(StoredCapture {
