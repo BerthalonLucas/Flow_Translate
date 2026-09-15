@@ -12,6 +12,7 @@ unsafe extern "system" {
     fn GetClipboardData(format: u32) -> Handle;
     fn SetClipboardData(format: u32, data: Handle) -> Handle;
     fn GetClipboardSequenceNumber() -> u32;
+    fn GetClipboardOwner() -> Handle;
     fn RegisterClipboardFormatW(name: *const u16) -> u32;
 }
 #[link(name = "kernel32")]
@@ -99,8 +100,22 @@ impl Snapshot {
         write_formats(&self.formats, expected).map(|_| ())
     }
 }
+struct Owner(windows::Win32::Foundation::HWND);
+impl Drop for Owner {
+    fn drop(&mut self) { unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.0); } }
+}
+thread_local! { static OWNER: std::cell::OnceCell<Owner> = const { std::cell::OnceCell::new() }; }
+fn owner_window() -> Result<Handle, String> {
+    use windows::{core::w, Win32::UI::WindowsAndMessaging::{CreateWindowExW, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE}};
+    OWNER.with(|cell| {
+        if let Some(owner) = cell.get() { return Ok(owner.0.0); }
+        let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE::default(), w!("STATIC"), w!(""), WINDOW_STYLE::default(), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }
+            .map_err(|_| "Presse-papiers temporaire indisponible.".to_string())?;
+        let _ = cell.set(Owner(hwnd));
+        Ok(hwnd.0)
+    })
+}
 fn write_formats(formats: &[(u32, Vec<u8>)], expected: u32) -> Result<u32, String> {
-    use windows::{core::w, Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE}};
     // Allocate before EmptyClipboard so allocation failures leave the original intact.
     let mut memory = formats.iter().map(|(f, bytes)| Memory::new(bytes).map(|m| (*f, m))).collect::<Result<Vec<_>, _>>()?;
     for name in ["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"] {
@@ -110,17 +125,18 @@ fn write_formats(formats: &[(u32, Vec<u8>)], expected: u32) -> Result<u32, Strin
         memory.retain(|(f, _)| *f != format);
         memory.push((format, Memory::new(&[0; 4])?));
     }
-    let owner = unsafe { CreateWindowExW(WINDOW_EX_STYLE::default(), w!("STATIC"), w!(""), WINDOW_STYLE::default(), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }
-        .map_err(|_| "Presse-papiers temporaire indisponible.".to_string())?;
-    let result = (|| {
-        let _open = Open::new(owner.0)?;
+    let owner = owner_window()?;
+    {
+        let _open = Open::new(owner)?;
         if unsafe { GetClipboardSequenceNumber() } != expected { return Err("Le presse-papiers a changé; son nouveau contenu est conservé.".into()); }
         if unsafe { EmptyClipboard() } == 0 { return Err("Le presse-papiers est occupé.".into()); }
         for (format, block) in memory { block.put(format)?; }
-        Ok(unsafe { GetClipboardSequenceNumber() })
-    })();
-    unsafe { let _ = DestroyWindow(owner); }
-    result
+    }
+    // CloseClipboard materializes synthesized formats and can advance the sequence.
+    // Keep the owner alive; validate ownership under a new lock before returning it.
+    let _open = Open::new(owner)?;
+    if unsafe { GetClipboardOwner() } != owner { return Err("Le presse-papiers a changé; son nouveau contenu est conservé.".into()); }
+    Ok(unsafe { GetClipboardSequenceNumber() })
 }
 
 #[cfg(test)]

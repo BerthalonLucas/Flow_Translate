@@ -134,8 +134,8 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             {
                 // The offsets and the Win32 control come later (`complete_target`): the
                 // window shows as soon as the text and its anchor are known.
-                match selection(&element, false) {
-                    Ok((text, anchor, _, selection_len, range_editable)) => {
+                match selection(&element, true) {
+                    Ok((text, anchor, selection_start, selection_len, range_editable)) => {
                         ensure_source_unchanged(source_window)?;
                         let runtime_id = element.get_runtime_id().map_err(|_| {
                             "Impossible d’identifier le contrôle source.".to_string()
@@ -163,7 +163,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             native_window,
                             selected_text: text,
                             anchor,
-                            selection_start: None,
+                            selection_start,
                             selection_len,
                             editable,
                             win32: None,
@@ -200,6 +200,7 @@ pub fn complete_target(target: &TargetIdentity) -> Option<TargetIdentity> {
     if actual != target.selected_text { return None; }
     resolved.document = Some(document);
     resolved.win32 = win32_target(target.native_window, &target.selected_text);
+    validate_target(&resolved).ok()?;
     Some(resolved)
 }
 
@@ -297,6 +298,7 @@ fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
     crate::host::send_copy_chord().map_err(|_| "SendInput refused")?;
     let after = crate::host::wait_clipboard_change(previous.sequence, COPY_SETTLE).ok_or("no clipboard change")?;
     let copied = read_clipboard().filter(|text| !text.trim().is_empty());
+    if crate::host::clipboard_sequence() != after { return Err("clipboard changed during copy"); }
     let _ = previous.restore(after);
     ensure_source_unchanged(source_window).map_err(|_| "source window lost after copy")?;
     copied.ok_or("copied nothing readable")

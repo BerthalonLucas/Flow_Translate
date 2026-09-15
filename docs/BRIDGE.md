@@ -1,4 +1,8 @@
-# React ↔ Rust bridge, version 2 (FlowTranslate 0.3.0)
+# React ↔ Rust bridge, version 2 (FlowTranslate 0.4.0)
+
+## Replacement delivery (0.4.0)
+
+The bridge types remain unchanged. A target may now use verified UIA paste, including a unique ValuePattern selection proved through synthetic copy. Both automatic and manual attempts consume the target and emit `capture-target {canReplace:false}`. `replace_result` rechecks the active session under the same lock as delivery. A paste timeout is an ambiguous outcome, not permission to retry: the French error asks the user to inspect the target. No second native write is attempted. The watcher also monitors targets without an anchor rectangle.
 
 ## Actions and shortcut migration (0.3.0)
 

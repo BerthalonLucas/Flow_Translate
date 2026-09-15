@@ -666,7 +666,10 @@ fn schedule_auto_delivery(app: &AppHandle, timeout_id: Option<String>) {
         let outcome = target.as_ref().ok_or_else(|| "La cible modifiable n’est plus valide.".to_string()).and_then(|target| capture::replace_automatic(target, &result.translated_text));
         let applied = outcome.is_ok();
         if target.is_some() {
-            if let Some(c) = i.capture.as_mut() { c.public.can_replace = false; c.target = None; }
+            if let Some(c) = i.capture.as_mut() {
+                c.public.can_replace = false; c.target = None;
+                let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id: c.public.id.clone(), can_replace: false });
+            }
         }
         let _ = app.emit_to("overlay", "result-delivery", serde_json::json!({
             "requestId": result.request_id,

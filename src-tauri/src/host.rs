@@ -678,6 +678,10 @@ pub fn send_copy_chord() -> Result<(), String> {
     ];
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
+        if sent > 0 {
+            let release = [key_input(VK_INSERT, true, true), key_input(VK_CONTROL, false, true)];
+            unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        }
         return Err("La copie synthétique a été bloquée.".into());
     }
     Ok(())
@@ -691,7 +695,7 @@ pub fn send_paste_chord() -> Result<(), String> {
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
         let release = [key_input(VK_V, false, true), key_input(VK_CONTROL, false, true)];
-        unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        if sent > 0 { unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); } }
         return Err("Collage non confirmé (Windows ou application protégée). Vérifiez le champ avant de réessayer.".into());
     }
     Ok(())

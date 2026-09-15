@@ -1,3 +1,14 @@
+# FlowTranslate 0.4.0 — Remplacement dans les éditeurs accessibles — 15 septembre 2026
+
+- Remplacement étendu aux champs web et éditeurs riches exposés par UI Automation : collage natif Ctrl+V, Unicode, texte multiligne, événements de l’éditeur et annulation Ctrl+Z. Le remplacement Win32 existant est conservé.
+- Prise en charge des sélections obtenues par copie lorsque le champ modifiable expose une valeur et une position non ambiguë ; la sélection est recopiée et revérifiée avant livraison.
+- Vérification du champ, de la sélection et du document avant écriture, puis du document résultant. Les changements de cible et les champs protégés refusent le remplacement. Surveillance corrigée pour les sélections sans rectangle.
+- Conservation du presse-papiers multiformat (texte, HTML, RTF, images DIB et fichiers) et des copies plus récentes. Un format non conservable refuse l’opération avant modification.
+- Une tentative consomme la cible. Un collage non confirmé n’est jamais répété automatiquement ; un message demande de vérifier le champ.
+- Matrice Windows dédiée : vrai collage système dans Edge, champs input/textarea/contenteditable/iframe/Shadow DOM, Unicode, multiligne, mise en forme environnante, annulation, presse-papiers et cibles périmées.
+
+La couverture repose sur les capacités d’accessibilité de chaque éditeur. Les champs en lecture seule, mots de passe, applications élevées bloquées par Windows et contrôles sans sélection vérifiable restent exclus. Word, Outlook et Teams ne font pas partie des applications installées dans la recette automatisée ; aucune validation manuelle de ces applications n’est revendiquée.
+
 # FlowTranslate 0.3.0 — Actions et raccourcis — 15 septembre 2026
 
 - Réglages redimensionnables (minimum 460 × 420), défilement dédié et prompts dans des volets dépliables.

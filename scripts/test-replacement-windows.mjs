@@ -38,6 +38,7 @@ try {
   const original = 'Début café 😀 fin';
   const selected = 'café 😀';
   const replacement = 'équipe 🚀';
+  await page.evaluate(() => { document.addEventListener('input', event => { event.target.dataset.nativeInput = event.inputType ?? 'input'; }); });
   const prepare = async (locator, { rich = false, multiline = false } = {}) => {
     await page.bringToFront();
     await locator.evaluate((el, { original, selected, rich, multiline }) => {
@@ -73,6 +74,7 @@ try {
     const result = await command({ op: 'replace', value });
     assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`);
     assert.equal(await content(locator), before.replace(selected, value), name);
+    if (!['iframe', 'shadow DOM'].includes(name)) assert.equal(await locator.getAttribute('data-native-input'), 'insertFromPaste', `${name}: editor input event`);
     assert.equal((await command({ op: 'clipboard-check' })).ok, true, `${name}: rich clipboard restored`);
     if (options.rich) { assert.equal(await locator.locator('b').textContent(), 'Début '); assert.equal(await locator.locator('i').textContent(), ' fin'); }
     keys('^z');
@@ -102,10 +104,19 @@ try {
   assert.equal((await command({ op: 'clipboard-check' })).ok, true);
   assert.equal((await command({ op: 'replace', value: replacement })).ok, false, 'no double delivery');
   console.log('PASS newer clipboard and duplicate delivery'); passed++;
+  await prepare(input); await capture();
+  await input.evaluate(el => el.addEventListener('paste', event => event.preventDefault(), { once: true }));
+  assert.equal((await command({ op: 'replace', value: replacement })).ok, false, 'editor blocked paste: not reported as applied');
+  assert.equal(await content(input), original, 'blocked paste: unchanged');
+  assert.equal((await command({ op: 'replace', value: replacement })).ok, false, 'ambiguous attempt cannot paste twice');
+  console.log('PASS editor blocks paste: no false success and no duplicate'); passed++;
   console.log(`Native replacement matrix: ${passed} cases passed (Edge desktop; Office/Teams not installed/tested).`);
 } finally {
   if (port) await command({ op: 'quit' }).catch(() => {});
   if (browser) await browser.close();
-  if (driver.exitCode === null) driver.kill();
+  if (driver.exitCode === null) {
+    await sleep(250);
+    if (driver.exitCode === null) execFileSync('taskkill', ['/PID', String(driver.pid), '/T', '/F'], { stdio: 'ignore' });
+  }
   await rm(scratch, { recursive: true, force: true });
 }

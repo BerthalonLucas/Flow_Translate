@@ -1,10 +1,12 @@
-# Nouveautés 0.3.0
+# Nouveautés 0.4.0
 
 Dans **Réglages → Actions et prompts**, modifiez Traduire, Corriger ou Professionnaliser, ou ajoutez votre action. Utilisez `{{text}}` exactement une fois ; `{{targetLanguage}}` est facultatif. Les prompts sont enregistrés automatiquement lorsqu’ils sont valides.
 
 Dans **Raccourcis**, ajoutez une combinaison, choisissez son action et son résultat : **Afficher dans la bulle** ou **Remplacer la sélection**. Cliquez sur Modifier puis pressez la combinaison (Ctrl ou Alt requis). Les conflits détectés par Windows et les combinaisons réservées sont indiqués immédiatement. La fenêtre de réglages s’agrandit depuis ses bords ou sa poignée inférieure droite.
 
-Le remplacement automatique ne s’applique qu’à une sélection native encore identique dans un champ compatible. Si la cible a changé ou n’est pas prise en charge, le résultat reste dans la bulle. Pour corriger ou reformuler, sélectionnez dans Connexion un modèle généraliste qui suit ces instructions ; les profils Hy-MT restent spécialisés en traduction.
+Le remplacement fonctionne aussi dans les champs web et éditeurs riches accessibles : FlowTranslate colle le résultat dans la sélection, puis vérifie le document. Le texte autour est conservé et Ctrl+Z annule l’opération dans l’éditeur. La sélection doit rester identique pendant la génération. Si la cible a changé ou n’est pas prise en charge, le résultat reste dans la bulle. Pour corriger ou reformuler, sélectionnez dans Connexion un modèle généraliste qui suit ces instructions ; les profils Hy-MT restent spécialisés en traduction.
+
+Le presse-papiers multiformat est conservé après un collage confirmé, sans écraser une copie plus récente. Si le collage n’est pas confirmé, vérifiez le champ avant de réessayer : le résultat reste dans la bulle et le presse-papiers. Les champs protégés, en lecture seule ou sans sélection vérifiable sont exclus. La recette Windows utilise Edge en conditions réelles ; Word, Outlook et Teams n’ont pas été testés dans cet environnement.
 
 L’installateur se trouve dans les [releases](https://github.com/BerthalonLucas/Flow_Translate/releases/latest). Les anciens réglages et les clés sont conservés à la migration ; une ancienne combinaison désormais réservée doit être réenregistrée.
 
@@ -15,7 +17,7 @@ Traduction instantanée de n’importe quelle sélection sous Windows 11 : séle
 traduction **séparé**, au choix : le serveur vLLM livré dans `server/` (Hy-MT2), ou tout
 serveur compatible OpenAI, local ou distant.
 
-**État : version d’essai 0.2.1.** Capture directe (le raccourci copie lui-même la
+**État : version d’essai 0.4.0.** Capture directe (le raccourci copie lui-même la
 sélection quand UI Automation ne la donne pas), lecture calibrée (verre court près du
 texte ou bande de lecture à la moitié de l’écran, décidés sur le vrai texte), fermeture
 d’elle-même au temps de lecture, bande qui suit la souris d’un écran à l’autre. Moteurs
