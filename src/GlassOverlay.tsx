@@ -54,8 +54,10 @@ const SLOW_AFTER = 1500;
 function WaitSpinner() {
   return <span className="wait-spinner" aria-hidden="true"><Icon name="spinner" size={18} /></span>;
 }
-function WaitPill({ slow }: { slow: boolean }) {
-  return <span className="wait-pill" role="img" aria-label="Traduction en cours" data-slow={slow}><WaitSpinner /></span>;
+// The pill alone: the spinner while the model works; in « replace » mode it also shows
+// the check once the result was pasted, then the glass leaves (0.4.0).
+function WaitPill({ slow, done }: { slow: boolean; done: boolean }) {
+  return <span className="wait-pill" role="img" aria-label={done ? 'Sélection remplacée' : 'Traduction en cours'} data-slow={slow && !done} data-done={done || undefined}>{done ? <Icon name="check" size={16} /> : <WaitSpinner />}</span>;
 }
 
 // Long runs (paths, URLs, identifiers) get a break opportunity after their separators,
@@ -203,8 +205,10 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const active = useRef({ requestId: state.requestId, closing: closingCaptureId });
   useLayoutEffect(() => { active.current = { requestId: state.requestId, closing: closingCaptureId }; }, [state.requestId, closingCaptureId]);
   const streaming = state.phase === 'streaming';
-  const settled = state.phase === 'complete' || state.phase === 'error' || state.phase === 'cancelled';
-  const ready = state.phase === 'complete' && !closingCaptureId && !moving;
+  // A « replace » capture keeps the pill alone until Rust pasted the result (or gave up).
+  const replacing = state.delivery === 'pending' || state.delivery === 'applied';
+  const settled = (state.phase === 'complete' || state.phase === 'error' || state.phase === 'cancelled') && !replacing;
+  const ready = state.phase === 'complete' && !closingCaptureId && !moving && !replacing;
   const isReader = form === 'reader';
 
   // Decide the form on the real text, once per result (a relaunch may change it).
@@ -215,6 +219,12 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     setForm(next);
     if (next === 'reader') setPlacement(current => { if (current === 'anchored') setMoving(true); return 'bottom'; });
   }, [settled, state.requestId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Pasted: the pill shows its check for a moment, then the glass leaves by itself.
+  useEffect(() => {
+    if (state.delivery !== 'applied') return;
+    const timer = window.setTimeout(cancelAndDismiss, 900);
+    return () => window.clearTimeout(timer);
+  }, [state.delivery, cancelAndDismiss]);
   useEffect(() => {
     if (!streaming) { setSlow(false); return; }
     const timer = window.setTimeout(() => setSlow(true), SLOW_AFTER);
@@ -414,9 +424,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     try {
       await (action === 'copy' ? bridge.copy(requestId) : bridge.replace(requestId));
       if (!stillCurrent()) return;
-      if (action === 'copy') setCopied(true); else setFeedback('Remplacement effectué.');
-    } catch {
-      if (stillCurrent()) setFeedback(action === 'copy' ? 'La copie a été refusée.' : 'Remplacement indisponible. Utilisez Copier.');
+      if (action === 'copy') setCopied(true); else setFeedback('Résultat collé dans la sélection.');
+    } catch (error) {
+      if (stillCurrent()) setFeedback(action === 'copy' ? 'La copie a été refusée.' : typeof error === 'string' ? error : 'Remplacement indisponible; utilisez Copier.');
     }
   };
   const metrics = isReader ? reader : short;
@@ -435,12 +445,12 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: act(() => dispatch({ type: 'TOGGLE_COMPARE' })) },
       ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
       ...(state.phase === 'error' ? [{ label: 'Réessayer', run: act(() => { if (state.capture) start(state.capture); }) }] : []),
-      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming || Boolean(state.capture?.replay), run: act(() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); }) },
+      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming || replacing || Boolean(state.capture?.replay), run: act(() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); }) },
       { label: 'Réglages', run: act(() => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.'))) },
       { label: 'Fermer', run: cancelAndDismiss, close: true },
     ]}>
       <div className="glass-body">
-        {form === 'pending' ? <WaitPill slow={slow} /> : <>
+        {form === 'pending' ? <WaitPill slow={slow} done={state.delivery === 'applied'} /> : <>
           <div className="translation-bubble" style={{ borderRadius: glass.radius, maxHeight: metrics.maxHeight }} data-reveal={state.phase === 'complete' && Boolean(state.result) && !moving}
             onPointerDown={event => { if (placement === 'anchored') dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'), setDragging); }}>
             <ReadingSurface streaming={streaming} onEnter={() => void invokeResult('copy')}>
@@ -465,7 +475,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       </div>
     </BubbleMenu>
     <AnimatePresence>{feedback && !menuVisible && form !== 'pending' && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
-    <span className="sr-only" role="status">{streaming ? 'Traduction en cours' : state.phase === 'complete' ? 'Traduction terminée' : copied ? 'Traduction copiée' : ''}</span>
+    <span className="sr-only" role="status">{streaming ? 'Traduction en cours' : state.delivery === 'applied' ? 'Sélection remplacée' : state.phase === 'complete' && !replacing ? 'Traduction terminée' : copied ? 'Traduction copiée' : ''}</span>
   </motion.div>;
 }
 
