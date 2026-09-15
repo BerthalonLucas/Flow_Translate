@@ -56,7 +56,7 @@ try {
     }, { original, selected, rich, multiline });
     await sleep(300);
   };
-  const content = locator => locator.evaluate(el => 'value' in el ? el.value : el.textContent);
+  const content = locator => locator.evaluate(el => 'value' in el ? el.value : el.textContent.replace(/\u00a0/g, ' '));
   const capture = async (copy = false) => {
     const result = await command({ op: copy ? 'capture-copy' : 'capture' });
     assert.equal(result.replaceable, true, `selection available: ${JSON.stringify(result)}`);
@@ -77,11 +77,11 @@ try {
     const captured = await capture(options.copy);
     const value = options.multiline ? replacement + '\nmerci' : replacement;
     const result = await command({ op: 'replace', value });
+    assert.equal(await content(locator), before.replace(selected, value), `${name}: editor contents`);
     assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`);
-    assert.equal(await content(locator), before.replace(selected, value), name);
     if (!['iframe', 'shadow DOM'].includes(name)) assert.equal(await locator.getAttribute('data-native-input'), 'insertFromPaste', `${name}: editor input event`);
     assert.equal((await command({ op: 'clipboard-check' })).ok, true, `${name}: rich clipboard restored`);
-    if (options.rich) { assert.equal(await locator.locator('b').textContent(), 'Début 🚀 '); assert.equal(await locator.locator('i').textContent(), ' fin'); }
+    if (options.rich) { assert.equal((await locator.locator('b').textContent()).replace(/\u00a0/g, ' '), 'Début 🚀 '); assert.equal(await locator.locator('i').textContent(), ' fin'); }
     keys('^z');
     assert.equal(await content(locator), before, `${name}: native undo`);
     console.log(`PASS ${name}: ${captured.route}, Unicode, surrounding text, clipboard, undo`); passed++;

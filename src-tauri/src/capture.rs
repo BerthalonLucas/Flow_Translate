@@ -385,9 +385,12 @@ fn patched_text(document: &str, start: usize, selected: &str, value: &str) -> Op
     if !document[offset..].starts_with(selected) { return None; }
     Some(format!("{}{}{}", &document[..offset], value, &document[offset + selected.len()..]))
 }
-fn canonical(text: &str) -> String { text.replace("\r\n", "\n").replace('\r', "\n") }
+// Chromium preserves boundary spaces in contenteditable by turning them into NBSP
+// during native paste. Normalize that representation only for AFTER-write proof;
+// pre-write document/selection identity remains byte-for-byte exact.
+fn canonical(text: &str) -> String { text.replace("\r\n", "\n").replace('\r', "\n").replace('\u{a0}', " ") }
 
-fn replace_paste(target: &TargetIdentity, _element: &UIElement, value: &str) -> Result<(), String> {
+fn replace_paste(target: &TargetIdentity, element: &UIElement, value: &str) -> Result<(), String> {
     if !crate::host::wait_modifiers_released(CHORD_RELEASE) { return Err("Relâchez les touches du raccourci puis réessayez.".into()); }
     validate_target(target)?;
     if target.copied_selection {
@@ -397,7 +400,7 @@ fn replace_paste(target: &TargetIdentity, _element: &UIElement, value: &str) -> 
     let document = target.document.as_deref().ok_or("Le document source est indisponible.")?;
     let wanted = patched_text(document, target.selection_start.ok_or("Sélection sans position.")?, &target.selected_text, value)
         .ok_or("La sélection a changé; remplacement refusé.")?;
-    if canonical(document) == canonical(&wanted) { return Ok(()); }
+    if document == wanted { return Ok(()); }
     let previous = crate::clipboard_guard::Snapshot::capture()?;
     crate::host::suppress_clipboard_tracking(Duration::from_secs(4));
     let sequence = previous.put_text(value)?;
@@ -420,18 +423,27 @@ fn replace_paste(target: &TargetIdentity, _element: &UIElement, value: &str) -> 
     }
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
-        if let Ok(automation) = ui_automation() {
-            if let Ok(element) = automation.get_focused_element() {
-                if crate::host::foreground() == target.native_window && element.get_runtime_id().ok().as_ref() == Some(&target.runtime_id) {
-                    if document_text(&element, target.copied_selection).is_ok_and(|after| canonical(&after) == canonical(&wanted)) {
-                        let _ = previous.restore(sequence); // sequence checked atomically under OpenClipboard
-                        return Ok(());
-                    }
-                }
-            }
+        // Rich editors may move accessibility focus to a new child after editing.
+        // Read the original validated provider, not whichever child is focused now.
+        if document_text(element, target.copied_selection).is_ok_and(|after| canonical(&after) == canonical(&wanted)) {
+            let _ = previous.restore(sequence);
+            return Ok(());
         }
         if std::time::Instant::now() >= deadline { break; }
         std::thread::sleep(Duration::from_millis(25));
+    }
+    #[cfg(test)]
+    {
+        let after = document_text(element, target.copied_selection);
+        let focused = ui_automation().ok().and_then(|a| a.get_focused_element().ok());
+        eprintln!("paste proof: original_provider_readable={}, original_length={:?}, expected_length={}, focused_identity_same={}",
+            after.is_ok(), after.as_ref().ok().map(|s| s.chars().count()), wanted.chars().count(),
+            focused.as_ref().and_then(|e| e.get_runtime_id().ok()).as_ref() == Some(&target.runtime_id));
+        if let Ok(after) = after {
+            eprintln!("paste proof: NBSP_equivalent={}, paragraph_equivalent={}",
+                canonical(&after).replace('\u{a0}', " ") == canonical(&wanted).replace('\u{a0}', " "),
+                canonical(&after).replace('\u{2029}', "\n") == canonical(&wanted).replace('\u{2029}', "\n"));
+        }
     }
     Err("Collage envoyé mais non confirmé. Vérifiez le champ avant de réessayer ; le résultat reste dans le presse-papiers et la bulle.".into())
 }
@@ -486,6 +498,14 @@ fn replace_win32(expected:&Win32Target,value:&str)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paste_proof_normalizes_only_editor_space_and_line_endings() {
+        assert_eq!(canonical("Début\u{a0}équipe\r\nfin"), canonical("Début équipe\nfin"));
+        assert_ne!(canonical("deux  espaces"), canonical("deux espaces"));
+        assert_ne!(canonical("avant\naprès"), canonical("avant après"));
+        assert_ne!(canonical("mot\u{3000}mot"), canonical("mot mot"));
+    }
 
     #[test]
     fn text_patch_preserves_surroundings_and_unicode() {
