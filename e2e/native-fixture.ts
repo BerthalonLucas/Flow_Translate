@@ -16,6 +16,7 @@ let heldCopy = false;
 let failSettings = new URLSearchParams(location.search).has('settingsError');
 let connected = false;
 let refuseShortcut = false;
+let refuseReplace = false;
 let resolveCopy: (() => void) | undefined;
 mockIPC((command, args) => {
   calls.push({ command, args });
@@ -27,6 +28,7 @@ mockIPC((command, args) => {
   if (command === 'translate') request = args?.request as TranslationRequest;
   if (command === 'start_drag') return Promise.reject('Synthetic drag failure');
   if (command === 'dismiss_overlay') return emit('overlay-dismiss-requested', { captureId: currentCapture.id });
+  if (command === 'replace_result' && refuseReplace) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject('Collage envoyé mais non confirmé. Vérifiez le champ avant de réessayer.'); }
   if (command === 'copy_result' && heldCopy) return new Promise<void>(resolve => { resolveCopy = resolve; });
 }, { shouldMockEvents: true });
 mockWindows('overlay');
@@ -36,6 +38,7 @@ Object.assign(window, { nativeFixture: {
   recoverSettings: () => { failSettings = false; },
   connect: () => { connected = true; },
   refuseShortcut: () => { refuseShortcut = true; },
+  refuseReplace: () => { refuseReplace = true; },
   error: () => emit('translation', { requestId: request.id, kind: 'error', message: 'Serveur indisponible.' }),
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },
   delta: (text: string, requestId = request.id) => emit('translation', { requestId, kind: 'delta', text }),

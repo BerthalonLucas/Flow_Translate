@@ -415,8 +415,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       await (action === 'copy' ? bridge.copy(requestId) : bridge.replace(requestId));
       if (!stillCurrent()) return;
       if (action === 'copy') setCopied(true); else setFeedback('Remplacement effectué.');
-    } catch {
-      if (stillCurrent()) setFeedback(action === 'copy' ? 'La copie a été refusée.' : 'Remplacement indisponible. Utilisez Copier.');
+    } catch (error) {
+      if (stillCurrent()) setFeedback(action === 'copy' ? 'La copie a été refusée.'
+        : typeof error === 'string' ? error : 'Remplacement indisponible. Vérifiez le champ source avant de réessayer.');
     }
   };
   const metrics = isReader ? reader : short;

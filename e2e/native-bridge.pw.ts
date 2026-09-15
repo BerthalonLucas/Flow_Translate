@@ -15,6 +15,7 @@ declare global {
       recoverSettings: () => void;
       connect: () => void;
       refuseShortcut: () => void;
+      refuseReplace: () => void;
       error: () => Promise<void>;
       holdCopy: () => void;
       releaseCopy: () => void;
@@ -130,18 +131,40 @@ test('IPC fixture: native close request animates then acknowledges and ignores l
 
 test('IPC fixture: a new capture during exit cannot be closed by the old animation', async ({ page }) => {
   await openNativeFixture(page);
+  // Control the animation clock: CPU contention must not turn a 35 ms wait into
+  // an already completed 120 ms exit before the replacement capture arrives.
+  await page.clock.install({ time: new Date('2026-09-15T12:00:00Z') });
+  await page.clock.pauseAt(new Date('2026-09-15T12:00:01Z'));
+  await page.evaluate(() => window.nativeFixture.dismissEvent('first'));
+  await page.clock.runFor(35);
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-closing', 'true');
   await page.evaluate(async () => {
-    await window.nativeFixture.dismissEvent('first');
-    await new Promise(resolve => setTimeout(resolve, 35));
     await window.nativeFixture.capture('new-capture');
     await window.nativeFixture.delta('Nouvelle traduction');
     await window.nativeFixture.done();
   });
+  await page.clock.runFor(300);
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-capture-id', 'new-capture');
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'complete_overlay_dismiss').length)).toBe(0);
   await page.evaluate(() => window.nativeFixture.dismissEvent('first'));
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-closing', 'false');
+});
+
+test('IPC fixture: an unconfirmed replacement keeps the native explanation and disables another attempt', async ({ page }) => {
+  await openNativeFixture(page);
+  await page.evaluate(async () => {
+    await window.nativeFixture.target('first', true);
+    await window.nativeFixture.delta('Bonjour');
+    await window.nativeFixture.done();
+    window.nativeFixture.refuseReplace();
+  });
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Remplacer', exact: true }).click();
+  await expect(page.locator('.compact-feedback')).toContainText('Collage envoyé mais non confirmé. Vérifiez le champ avant de réessayer.');
+  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'replace_result').length)).toBe(1);
 });
 
 test('IPC fixture: a late copy acknowledgement never appears in the next capture', async ({ page }) => {
