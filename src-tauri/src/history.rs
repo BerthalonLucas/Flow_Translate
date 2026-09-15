@@ -1,6 +1,6 @@
 use crate::{
     crypto,
-    types::{HistoryEntry, Language, Mode},
+    types::{HistoryEntry, Mode},
 };
 use chrono::{Duration, Utc};
 use rusqlite::{params, Connection};
@@ -35,6 +35,15 @@ impl HistoryStore {
              );",
         )
         .map_err(|_| "Impossible d’initialiser l’historique.".to_string())?;
+        // 0.4.0: the action replaces the target language (kept as an empty column).
+        let has_action = conn.prepare("PRAGMA table_info(history)").and_then(|mut stmt| {
+            let names = stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()?;
+            Ok(names.iter().any(|name| name == "action"))
+        }).map_err(|_| "Impossible d’initialiser l’historique.".to_string())?;
+        if !has_action {
+            conn.execute_batch("ALTER TABLE history ADD COLUMN action TEXT NOT NULL DEFAULT ''")
+                .map_err(|_| "Impossible de migrer l’historique.".to_string())?;
+        }
         Self::prune(&conn)?;
         Ok(this)
     }
@@ -51,8 +60,8 @@ impl HistoryStore {
         .map_err(|_| "Impossible de préparer l’historique.".to_string())?;
         let cipher = crypto::protect(&payload)?;
         let conn = self.connection()?;
-        conn.execute("INSERT OR REPLACE INTO history(id,created_at,target_language,mode,payload_dpapi) VALUES(?1,?2,?3,?4,?5)",
-            params![entry.id, entry.created_at, lang_str(entry.target_language), mode_str(entry.mode), cipher])
+        conn.execute("INSERT OR REPLACE INTO history(id,created_at,target_language,mode,payload_dpapi,action) VALUES(?1,?2,'',?3,?4,?5)",
+            params![entry.id, entry.created_at, mode_str(entry.mode), cipher, entry.action_name])
             .map_err(|_| "Impossible d’ajouter l’entrée à l’historique.".to_string())?;
         Self::prune(&conn)
     }
@@ -73,7 +82,7 @@ impl HistoryStore {
     pub fn list(&self) -> Result<Vec<HistoryEntry>, String> {
         let conn = self.connection()?;
         Self::prune(&conn)?;
-        let mut stmt = conn.prepare("SELECT id,created_at,target_language,mode,payload_dpapi FROM history ORDER BY created_at DESC")
+        let mut stmt = conn.prepare("SELECT id,created_at,action,mode,payload_dpapi FROM history ORDER BY created_at DESC")
             .map_err(|_| "Impossible de lire l’historique.".to_string())?;
         let rows = stmt
             .query_map([], |row| {
@@ -88,7 +97,7 @@ impl HistoryStore {
             .map_err(|_| "Impossible de lire l’historique.".to_string())?;
         let mut result = Vec::new();
         for row in rows {
-            let (id, created_at, target, mode, cipher) =
+            let (id, created_at, action, mode, cipher) =
                 row.map_err(|_| "Une entrée d’historique est invalide.".to_string())?;
             let payload: SecretPayload = serde_json::from_slice(&crypto::unprotect(&cipher)?)
                 .map_err(|_| "Une entrée d’historique est illisible.".to_string())?;
@@ -96,7 +105,7 @@ impl HistoryStore {
                 id,
                 source_text: payload.source_text,
                 translated_text: payload.translated_text,
-                target_language: parse_lang(&target)?,
+                action_name: if action.is_empty() { "Traduire".into() } else { action },
                 mode: parse_mode(&mode)?,
                 created_at,
             });
@@ -120,23 +129,10 @@ impl HistoryStore {
     }
 }
 
-fn lang_str(v: Language) -> &'static str {
-    match v {
-        Language::Fr => "fr",
-        Language::En => "en",
-    }
-}
 fn mode_str(v: Mode) -> &'static str {
     match v {
         Mode::Fast => "fast",
         Mode::Quality => "quality",
-    }
-}
-fn parse_lang(v: &str) -> Result<Language, String> {
-    match v {
-        "fr" => Ok(Language::Fr),
-        "en" => Ok(Language::En),
-        _ => Err("Langue d’historique invalide.".into()),
     }
 }
 fn parse_mode(v: &str) -> Result<Mode, String> {
@@ -161,7 +157,7 @@ mod tests {
             id: "old".into(),
             source_text: "secret".into(),
             translated_text: "secret".into(),
-            target_language: Language::En,
+            action_name: "Traduire en anglais".into(),
             mode: Mode::Fast,
             created_at: (Utc::now() - Duration::days(8)).to_rfc3339(),
         };
@@ -172,7 +168,7 @@ mod tests {
                     id: format!("fresh-{n:03}"),
                     source_text: "a".into(),
                     translated_text: "b".into(),
-                    target_language: Language::Fr,
+                    action_name: "Corriger".into(),
                     mode: Mode::Quality,
                     created_at: (Utc::now() + Duration::milliseconds(n)).to_rfc3339(),
                 })
@@ -180,6 +176,7 @@ mod tests {
         }
         let entries = store.list().unwrap();
         assert_eq!(entries.len(), 100);
+        assert!(entries.iter().all(|e| e.action_name == "Corriger"));
         assert!(!entries.iter().any(|e| e.id == "old"));
         store.delete(None).unwrap();
         assert!(store.list().unwrap().is_empty());

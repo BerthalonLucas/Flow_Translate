@@ -85,17 +85,28 @@ fn api_url(base: &str, route: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
-/// Sampling fields beyond the OpenAI contract: recommended by the Hy-MT2 model cards and
-/// understood by vLLM, llama.cpp and most local servers. An endpoint that rejects unknown
-/// fields (the OpenAI API answers 400) gets the request once more without them.
+/// Sampling fields beyond the OpenAI contract: understood by vLLM, llama.cpp and most
+/// local servers. An endpoint that rejects unknown fields (the OpenAI API answers 400)
+/// gets the request once more without them.
 const EXTENDED_SAMPLING: [&str; 2] = ["top_k", "repetition_penalty"];
+/// vLLM, SGLang and llama.cpp read `chat_template_kwargs`; it switches the thinking of
+/// Qwen3 and Gemma 4 off so a small model answers with the text alone. Dropped the same
+/// way when a strict endpoint names it.
+const THINKING_SWITCH: &str = "chat_template_kwargs";
 
-fn request_body(profile: &Profile, prompt: &str, extended: bool) -> Value {
-    let mut body = json!({"model":profile.model,"messages":[{"role":"user","content":prompt}],"stream":true,
-        "temperature":0.7,"top_p":0.6,"max_tokens":4096});
+/// The instruction is the system message, the text the user message (0.4.0): a small
+/// instruct model then transforms the text instead of answering it. Sampling is one
+/// conservative setting for any LLM (correction and rewriting want little variance).
+fn request_body(profile: &Profile, instruction: &str, text: &str, extended: bool, thinking_switch: bool) -> Value {
+    let mut body = json!({"model":profile.model,
+        "messages":[{"role":"system","content":instruction},{"role":"user","content":text}],
+        "stream":true,"temperature":0.3,"top_p":0.9,"max_tokens":4096});
     if extended {
         body["top_k"] = json!(20);
         body["repetition_penalty"] = json!(1.05);
+    }
+    if thinking_switch {
+        body[THINKING_SWITCH] = json!({"enable_thinking": false});
     }
     body
 }
@@ -104,10 +115,82 @@ fn request_body(profile: &Profile, prompt: &str, extended: bool) -> Value {
 fn rejects_extended_sampling(status: u16, detail: &str) -> bool {
     (400..500).contains(&status) && EXTENDED_SAMPLING.iter().any(|field| detail.contains(field))
 }
+fn rejects_thinking_switch(status: u16, detail: &str) -> bool {
+    (400..500).contains(&status) && detail.contains(THINKING_SWITCH)
+}
+
+/// Holds a leading thinking block back from the stream: `<think>…</think>` (Qwen3 without
+/// a reasoning parser) or Gemma's `<|channel>thought…<channel|>`. Deltas are kept while
+/// the beginning of the output may still turn into one of those markers.
+#[derive(Default)]
+pub struct ThinkFilter { buffer: String, state: ThinkState }
+#[derive(Default, PartialEq)]
+enum ThinkState { #[default] Start, Thinking(&'static str), Passing }
+const THINK_MARKERS: [(&str, &str); 2] = [("<think>", "</think>"), ("<|channel>thought", "<channel|>")];
+impl ThinkFilter {
+    /// Returns what may be shown now.
+    pub fn push(&mut self, delta: &str) -> String {
+        match self.state {
+            ThinkState::Passing => delta.to_string(),
+            ThinkState::Thinking(_) | ThinkState::Start => {
+                self.buffer.push_str(delta);
+                self.drain()
+            }
+        }
+    }
+    fn drain(&mut self) -> String {
+        loop {
+            match self.state {
+                ThinkState::Start => {
+                    let head = self.buffer.trim_start();
+                    if let Some((_, close)) = THINK_MARKERS.iter().find(|(open, _)| head.starts_with(open)) {
+                        self.state = ThinkState::Thinking(close);
+                        continue;
+                    }
+                    if head.is_empty() || THINK_MARKERS.iter().any(|(open, _)| open.starts_with(head)) {
+                        return String::new();
+                    }
+                    self.state = ThinkState::Passing;
+                    return std::mem::take(&mut self.buffer);
+                }
+                ThinkState::Thinking(close) => {
+                    let Some(end) = self.buffer.find(close) else { return String::new() };
+                    let rest = self.buffer[end + close.len()..].trim_start().to_string();
+                    self.buffer = rest;
+                    self.state = ThinkState::Start;
+                    continue;
+                }
+                ThinkState::Passing => return std::mem::take(&mut self.buffer),
+            }
+        }
+    }
+    /// The end of the stream: an unfinished marker prefix was text after all; an
+    /// unclosed thinking block is dropped.
+    pub fn finish(&mut self) -> String {
+        match self.state {
+            ThinkState::Thinking(_) => { self.buffer.clear(); String::new() }
+            _ => std::mem::take(&mut self.buffer),
+        }
+    }
+}
+
+/// The final result: a code fence wrapping the whole answer is removed, trailing
+/// whitespace too. Quotes stay (they may belong to the text).
+pub fn clean_output(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(inner) = trimmed.strip_prefix("```") {
+        if let Some(body) = inner.strip_suffix("```") {
+            let body = body.split_once('\n').map_or("", |(_, rest)| rest);
+            return body.trim_end().to_string();
+        }
+    }
+    trimmed.to_string()
+}
 
 pub async fn stream<F>(
     profile: Profile,
-    prompt: String,
+    instruction: String,
+    text: String,
     cancel: CancellationToken,
     mut emit: F,
 ) -> Result<String, String>
@@ -122,8 +205,9 @@ where
         .build()
         .map_err(|_| "Impossible de créer le client HTTP.".to_string())?;
     let mut extended = true;
+    let mut thinking_switch = true;
     let response = loop {
-        let mut req = client.post(endpoint.clone()).json(&request_body(&profile, &prompt, extended));
+        let mut req = client.post(endpoint.clone()).json(&request_body(&profile, &instruction, &text, extended, thinking_switch));
         if !profile.api_key.is_empty() {
             req = req.bearer_auth(&profile.api_key);
         }
@@ -141,11 +225,16 @@ where
             extended = false;
             continue;
         }
+        if thinking_switch && rejects_thinking_switch(status, &detail) {
+            thinking_switch = false;
+            continue;
+        }
         return Err(format!("Le serveur a répondu HTTP {status}."));
     };
     let mut bytes = response.bytes_stream();
     let mut decoder = SseDecoder::default();
     let mut result = String::new();
+    let mut filter = ThinkFilter::default();
     let mut done = false;
     let mut stop = false;
     loop {
@@ -163,7 +252,8 @@ where
                                 else { return Err(format!("Le serveur a interrompu la génération ({reason}).")); }
                             }
                             if let Some(delta) = value.pointer("/choices/0/delta/content").and_then(Value::as_str) {
-                                result.push_str(delta); emit(Chunk { kind: StreamKind::Delta, text: Some(delta.into()), message: None })?;
+                                let shown = filter.push(delta);
+                                if !shown.is_empty() { result.push_str(&shown); emit(Chunk { kind: StreamKind::Delta, text: Some(shown), message: None })?; }
                             }
                         }
                     }
@@ -174,8 +264,11 @@ where
         }
     }
     decoder.finish()?;
+    let tail = filter.finish();
+    if !tail.is_empty() { result.push_str(&tail); emit(Chunk { kind: StreamKind::Delta, text: Some(tail), message: None })?; }
+    let result = clean_output(&result);
     if !done || !stop || result.is_empty() {
-        return Err("Le serveur n’a pas confirmé une traduction complète.".into());
+        return Err("Le serveur n’a pas confirmé une réponse complète.".into());
     }
     if cancel.is_cancelled() {
         return Err("Traduction annulée.".into());
@@ -248,27 +341,60 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actions, types::Language};
+    use crate::actions;
 
-    fn translation_prompt(text: &str) -> String {
-        actions::render(&actions::defaults()[0].prompt_template, text, Language::Fr).unwrap()
-    }
+    fn instruction() -> String { actions::defaults()[0].prompt_template.clone() }
 
     #[test]
-    fn the_extended_sampling_fields_are_dropped_on_a_strict_endpoint() {
+    fn the_instruction_is_the_system_message_and_the_extras_are_dropped_on_a_strict_endpoint() {
         let profile = Profile { endpoint: "http://127.0.0.1:8001/v1".into(), model: "m".into(), api_key: String::new() };
-        let full = request_body(&profile, "p", true);
+        let full = request_body(&profile, "Fix it.", "the txt", true, true);
+        assert_eq!(full["messages"][0]["role"], "system");
+        assert_eq!(full["messages"][0]["content"], "Fix it.");
+        assert_eq!(full["messages"][1]["role"], "user");
+        assert_eq!(full["messages"][1]["content"], "the txt");
         assert_eq!(full["top_k"], 20);
         assert_eq!(full["repetition_penalty"], 1.05);
-        let strict = request_body(&profile, "p", false);
+        assert_eq!(full["chat_template_kwargs"]["enable_thinking"], false);
+        let strict = request_body(&profile, "p", "t", false, false);
         assert!(strict.get("top_k").is_none());
         assert!(strict.get("repetition_penalty").is_none());
-        assert_eq!(strict["temperature"], 0.7);
+        assert!(strict.get("chat_template_kwargs").is_none());
+        assert_eq!(strict["temperature"], 0.3);
         assert_eq!(strict["stream"], true);
         assert!(rejects_extended_sampling(400, "Unrecognized request argument supplied: top_k"));
         assert!(rejects_extended_sampling(422, "repetition_penalty: extra inputs are not permitted"));
         assert!(!rejects_extended_sampling(400, "model not found"));
         assert!(!rejects_extended_sampling(500, "top_k"));
+        assert!(rejects_thinking_switch(400, "Unrecognized request argument supplied: chat_template_kwargs"));
+        assert!(!rejects_thinking_switch(400, "top_k"));
+    }
+    #[test]
+    fn a_leading_thinking_block_is_held_back_and_the_answer_streams_after_it() {
+        let mut filter = ThinkFilter::default();
+        assert_eq!(filter.push("<thi"), "");
+        assert_eq!(filter.push("nk>\nlet me see"), "");
+        assert_eq!(filter.push(" more</think>\n\nBonjour"), "Bonjour");
+        assert_eq!(filter.push(" le monde"), " le monde");
+        assert_eq!(filter.finish(), "");
+        let mut gemma = ThinkFilter::default();
+        assert_eq!(gemma.push("<|channel>thought\nhmm<channel|>Salut"), "Salut");
+        let mut plain = ThinkFilter::default();
+        assert_eq!(plain.push("<"), "");
+        assert_eq!(plain.push("bold>"), "<bold>");
+        let mut cut = ThinkFilter::default();
+        assert_eq!(cut.push("<think>never closed"), "");
+        assert_eq!(cut.finish(), "");
+        let mut prefix = ThinkFilter::default();
+        assert_eq!(prefix.push("<th"), "");
+        assert_eq!(prefix.finish(), "<th");
+    }
+    #[test]
+    fn the_final_text_loses_a_wrapping_fence_and_trailing_space_but_keeps_its_quotes() {
+        assert_eq!(clean_output("```text\nBonjour\n```"), "Bonjour");
+        assert_eq!(clean_output("```\nBonjour\n```\n"), "Bonjour");
+        assert_eq!(clean_output("« Bonjour »  \n"), "« Bonjour »");
+        assert_eq!(clean_output("\n\nBonjour\nmonde\n"), "Bonjour\nmonde");
     }
     #[tokio::test]
     #[ignore = "requires a running local FlowTranslate vLLM profile"]
@@ -282,7 +408,7 @@ mod tests {
         };
         check(&profile).await.expect("live model discovery");
         let mut deltas = String::new();
-        let result = stream(profile.clone(), translation_prompt("Please confirm the budget of 1250 EUR for project Orion."), CancellationToken::new(), |chunk| {
+        let result = stream(profile.clone(), instruction(), "Please confirm the budget of 1250 EUR for project Orion.".into(), CancellationToken::new(), |chunk| {
             if let Some(text) = chunk.text { deltas.push_str(&text); }
             Ok(())
         }).await.expect("live native streaming translation");
@@ -290,7 +416,7 @@ mod tests {
         assert!(result.contains("Orion") && result.contains("EUR"));
         let cancel = CancellationToken::new();
         let trigger = cancel.clone();
-        let cancelled = stream(profile, translation_prompt("Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning."), cancel, |chunk| {
+        let cancelled = stream(profile, instruction(), "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), cancel, |chunk| {
             if chunk.text.is_some() { trigger.cancel(); }
             Ok(())
         }).await;
