@@ -244,7 +244,7 @@ test('explicit replacement is accessible for an editable completed selection', a
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Remplacer', exact: true }).click();
-  await expect(page.locator('.compact-feedback')).toContainText('Remplacement effectué');
+  await expect(page.locator('.compact-feedback')).toContainText('Résultat collé dans la sélection');
 });
 
 test('settings keep connection details collapsed, offer the reading presets and expose history deletion', async ({ page }) => {
@@ -415,7 +415,7 @@ test('a result past the ceiling lands whole and keeps the view at the top', asyn
 test('browser settings save automatically, identify simulated checks and close back to preview', async ({ page }) => {
   await page.goto('/?window=settings&demo=1');
   await expect(page.getByRole('button', { name: 'Enregistrer', exact: true })).toHaveCount(0);
-  await page.getByRole('radio', { name: 'English', exact: true }).click();
+  await page.getByRole('radio', { name: 'Lente', exact: true }).click();
   await expect(page.locator('.save-status')).toHaveText('Enregistré à l’instant');
   await page.getByRole('radio', { name: 'Grande', exact: true }).click();
   await expect(page.getByRole('radio', { name: 'Grande', exact: true })).toHaveAttribute('data-state', 'on');

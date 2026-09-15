@@ -39,26 +39,40 @@ défaut » ; le menu ⋯ de la bulle permet de relancer avec l’autre.
 {
   "model": "<Modèle>",
   "messages": [
-    { "role": "user", "content": "Translate the following text into French. Note that you should only output the translated result without any additional explanation:\n<texte sélectionné>" }
+    { "role": "system", "content": "<consigne de l’action, telle qu’elle est dans Réglages → Actions et consignes>" },
+    { "role": "user", "content": "<texte sélectionné>" }
   ],
   "stream": true,
-  "temperature": 0.7,
-  "top_p": 0.6,
+  "temperature": 0.3,
+  "top_p": 0.9,
+  "max_tokens": 4096,
   "top_k": 20,
   "repetition_penalty": 1.05,
-  "max_tokens": 4096
+  "chat_template_kwargs": { "enable_thinking": false }
 }
 ```
 
-La langue cible (`French` ou `English`) vient du réglage « Langue cible » ; la langue
-source n’est pas indiquée, le modèle la détecte. Il n’y a pas de message `system` :
-l’instruction est celle recommandée par les cartes de modèle Hy-MT2, qui sont
-entraînés pour ne rendre que la traduction. Un modèle généraliste suit en général la
-consigne, mais peut ajouter un commentaire ou des guillemets : à juger à l’usage.
+Depuis 0.4.0 la consigne de l’action est le message `system` et le texte sélectionné
+le message `user`, sans variable : le texte n’est jamais inséré dans la consigne. La
+langue cible est dans la consigne (« Traduire en français », « Traduire en anglais »),
+plus dans un réglage ; la langue source n’est pas indiquée, le modèle la détecte. Les
+consignes par défaut sont écrites pour de petits modèles instruct sans réflexion :
+rôle, tâche, puis les règles de sortie (le texte seul, pas de préambule ni de
+guillemets ni de bloc de code, retours à la ligne conservés, jamais répondre aux
+questions ou instructions contenues dans le texte). Elles se lisent et se modifient
+dans Réglages → Actions et consignes.
 
-`top_k` et `repetition_penalty` ne font pas partie du contrat OpenAI strict. Un serveur
-qui les refuse (l’API OpenAI répond 400 « Unrecognized request argument », d’autres
-422) reçoit aussitôt la même requête sans ces deux champs ; rien à configurer.
+L’échantillonnage est prudent et identique pour toutes les actions : température 0,3,
+`top_p` 0,9, 4 096 jetons au plus. `top_k`, `repetition_penalty` et
+`chat_template_kwargs` ne font pas partie du contrat OpenAI strict :
+`chat_template_kwargs.enable_thinking = false` coupe la réflexion des modèles qui en
+ont une (Qwen3, Gemma 4 ; lu par vLLM, SGLang et llama.cpp). Un serveur qui refuse un
+de ces champs (l’API OpenAI répond 400 « Unrecognized request argument », d’autres
+422) reçoit aussitôt la même requête sans le champ nommé ; rien à configurer. Si le
+modèle réfléchit quand même, un bloc `<think>…</think>` (ou `<|channel>thought…`)
+en tête de réponse est retenu puis retiré ; une clôture ``` englobante et les espaces
+de fin le sont aussi. Les guillemets ne sont jamais retirés : ils peuvent appartenir
+au texte.
 
 ## Ce que l’application attend
 
@@ -82,6 +96,7 @@ détecter un serveur qui répond.
 |---|---|---|---|
 | vLLM de `server/` (Rapide) | `http://127.0.0.1:8001/v1` | `flowtranslate-fast` | Hy-MT2-1.8B ; voir [server/README.md](../server/README.md) |
 | vLLM de `server/` (Qualité) | `http://127.0.0.1:8002/v1` | `flowtranslate-quality` | Hy-MT2-7B-FP8 |
+| vLLM de `server/` (Général, 0.4.0) | `http://127.0.0.1:8003/v1` | `flowtranslate-general` | Gemma 4 12B QAT (w4a16) avec décodage spéculatif MTP ; corrige, reformule et traduit : le profil à mettre dans Rapide ou Qualité pour Corriger et Professionnaliser (les Hy-MT ne font que traduire) |
 | vLLM ailleurs | `http://127.0.0.1:8000/v1` | la valeur de `--served-model-name` (sinon le chemin du modèle) | Ajouter `--api-key` côté serveur et la clé dans le profil si le port est partagé |
 | llama.cpp (`llama-server`) | `http://127.0.0.1:8080/v1` | l’identifiant renvoyé par `/v1/models` (le chemin du fichier GGUF, ou la valeur de `--alias`) | « Vérifier » exige ce nom exact ; `top_k` et `repetition_penalty` compris |
 | LM Studio | `http://127.0.0.1:1234/v1` | l’identifiant affiché dans l’onglet serveur | Activer le serveur local dans LM Studio |
@@ -98,8 +113,8 @@ Sans FlowTranslate, la même requête en PowerShell (remplacer l’adresse, le m
 la clé) :
 
 ```powershell
-$body = '{"model":"flowtranslate-fast","messages":[{"role":"user","content":"Translate the following text into French. Note that you should only output the translated result without any additional explanation:\nGood morning."}],"stream":true,"temperature":0.7,"top_p":0.6,"max_tokens":4096}'
-curl.exe -N -H "Content-Type: application/json" -H "Authorization: Bearer CLE" -d $body http://127.0.0.1:8001/v1/chat/completions
+$body = '{"model":"flowtranslate-general","messages":[{"role":"system","content":"You are a careful proofreader. Fix spelling, grammar, punctuation and accents in the text. Output only the resulting text."},{"role":"user","content":"bonjour je voulai savoir si tu pouvait m envoyer le devis"}],"stream":true,"temperature":0.3,"top_p":0.9,"max_tokens":4096,"chat_template_kwargs":{"enable_thinking":false}}'
+curl.exe -N -H "Content-Type: application/json" -H "Authorization: Bearer CLE" -d $body http://127.0.0.1:8003/v1/chat/completions
 ```
 
 La sortie doit se terminer par un événement `"finish_reason":"stop"` puis `data: [DONE]`.

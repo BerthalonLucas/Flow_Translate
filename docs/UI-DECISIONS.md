@@ -13,3 +13,12 @@ Ce document remplace les choix contradictoires des maquettes précédentes.
 - Poser uniquement les questions nécessaires ; après une question, attendre sa réponse sans poursuivre la conversation.
 
 Les choix ci-dessus sont validés comme direction. Ils ne décrivent pas des fonctions déjà implémentées.
+
+# Décisions de Lucas — 15 septembre 2026 (0.4.0)
+
+- FlowTranslate n’est plus « juste traduire » : un raccourci = une action sur la sélection (Corriger, Traduire en français, Traduire en anglais, Professionnaliser, actions à créer), chacune avec sa consigne modifiable. La priorité absolue : sélectionner un texte déjà écrit (Ctrl+A), presser le raccourci « Corriger », le texte corrigé remplace la sélection sur place, dans n’importe quelle zone de texte (mail, barre de recherche, champ web, éditeur), comme Wispr Flow.
+- Base `main` (0.3.0) ; les briques de la PR 6 (garde du presse-papiers, corde Ctrl+V) sont reprises, mais la relecture du document est un bonus, jamais une condition du collage. La PR 6 reste à fermer par Lucas.
+- La langue cible vit dans la consigne : plus de réglage « Langue cible », plus de variable `{{targetLanguage}}` ; deux actions de traduction par défaut.
+- Mode « Remplacer la sélection » : la pilule seule pendant le travail, le collage à la fin, la pilule s’efface ; le verre ne s’ouvre qu’en cas d’échec du collage (résultat + Copier).
+- Consignes limpides pour de petits modèles sans réflexion (réflexion coupée par `enable_thinking: false`) ; modèle d’essai Gemma 4 12B QAT avec décodage spéculatif (profil `general` du serveur).
+- L’UI des menus et des Réglages (« à la zeub ») est un autre chantier.

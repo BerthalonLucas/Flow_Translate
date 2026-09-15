@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { defaultActions, promptError } from './actionDefaults';
+import { defaultActions, newActionTemplate, outputRules, promptError } from './actionDefaults';
 
-describe('editable prompts', () => {
-  it('accepts each preset and a correction without a target language', () => {
-    for (const action of defaultActions) expect(promptError(action.promptTemplate)).toBeNull();
-    expect(promptError('Corrige sans changer la langue : {{text}}')).toBeNull();
-  });
-  it('rejects missing, duplicate, unknown variables and oversized prompts', () => {
-    for (const prompt of ['', 'Texte', '{{text}} {{text}}', '{{text}} {{other}}', '{{text}}\0', 'a'.repeat(8000) + '{{text}}']) {
-      expect(promptError(prompt)).not.toBeNull();
+describe('editable instructions', () => {
+  it('accepts each preset, the new-action template and any plain instruction', () => {
+    for (const action of defaultActions) {
+      expect(promptError(action.promptTemplate)).toBeNull();
+      expect(action.promptTemplate.endsWith(outputRules)).toBe(true);
+      expect(action.promptTemplate).not.toContain('{{');
     }
+    expect(promptError(newActionTemplate)).toBeNull();
+    expect(promptError('Corrige sans changer la langue.')).toBeNull();
+  });
+  it('names the language in the two translation presets', () => {
+    expect(defaultActions.find(a => a.id === 'translate-fr')?.promptTemplate).toContain('into French');
+    expect(defaultActions.find(a => a.id === 'translate-en')?.promptTemplate).toContain('into English');
+  });
+  it('rejects empty, oversized and null-bearing instructions', () => {
+    for (const prompt of ['', '   ', 'a\0b', 'a'.repeat(8001)]) expect(promptError(prompt)).not.toBeNull();
   });
 });
