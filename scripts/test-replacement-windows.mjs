@@ -32,11 +32,13 @@ try {
     try { port = Number(await readFile(portFile, 'utf8')); break; } catch { await sleep(1000); }
   }
   assert.ok(port, 'native driver ready');
+  assert.equal((await command({ op: 'clipboard-race' })).ok, true, 'new clipboard copy must win over restoration');
+  console.log('PASS concurrent clipboard owner: newer copy preserved'); passed++;
   browser = await chromium.launch({ channel: 'msedge', headless: false, args: ['--force-renderer-accessibility', '--no-first-run'] });
   const page = await browser.newPage();
   await page.setContent('<title>FlowTranslate Replacement Tests</title><input id="input"><textarea id="textarea"></textarea><div id="rich" contenteditable="true" role="textbox"></div><input id="other"><input id="readonly" readonly value="café 😀"><input id="password" type="password" value="secret"><iframe srcdoc="<textarea id=frame></textarea>"></iframe><div id="shadow"></div>');
   await page.evaluate(() => { document.querySelector('#shadow').attachShadow({ mode: 'open' }).innerHTML = '<textarea id="shadow-input"></textarea>'; });
-  const original = 'Début café 😀 fin';
+  const original = 'Début 🚀 café 😀 fin';
   const selected = 'café 😀';
   const replacement = 'équipe 🚀';
   await page.evaluate(() => { document.addEventListener('input', event => { event.target.dataset.nativeInput = event.inputType ?? 'input'; }); });
@@ -44,24 +46,25 @@ try {
     await page.bringToFront();
     await locator.evaluate((el, { original, selected, rich, multiline }) => {
       const text = multiline ? original + '\nSeconde ligne' : original;
-      if (rich) el.innerHTML = '<b>Début </b><span>café 😀</span><i> fin</i>';
+      if (rich) el.innerHTML = '<b>Début 🚀 </b><span>café 😀</span><i> fin</i>';
       else el.value = text;
       el.focus();
       if (rich) {
         const range = document.createRange(); range.selectNodeContents(el.querySelector('span'));
         const selection = el.ownerDocument.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-      } else el.setSelectionRange(6, 6 + selected.length);
+      } else el.setSelectionRange(text.indexOf(selected), text.indexOf(selected) + selected.length);
     }, { original, selected, rich, multiline });
     await sleep(300);
   };
   const content = locator => locator.evaluate(el => 'value' in el ? el.value : el.textContent);
-  const capture = async () => {
-    const result = await command({ op: 'capture' });
+  const capture = async (copy = false) => {
+    const result = await command({ op: copy ? 'capture-copy' : 'capture' });
     assert.equal(result.replaceable, true, `selection available: ${JSON.stringify(result)}`);
     return result;
   };
   for (const [name, locator, options] of [
     ['input', page.locator('#input'), {}],
+    ['input via copy', page.locator('#input'), { copy: true }],
     ['textarea multiline', page.locator('#textarea'), { multiline: true }],
     ['contenteditable formatted', page.locator('#rich'), { rich: true }],
     ['iframe', page.frameLocator('iframe').locator('#frame'), {}],
@@ -71,14 +74,14 @@ try {
     await command({ op: 'clipboard-seed' });
     await prepare(locator, options);
     const before = await content(locator);
-    const captured = await capture();
+    const captured = await capture(options.copy);
     const value = options.multiline ? replacement + '\nmerci' : replacement;
     const result = await command({ op: 'replace', value });
     assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`);
     assert.equal(await content(locator), before.replace(selected, value), name);
     if (!['iframe', 'shadow DOM'].includes(name)) assert.equal(await locator.getAttribute('data-native-input'), 'insertFromPaste', `${name}: editor input event`);
     assert.equal((await command({ op: 'clipboard-check' })).ok, true, `${name}: rich clipboard restored`);
-    if (options.rich) { assert.equal(await locator.locator('b').textContent(), 'Début '); assert.equal(await locator.locator('i').textContent(), ' fin'); }
+    if (options.rich) { assert.equal(await locator.locator('b').textContent(), 'Début 🚀 '); assert.equal(await locator.locator('i').textContent(), ' fin'); }
     keys('^z');
     assert.equal(await content(locator), before, `${name}: native undo`);
     console.log(`PASS ${name}: ${captured.route}, Unicode, surrounding text, clipboard, undo`); passed++;

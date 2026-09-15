@@ -15,9 +15,12 @@ fn replacement_desktop_driver() {
         BufReader::new(&stream).read_line(&mut line).unwrap();
         let command: serde_json::Value = serde_json::from_str(&line).unwrap();
         let response = match command["op"].as_str().unwrap() {
-            "capture" => {
+            "capture" | "capture-copy" => {
                 target = None;
-                match crate::capture::capture_current(false, crate::host::foreground()) {
+                let capture = if command["op"] == "capture-copy" {
+                    crate::capture::clipboard_capture(crate::host::foreground())
+                } else { crate::capture::capture_current(false, crate::host::foreground()) };
+                match capture {
                     Ok(capture) => {
                         target = capture.target.as_ref().and_then(crate::capture::complete_target);
                         serde_json::json!({"ok": true, "replaceable": target.is_some(), "origin": capture.public.origin,
@@ -30,6 +33,14 @@ fn replacement_desktop_driver() {
                 Ok(()) => serde_json::json!({"ok": true}),
                 Err(error) => serde_json::json!({"ok": false, "error": error}),
             },
+            "clipboard-race" => {
+                let before = crate::clipboard_guard::Snapshot::capture().unwrap();
+                let sequence = before.put_text("temporary synthetic result").unwrap();
+                let mut other = arboard::Clipboard::new().unwrap();
+                other.set_text("new synthetic user copy").unwrap();
+                let refused = before.restore(sequence).is_err();
+                serde_json::json!({"ok": refused && other.get_text().unwrap() == "new synthetic user copy"})
+            }
             "clipboard-seed" => {
                 crate::clipboard_guard::seed_test_formats();
                 clipboard = Some(crate::clipboard_guard::Snapshot::capture().unwrap());

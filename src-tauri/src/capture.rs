@@ -132,8 +132,8 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 Ok(false) => {}
             }
             {
-                // The offsets and the Win32 control come later (`complete_target`): the
-                // window shows as soon as the text and its anchor are known.
+                // Keep the selection position now; defer the full document and native
+                // control snapshot to complete_target after the overlay is shown.
                 match selection(&element, true) {
                     Ok((text, anchor, selection_start, selection_len, range_editable)) => {
                         ensure_source_unchanged(source_window)?;
@@ -234,7 +234,7 @@ fn read_clipboard() -> Option<String> {
 
 /// Without a UIA selection: copies for the user (synthetic Ctrl+Insert), else accepts a
 /// copy he made himself in the last three seconds, else nothing to translate.
-fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
+pub(crate) fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
     let pressed_at = crate::host::now_ms();
     let changed_at = crate::host::clipboard_changed_at();
     let candidate = ui_automation().ok().and_then(|a| a.get_focused_element().ok()).and_then(|element| {
