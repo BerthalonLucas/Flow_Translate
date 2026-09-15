@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { bridge } from './bridge';
-import { anchoredFloor, anchoredReserve, bottomReserve, countWords, decideForm, dimming, glass, halo, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics, type ShortMetrics } from './layout';
+import { anchoredFloor, anchoredReserve, bottomReserve, countWords, decideForm, decidePlacement, dimming, glass, halo, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics, type ShortMetrics } from './layout';
 import { breakable } from './text';
 import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton, motionTokens, useFade, useRise } from './ui';
 import type { Form, HitRegion, Presentation, Screen, TextSize } from './types';
@@ -167,7 +167,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   // The form is decided once the result lands; a capture without an anchor lives at the
   // bottom from the start, a reader moves there and never comes back.
   const [form, setForm] = useState<Form>('pending');
-  const [placement, setPlacement] = useState<Presentation>(() => state.capture?.anchor ? 'anchored' : 'bottom');
+  // Decided once at the capture on the source text (UI-025): a long selection waits at the
+  // bottom from the start; only a short source translated long still moves there.
+  const [placement, setPlacement] = useState<Presentation>(() => decidePlacement(Boolean(state.capture?.anchor), state.capture?.anchor ? measureLines(state.capture.text, short) : 0));
   const [moving, setMoving] = useState(false);
   const [slow, setSlow] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);

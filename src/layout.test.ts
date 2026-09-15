@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bottomReserve, countWords, decideForm, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
+import { bottomReserve, countWords, decideForm, decidePlacement, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
 
 describe('reading forms (2026-09-14)', () => {
   it('reads up to eight short lines beside the selection, more in the reader', () => {
@@ -55,4 +55,11 @@ describe('reading budget', () => {
     expect(countWords('Bonjour,  ceci est\nune phrase.')).toBe(5);
     expect(countWords('   ')).toBe(0);
   });
+});
+
+it('decides the placement at the capture on the source: a long selection waits at the bottom', () => {
+  expect(decidePlacement(true, 1)).toBe('anchored');
+  expect(decidePlacement(true, 8)).toBe('anchored');
+  expect(decidePlacement(true, 9)).toBe('bottom');
+  expect(decidePlacement(false, 1)).toBe('bottom');
 });

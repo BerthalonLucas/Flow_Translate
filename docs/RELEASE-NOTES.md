@@ -1,3 +1,20 @@
+# 0.2.1 — plus de saut avant la bande, release GitHub, tout moteur OpenAI
+
+La pilule d’attente ne se pose plus près de la sélection pour filer en bas une demi-seconde
+plus tard : l’emplacement est décidé dès la capture, sur le texte sélectionné. Une sélection
+de plus de huit lignes attend directement en bas au centre et la bande y naît sans bouger ;
+seule une sélection courte traduite long se déplace encore. Quand la bande prend l’écran de
+la souris et que ce n’est pas celui de la sélection, la bulle reçoit aussitôt la zone de
+travail du bon écran.
+
+L’installateur Windows est publié dans les releases GitHub avec son SHA-256 (workflow
+« Release », sur tag `v<version>` ou à la main). Le README explique l’installation, le
+serveur livré et le branchement de n’importe quel moteur compatible OpenAI ; la page
+`docs/ENDPOINTS.md` donne la requête exacte, ce qui est attendu en retour et les réglages
+pour vLLM, llama.cpp, LM Studio, Ollama et les services en ligne. Un serveur qui refuse
+`top_k` ou `repetition_penalty` (API OpenAI stricte) reçoit la requête une seconde fois sans
+ces champs, sans rien configurer.
+
 # 0.2.0 — lecture calibrée : deux formes, un temps de lecture, la bande suit la souris
 
 Plus d’anneau ni de grande fenêtre vide pendant l’attente : une pilule de 60 × 28 avec

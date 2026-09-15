@@ -2,9 +2,11 @@
 
 ## Client Windows 11
 
-Le paquet NSIS est construit par `npm run tauri -- build --bundles nsis` dans
-`src-tauri/target/release/bundle/nsis/`. Installation par utilisateur, sans
-droits administrateur. Un certificat de signature d’entreprise n’est pas
+Le paquet NSIS est publié dans les releases GitHub par `.github/workflows/release.yml`
+(tag `v<version>` ou lancement manuel du workflow « Release » avec ce tag), avec son
+SHA-256 dans `SHA256SUMS.txt`. Il se construit aussi localement par
+`npm run tauri -- build --bundles nsis` dans `src-tauri/target/release/bundle/nsis/`.
+Installation par utilisateur, sans droits administrateur. Un certificat de signature d’entreprise n’est pas
 fourni dans ce dépôt ; distribuer le paquet par le canal interne approuvé.
 
 Lorsqu’un installateur est lancé depuis une application Windows empaquetée,
@@ -25,10 +27,11 @@ npm run tauri -- build --bundles nsis
 ```
 
 Au repos, chercher FlowTranslate dans la zone de notification. Configurer la
-langue cible et les deux connexions dans Réglages → Connexion avancée. Le
-raccourci initial est `Ctrl+Alt+T`. Sur une sélection, la traduction démarre ;
-sur le presse-papiers, le texte doit être confirmé. Une seconde pression
-permet de rejoindre la bulle au clavier. `Échap` ferme ou annule.
+langue cible et les deux connexions dans Réglages → Connexion avancée
+([ENDPOINTS.md](ENDPOINTS.md) pour un moteur autre que le serveur livré). Le
+raccourci initial est `Ctrl+Alt+T` : la traduction démarre sur la sélection, ou sur
+la copie que FlowTranslate fait lui-même quand la sélection n’est pas lisible. La bulle
+s’efface d’elle-même au temps de lecture ; `Échap` ferme ou annule.
 
 ## Serveur
 
