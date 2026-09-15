@@ -13,7 +13,7 @@ const FRESH_COPY_MS: u64 = 3_000;
 /// The shortcut chord must be released before the synthetic copy chord is sent.
 const CHORD_RELEASE: Duration = Duration::from_millis(600);
 /// How long the target may take to serve the synthetic copy.
-const COPY_SETTLE: Duration = Duration::from_millis(350);
+const COPY_SETTLE: Duration = Duration::from_millis(1000);
 /// Our own clipboard traffic (copy, restoration) is invisible to the freshness watcher.
 const OWN_TRAFFIC: Duration = Duration::from_millis(1_500);
 
@@ -173,7 +173,10 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         };
                         if editable && win32_target(source_window, &identity.selected_text).is_none() {
                             validate_target(&identity)?;
-                            let actual = synthetic_copy(source_window).map_err(|_| "L’éditeur ne permet pas de vérifier sa sélection par copie. Réessayez après avoir copié du texte.".to_string())?;
+                            let actual = synthetic_copy(source_window).map_err(|step| {
+                                #[cfg(test)] eprintln!("copy verification: {step}");
+                                let _ = step;
+                                "L’éditeur ne permet pas de vérifier sa sélection par copie. Réessayez après avoir copié du texte.".to_string() })?;
                             if actual.encode_utf16().count() > 6000 { return Err("Sélection trop longue (6 000 unités de texte).".into()); }
                             if actual != identity.selected_text {
                                 // Some rich UIA providers overrun inline-node boundaries.
@@ -321,12 +324,12 @@ fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
     ensure_source_unchanged(source_window).map_err(|_| "source window lost after the chord")?;
     if crate::host::clipboard_sequence() != previous.sequence { return Err("clipboard changed"); }
     crate::host::send_copy_chord().map_err(|_| "SendInput refused")?;
-    let after = crate::host::wait_clipboard_change(previous.sequence, COPY_SETTLE).ok_or("no clipboard change")?;
-    let copied = read_clipboard().filter(|text| !text.trim().is_empty());
-    if crate::host::clipboard_sequence() != after { return Err("clipboard changed during copy"); }
+    crate::host::wait_clipboard_change(previous.sequence, COPY_SETTLE).ok_or("no clipboard change")?;
+    let (copied, after) = crate::clipboard_guard::copied_text(source_window)?;
     let _ = previous.restore(after);
     ensure_source_unchanged(source_window).map_err(|_| "source window lost after copy")?;
-    copied.ok_or("copied nothing readable")
+    Ok(copied)
+
 }
 
 pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {

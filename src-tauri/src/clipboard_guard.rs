@@ -13,6 +13,7 @@ unsafe extern "system" {
     fn SetClipboardData(format: u32, data: Handle) -> Handle;
     fn GetClipboardSequenceNumber() -> u32;
     fn GetClipboardOwner() -> Handle;
+    fn GetWindowThreadProcessId(window: Handle, process: *mut u32) -> u32;
     fn RegisterClipboardFormatW(name: *const u16) -> u32;
 }
 #[link(name = "kernel32")]
@@ -55,6 +56,30 @@ impl Memory {
     }
 }
 impl Drop for Memory { fn drop(&mut self) { if !self.0.is_null() { unsafe { GlobalFree(self.0); } } } }
+
+/// Observe a completed copy under the clipboard lock. The first sequence change
+/// can be EmptyClipboard, before the source has published all of its formats.
+pub fn copied_text(source: isize) -> Result<(String, u32), &'static str> {
+    let _open = Open::new(null_mut()).map_err(|_| "copy clipboard busy")?;
+    let (mut source_pid, mut owner_pid) = (0, 0);
+    unsafe {
+        GetWindowThreadProcessId(source as Handle, &mut source_pid);
+        GetWindowThreadProcessId(GetClipboardOwner(), &mut owner_pid);
+    }
+    if source_pid == 0 || source_pid != owner_pid { return Err("copy clipboard belongs to another application"); }
+    let memory = unsafe { GetClipboardData(13) };
+    if memory.is_null() { return Err("copy has no Unicode text"); }
+    let bytes = unsafe { GlobalSize(memory) };
+    if bytes < 2 || bytes % 2 != 0 { return Err("invalid copied text"); }
+    let pointer = unsafe { GlobalLock(memory) };
+    if pointer.is_null() { return Err("copied text inaccessible"); }
+    let units = unsafe { std::slice::from_raw_parts(pointer.cast::<u16>(), (bytes / 2).min(6002)) };
+    let result = units.iter().position(|u| *u == 0).filter(|len| *len <= 6000)
+        .and_then(|len| String::from_utf16(&units[..len]).ok());
+    unsafe { GlobalUnlock(memory); }
+    let text = result.filter(|text| !text.trim().is_empty()).ok_or("copied text empty or too long")?;
+    Ok((text, unsafe { GetClipboardSequenceNumber() }))
+}
 
 pub struct Snapshot { formats: Vec<(u32, Vec<u8>)>, pub sequence: u32 }
 impl Snapshot {
