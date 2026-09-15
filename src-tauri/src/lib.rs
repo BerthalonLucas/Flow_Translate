@@ -1,6 +1,7 @@
 mod actions;
 use actions::{Execution, OutputMode};
 mod capture;
+mod clipboard_guard;
 mod crypto;
 mod history;
 mod host;
@@ -249,9 +250,7 @@ fn store_capture(
     // The frontend sizes the reader band from that screen (`Capture.screen`).
     let (work, scale, monitor) = host::monitor_at(captured.public.anchor);
     captured.public.screen = Some(Screen { width: work.width / scale, height: work.height / scale, scale });
-    let deferred = captured.target.clone().filter(|_| !state.demo);
     if let Some(run) = execution.as_mut() {
-        run.target_pending = deferred.is_some();
         captured.public.execution = Some(run.info.clone());
     }
     let public = captured.public.clone();
@@ -302,30 +301,6 @@ fn store_capture(
     if ready {
         app.emit_to("overlay", "capture", &public)
             .map_err(|_| "Affichage de la capture indisponible.".to_string())?;
-    }
-    // Second step, behind the shown window: document offsets and the Win32 control
-    // decide whether « Remplacer » is offered (reading a whole document can be slow).
-    if let Some(target) = deferred {
-        let app = app.clone();
-        let capture_id = public.id.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let resolved = capture::complete_target(&target);
-            let state = app.state::<AppState>();
-            let can_replace = {
-                let Ok(mut i) = state.inner.lock() else { return };
-                if i.capture.as_ref().is_none_or(|c| c.public.id != capture_id) { return; }
-                if let Some(run) = i.execution.as_mut() { run.target_pending = false; }
-                let Some(current) = i.capture.as_mut() else { return };
-                if let (Some(identity), Some((selection_start, win32))) = (current.target.as_mut(), resolved) {
-                    identity.selection_start = Some(selection_start);
-                    identity.win32 = win32;
-                    current.public.can_replace = identity.win32.is_some();
-                }
-                current.public.can_replace
-            };
-            let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace });
-            schedule_auto_delivery(&app, None);
-        });
     }
     Ok(public)
 }
@@ -397,7 +372,6 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             request_id: result.request_id.clone(),
             translated_text: result.translated_text.clone(),
             mode: result.mode,
-            target_language: result.target_language,
         }),
         screen: None,
         execution: result.execution.clone().map(|mut info| { info.output_mode = OutputMode::Display; info }),
@@ -416,7 +390,9 @@ fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, S
 }
 fn capture_with_binding(app: AppHandle, state: &AppState, shortcut_id: Option<u32>) -> Result<Capture, String> {
     if let Some(window) = app.get_webview_window("settings") {
-        if host::belongs_to(&window, host::foreground()) { return Err("Fermez les réglages avant d’utiliser un raccourci.".into()); }
+        // The hidden settings window can hold the foreground for an instant at startup
+        // (the demo capture of the probe met it): only the shown one refuses a capture.
+        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err("Fermez les réglages avant d’utiliser un raccourci.".into()); }
     }
     let execution = {
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -458,7 +434,7 @@ fn translate(
     if request.text.is_empty() || request.text.chars().count() > 6000 {
         return Err("La traduction accepte de 1 à 6 000 caractères.".into());
     }
-    let (profile, prompt, execution_info, cancel, inner, history, demo, demo_long) = {
+    let (profile, instruction, execution_info, cancel, inner, history, demo, demo_long) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         let captured = i
             .capture
@@ -471,13 +447,14 @@ fn translate(
             return Err("La capture n’est plus active.".into());
         }
         let run = i.execution.as_ref().ok_or("Cette capture ne peut pas être relancée. Sélectionnez à nouveau le texte.")?;
-        if request.action_id != run.info.action_id || request.target_language != run.info.target_language {
-            return Err("L’action ou la langue ne correspond pas à la capture.".into());
+        if request.action_id != run.info.action_id {
+            return Err("L’action ne correspond pas à la capture.".into());
         }
         if !run.started && request.mode != run.info.mode { return Err("Le profil ne correspond pas à la capture.".into()); }
         let key = match request.mode { Mode::Fast => "fast", Mode::Quality => "quality" };
         let profile = run.profiles.get(key).ok_or("Le profil est absent.")?.clone();
-        let prompt = actions::render(&run.action.prompt_template, &request.text, request.target_language)?;
+        actions::validate_template(&run.action.prompt_template)?;
+        let instruction = run.action.prompt_template.clone();
         let execution_info = run.info.clone();
         i.cancel(None);
         i.execution.as_mut().expect("validated execution").begin(&request.id);
@@ -489,7 +466,7 @@ fn translate(
         });
         (
             profile,
-            prompt,
+            instruction,
             execution_info,
             cancel,
             state.inner.clone(),
@@ -503,10 +480,11 @@ fn translate(
         let result = if demo {
             let output = if demo_long {
                 "Voici une réponse synthétique assez longue pour dépasser les huit lignes du verre court et ouvrir la bande de lecture en bas de l’écran du curseur. Elle contient plusieurs phrases, des retours naturels et assez de texte pour vérifier que la bande reste stable lorsque la pilule et le menu se chevauchent visuellement, que le défilement fonctionne à la molette et que le budget de lecture se calcule sur le nombre de mots. Aucun appel d’inférence réel n’est effectué dans ce mode de démonstration : le texte est fixe, sans rapport avec la sélection, et sert uniquement à vérifier la géométrie, le suivi de l’écran de la souris et la sortie en deux temps de la bande une fois le temps de lecture écoulé."
-            } else { match request.target_language {
-                Language::Fr => "Pourriez-vous envoyer la proposition mise à jour avant jeudi ?",
-                Language::En => "Could you send the updated proposal before Thursday?",
-            }};
+            } else if execution_info.action_id.ends_with("-en") {
+                "Could you send the updated proposal before Thursday?"
+            } else {
+                "Pourriez-vous envoyer la proposition mise à jour avant jeudi ?"
+            };
             let mut out = String::new();
             for word in output.split_inclusive(' ') {
                 if cancel.is_cancelled() {
@@ -537,7 +515,8 @@ fn translate(
         } else {
             inference::stream(
                 profile,
-                prompt,
+                instruction,
+                request.text.clone(),
                 cancel,
                 |chunk| {
                     let i = inner.lock().map_err(|_| lock_error())?;
@@ -567,16 +546,14 @@ fn translate(
         if !i.current(&id) {
             return;
         }
-        let timeout_id = id.clone();
         match result {
             Ok(text) => {
                 i.completed = Some(CompletedResult {
-                    execution: Some(execution_info),
+                    execution: Some(execution_info.clone()),
                     request_id: id.clone(),
                     capture_id: request.capture_id,
                     source_text: request.text.clone(),
                     translated_text: text.clone(),
-                    target_language: request.target_language,
                     mode: request.mode,
                     complete: true,
                 });
@@ -585,32 +562,26 @@ fn translate(
                     let _ = history.add(&HistoryEntry {
                         id: Uuid::new_v4().to_string(),
                         source_text: request.text,
-                        translated_text: text,
-                        target_language: request.target_language,
+                        translated_text: text.clone(),
+                        action_name: execution_info.action_name,
                         mode: request.mode,
                         created_at: Utc::now().to_rfc3339(),
                     });
                 }
+                // `done` carries the cleaned final text: the glass shows it in place of
+                // the deltas it accumulated (a thinking block or a fence never reaches it).
                 let _ = app.emit_to(
                     "overlay",
                     "translation",
                     StreamEvent {
                         request_id: id,
                         kind: StreamKind::Done,
-                        text: None,
+                        text: Some(text),
                         message: None,
                     },
                 );
                 drop(i);
-                schedule_auto_delivery(&app, None);
-                // Bound a delayed target resolver. A late resolver must not deliver twice.
-                let handle = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    let state = handle.state::<AppState>();
-                    let current = state.inner.lock().is_ok_and(|i| i.completed.as_ref().is_some_and(|r| r.request_id == timeout_id));
-                    if current { schedule_auto_delivery(&handle, Some(timeout_id)); }
-                });
+                schedule_auto_delivery(&app);
             }
             Err(message) => {
                 i.active = None;
@@ -645,30 +616,36 @@ fn result_for(state: &AppState, id: &str) -> Result<CompletedResult, String> {
         .filter(|r| r.request_id == id && r.complete && i.visible)
         .ok_or_else(|| "Aucun résultat complet pour cette requête.".into())
 }
-fn schedule_auto_delivery(app: &AppHandle, timeout_id: Option<String>) {
+/// A « replace » capture delivers its first complete result by pasting it over the
+/// selection (0.4.0), once, as soon as inference ends. The state lock is held through
+/// the native paste: a new capture, a relaunch or a dismissal cannot commit in between.
+fn schedule_auto_delivery(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        // Keep the state lock through the native revalidation/write: a new capture,
-        // relaunch or dismissal cannot commit between the identity check and delivery.
         let Ok(mut i) = state.inner.lock() else { return };
         if !i.visible || i.pending_dismiss.is_some() || i.active.is_some() { return; }
         let Some(result) = i.completed.clone() else { return };
         let Some(run) = i.execution.as_mut() else { return };
-        if let Some(id) = timeout_id {
-            if result.request_id != id { return; }
-            run.target_pending = false;
-        }
         if !run.claim_delivery(&result.request_id) { return; }
-        let target = i.capture.as_ref().filter(|c| c.public.id == result.capture_id && c.public.can_replace).and_then(|c| c.target.clone());
-        let applied = target.as_ref().is_some_and(|target| capture::replace_automatic(target, &result.translated_text).is_ok());
-        if applied {
-            if let Some(c) = i.capture.as_mut() { c.public.can_replace = false; c.target = None; }
-        }
+        let target = i.capture.as_mut().filter(|c| c.public.id == result.capture_id && c.public.can_replace).and_then(|c| {
+            c.public.can_replace = false;
+            c.target.take()
+        });
+        let outcome = target.as_ref().ok_or_else(|| "Aucune sélection à remplacer; le résultat reste dans la bulle.".to_string())
+            .and_then(|target| capture::paste(target, &result.translated_text, false));
+        let capture_id = result.capture_id.clone();
+        drop(i);
+        let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
         let _ = app.emit_to("overlay", "result-delivery", serde_json::json!({
             "requestId": result.request_id,
-            "status": if applied { "applied" } else { "fallback" },
-            "message": if applied { "La sélection a été remplacée." } else { "Remplacement automatique impossible. Le résultat reste dans la bulle ; utilisez Copier." }
+            "status": if outcome.is_ok() { "applied" } else { "fallback" },
+            "confirmed": outcome.as_ref().is_ok_and(|d| d.confirmed),
+            "message": match &outcome {
+                Ok(d) if d.confirmed => "Sélection remplacée.".to_string(),
+                Ok(_) => "Résultat collé dans la sélection.".to_string(),
+                Err(message) => message.clone(),
+            }
         }));
     });
 }
@@ -681,23 +658,30 @@ fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), Str
         .and_then(|mut c| c.set_text(r.translated_text))
         .map_err(|_| "La copie est indisponible.".into())
 }
+/// « Remplacer » from the menu of the glass: the same paste, the source window brought
+/// back to the front first (the click was on our window). One attempt per result.
 #[tauri::command]
-async fn replace_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
     let r = result_for(&state, &request_id)?;
-    let target = {
-        let i = state.inner.lock().map_err(|_| lock_error())?;
-        let c = i
-            .capture
-            .as_ref()
-            .filter(|c| c.public.id == r.capture_id && c.public.can_replace)
-            .ok_or_else(|| "La cible modifiable n’est plus valide. Utilisez Copier.".to_string())?;
-        c.target
-            .clone()
-            .ok_or_else(|| "La cible modifiable n’est plus valide.".to_string())?
-    };
     // UI Automation uses an MTA worker, never the WebView's STA UI thread.
-    tauri::async_runtime::spawn_blocking(move || capture::replace(&target, &r.translated_text))
-        .await.map_err(|_| "Le remplacement a été interrompu. Utilisez Copier.".to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.active.is_some() || i.pending_dismiss.is_some()
+            || i.completed.as_ref().is_none_or(|done| done.request_id != r.request_id) {
+            return Err("Ce résultat n’est plus actif.".into());
+        }
+        let fg = host::foreground();
+        let ours = ["overlay", "capsule"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
+        let c = i.capture.as_mut().filter(|c| c.public.id == r.capture_id && c.public.can_replace)
+            .ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
+        let target = c.target.take().ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
+        c.public.can_replace = false;
+        let capture_id = c.public.id.clone();
+        let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
+        if fg != target.native_window && !ours { return Err("La fenêtre source a changé; remplacement refusé.".into()); }
+        capture::paste(&target, &r.translated_text, true).map(|_| ())
+    }).await.map_err(|_| "Le remplacement a été interrompu; utilisez Copier.".to_string())?
 }
 fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
     let handle = app.clone();

@@ -89,11 +89,10 @@ pub struct Replay {
     pub request_id: String,
     pub translated_text: String,
     pub mode: Mode,
-    pub target_language: Language,
 }
 
-/// Second step of a capture: whether the selection can be replaced natively, once the
-/// document offsets and the Win32 control have been read behind the shown window.
+/// Whether the capture can still be pasted over: false once a paste was attempted (a
+/// result is delivered once) or the selection was lost.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureTarget {
@@ -161,7 +160,6 @@ pub enum AutoClose {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub target_language: Language,
     pub mode: Mode,
     pub actions: Vec<ActionDefinition>,
     pub shortcut_bindings: Vec<ShortcutBinding>,
@@ -197,11 +195,10 @@ impl Default for Settings {
             },
         );
         Self {
-            target_language: Language::Fr,
             mode: Mode::Quality,
             actions: crate::actions::defaults(),
             shortcut_bindings: crate::actions::default_bindings("Ctrl+Alt+T".into()),
-            default_action_id: "translate".into(),
+            default_action_id: "translate-fr".into(),
             history_enabled: false,
             autostart: false,
             connection_expanded: false,
@@ -231,7 +228,6 @@ pub struct TranslationRequest {
     pub id: String,
     pub capture_id: String,
     pub text: String,
-    pub target_language: Language,
     pub mode: Mode,
 }
 
@@ -260,7 +256,8 @@ pub struct HistoryEntry {
     pub id: String,
     pub source_text: String,
     pub translated_text: String,
-    pub target_language: Language,
+    /// The action that produced the entry (« Traduire » for rows older than 0.4.0).
+    pub action_name: String,
     pub mode: Mode,
     pub created_at: String,
 }
@@ -286,25 +283,19 @@ pub enum PlacementSide {
     Below,
 }
 
+/// Where the selection lives, kept in Rust only: the source window, its focused control
+/// and, when UI Automation gave the selection, the element it came from. The paste of
+/// 0.4.0 checks that identity again just before the chord; the text serves the watcher
+/// and the confirmation, never a log.
 #[derive(Clone, Debug)]
 pub struct TargetIdentity {
-    pub runtime_id: Vec<i32>,
+    pub runtime_id: Option<Vec<i32>>,
     pub native_window: isize,
+    pub control: isize,
     pub selected_text: String,
     pub anchor: Option<Rect>,
-    pub selection_start: Option<usize>,
     pub selection_len: usize,
     pub editable: bool,
-    pub win32: Option<Win32Target>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Win32Target {
-    pub control_window: isize,
-    pub class_name: String,
-    pub selection_start: u32,
-    pub selection_end: u32,
-    pub document_utf16: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -320,7 +311,6 @@ pub struct CompletedResult {
     pub capture_id: String,
     pub source_text: String,
     pub translated_text: String,
-    pub target_language: Language,
     pub mode: Mode,
     pub complete: bool,
 }
