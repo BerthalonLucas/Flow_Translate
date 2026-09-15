@@ -153,5 +153,18 @@ mod tests {
         run.begin("retry");
         assert!(!run.claim_delivery("retry"));
     }
+    #[test]
+    fn a_capture_keeps_its_action_prompt_and_profile_snapshot() {
+        let mut settings = Settings::default();
+        let mut binding = settings.shortcut_bindings[0].clone();
+        binding.action_id = "correct".into();
+        let mut run = Execution::snapshot(&settings, Some(&binding)).unwrap();
+        settings.actions[1].prompt_template = "Changed: {{text}}".into();
+        settings.profiles.get_mut("quality").unwrap().model = "another-model".into();
+        assert_eq!(run.info.action_id, "correct");
+        assert_ne!(run.action.prompt_template, settings.actions[1].prompt_template);
+        assert_ne!(run.profiles["quality"].model, settings.profiles["quality"].model);
+        run.begin("display-only");
+        assert!(!run.claim_delivery("display-only"));
+    }
 }
-

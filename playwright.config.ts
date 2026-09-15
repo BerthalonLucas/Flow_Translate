@@ -7,7 +7,11 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: ['**/*.pw.ts', '**/*.spec.mjs'],
   timeout: 20_000,
-  use: { baseURL, headless: true, screenshot: 'only-on-failure' },
+  use: { baseURL, headless: true, screenshot: 'only-on-failure',
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, args: ['--no-sandbox', '--disable-dev-shm-usage'] }
+      : undefined,
+  },
   webServer: {
     command: `npm run dev -- --port ${port} --strictPort`,
     url: baseURL,

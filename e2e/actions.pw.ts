@@ -22,8 +22,8 @@ test('a custom prompt and a second shortcut retain their action and destination'
   const id = (await saved(page)).actions.find((a: any) => a.name === 'Résumer').id;
   await page.getByRole('button', { name: 'Ajouter un raccourci', exact: true }).click();
   const second = page.locator('.shortcut-card').nth(1);
-  await second.getByLabel('Action', { exact: true }).selectOption(id);
-  await second.getByLabel('Résultat', { exact: true }).selectOption('replace');
+  await second.locator('.shortcut-options select').nth(0).selectOption(id);
+  await second.locator('.shortcut-options select').nth(1).selectOption('replace');
   await second.getByRole('button', { name: 'Modifier', exact: true }).click();
   await page.keyboard.press('Control+Alt+R');
   await expect.poll(() => saved(page)).toMatchObject({ shortcutBindings: [expect.objectContaining({ shortcut: 'Ctrl+Alt+T', actionId: 'translate' }), expect.objectContaining({ shortcut: 'Ctrl+Alt+R', actionId: id, outputMode: 'replace', enabled: true })] });
