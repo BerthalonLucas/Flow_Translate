@@ -159,7 +159,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const { state, dispatch, start, cancelAndDismiss, completeDismiss, closingCaptureId, notice, settings, screen: liveScreen } = controller;
   const captureId = state.capture?.id;
   const preset: TextSize = settings?.textSize ?? 'normal';
-  const autoClose = settings?.autoClose ?? 'normal';
+  const autoClose = state.delivery === 'pending' ? 'never' : settings?.autoClose ?? 'normal';
   const [screen, setScreen] = useState<Screen>(() => liveScreen ?? state.capture?.screen ?? previewScreen());
   useEffect(() => { if (liveScreen) setScreen(liveScreen); }, [liveScreen]);
   const short = shortMetrics(preset);
@@ -435,7 +435,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: act(() => dispatch({ type: 'TOGGLE_COMPARE' })) },
       ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
       ...(state.phase === 'error' ? [{ label: 'Réessayer', run: act(() => { if (state.capture) start(state.capture); }) }] : []),
-      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming, run: act(() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); }) },
+      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming || Boolean(state.capture?.replay), run: act(() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); }) },
       { label: 'Réglages', run: act(() => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.'))) },
       { label: 'Fermer', run: cancelAndDismiss, close: true },
     ]}>
@@ -468,3 +468,4 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     <span className="sr-only" role="status">{streaming ? 'Traduction en cours' : state.phase === 'complete' ? 'Traduction terminée' : copied ? 'Traduction copiée' : ''}</span>
   </motion.div>;
 }
+

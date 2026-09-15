@@ -1,3 +1,16 @@
+# FlowTranslate 0.3.0 — Actions et raccourcis — 15 septembre 2026
+
+- Réglages redimensionnables (minimum 460 × 420), défilement dédié et prompts dans des volets dépliables.
+- Actions Traduire, Corriger et Professionnaliser modifiables, avec jusqu’à 24 actions personnelles. Chaque prompt contient une fois `{{text}}` et peut utiliser `{{targetLanguage}}`.
+- Jusqu’à 12 raccourcis : action, activation et destination (bulle ou remplacement de la sélection). Enregistrement au clavier, lettres AZERTY prises en compte, erreurs immédiates pour les touches refusées et les conflits détectés par Windows.
+- Remplacement automatique après réponse complète seulement : contrôle de la fenêtre, du champ, de la sélection et du document. Une annulation, une fermeture, une nouvelle capture ou une relance invalide l’ancienne livraison. Sans cible compatible, la réponse reste dans la bulle.
+- Migration de l’ancien raccourci sans perdre les profils et clés DPAPI. Une ancienne combinaison désormais réservée reste visible mais désactivée pour pouvoir la modifier.
+- Correction de la compilation des tests d’inférence Windows après le passage aux prompts personnalisables.
+
+Le remplacement vérifiable reste limité aux contrôles natifs Edit/RichEdit compatibles. Les champs web, Word, Outlook et Teams ne sont pas garantis : la bulle et Copier restent le repli prévu. Les profils Hy-MT existants sont spécialisés en traduction ; la correction et la reformulation demandent un modèle capable de suivre ces instructions, configurable dans Connexion.
+
+Validation : tests unitaires frontend, tests navigateur et tests Rust Windows via GitHub Actions. Aucun nouveau benchmark d’inférence réelle ni recette manuelle exhaustive des applications bureautiques n’est revendiqué pour cette version.
+
 # 0.2.1 — plus de saut avant la bande, release GitHub, tout moteur OpenAI
 
 La pilule d’attente ne se pose plus près de la sélection pour filer en bas une demi-seconde

@@ -1,4 +1,4 @@
-import type { Capture, Language, Mode, StreamEvent } from './types';
+import type { Capture, Language, Mode, StreamEvent, ResultDelivery } from './types';
 
 export type TranslationState = {
   capture: Capture | null;
@@ -11,11 +11,12 @@ export type TranslationState = {
   replacementValid: boolean;
   invalidated: boolean;
   comparing: boolean;
+  delivery: null | 'pending' | 'applied' | 'fallback';
 };
 
 export const initialTranslationState: TranslationState = {
   capture: null, requestId: null, targetLanguage: 'fr', mode: 'quality', result: '',
-  phase: 'idle', error: null, replacementValid: false, invalidated: false, comparing: false,
+  phase: 'idle', delivery: null, error: null, replacementValid: false, invalidated: false, comparing: false,
 };
 
 export type Action =
@@ -24,6 +25,7 @@ export type Action =
   | { type: 'STREAM'; event: StreamEvent }
   | { type: 'TARGET'; captureId: string; canReplace: boolean }
   | { type: 'INVALIDATE'; message: string }
+  | { type: 'DELIVERY'; event: ResultDelivery }
   | { type: 'CANCEL' }
   | { type: 'DISMISS' }
   | { type: 'TOGGLE_COMPARE' };
@@ -32,20 +34,23 @@ export function translationReducer(state: TranslationState, action: Action): Tra
   switch (action.type) {
     case 'CAPTURE':
       return { ...state, capture: action.capture, requestId: null, result: '', error: null, comparing: false,
-        replacementValid: false, invalidated: false, phase: 'idle' };
+        replacementValid: false, invalidated: false, phase: 'idle', delivery: action.capture.execution?.outputMode === 'replace' && !action.capture.replay ? 'pending' : null };
     case 'START':
       return { ...state, requestId: action.requestId, mode: action.mode, targetLanguage: action.targetLanguage,
-        result: '', error: null, phase: 'streaming', replacementValid: false };
+        result: '', error: null, phase: 'streaming', replacementValid: false, delivery: state.requestId ? null : state.delivery };
     case 'STREAM':
       if (action.event.requestId !== state.requestId) return state;
       if (action.event.kind === 'delta') return { ...state, result: state.result + (action.event.text ?? '') };
       if (action.event.kind === 'done') return { ...state, phase: 'complete', replacementValid: !state.invalidated && (state.capture?.canReplace ?? false) };
-      return { ...state, phase: 'error', error: action.event.message ?? 'La traduction n’a pas abouti.', replacementValid: false };
+      return { ...state, phase: 'error', delivery: null, error: action.event.message ?? 'La traduction n’a pas abouti.', replacementValid: false };
+    case 'DELIVERY':
+      if (action.event.requestId !== state.requestId) return state;
+      return { ...state, delivery: action.event.status, replacementValid: action.event.status === 'applied' ? false : state.replacementValid };
     case 'TARGET':
       // The native target arrives behind the shown window; a stale capture id is ignored.
       if (action.captureId !== state.capture?.id) return state;
       return { ...state, capture: { ...state.capture, canReplace: action.canReplace },
-        replacementValid: state.phase === 'complete' && !state.invalidated && action.canReplace };
+        replacementValid: state.phase === 'complete' && !state.invalidated && state.delivery !== 'applied' && action.canReplace };
     case 'INVALIDATE':
       return { ...state, replacementValid: false, invalidated: true, error: action.message };
     case 'DISMISS': return { ...initialTranslationState };
@@ -55,3 +60,4 @@ export function translationReducer(state: TranslationState, action: Action): Tra
     default: return state;
   }
 }
+

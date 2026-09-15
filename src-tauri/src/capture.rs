@@ -113,6 +113,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 height: 24.0,
             }),
             replay: None,
+            execution: None,
         };
         return Ok(StoredCapture {
             public,
@@ -158,6 +159,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             anchor,
                             screen: None,
                             replay: None,
+            execution: None,
                         };
                         let target = Some(TargetIdentity {
                             runtime_id,
@@ -259,6 +261,7 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
         anchor: None,
         screen: None,
         replay: None,
+            execution: None,
     };
     Ok(StoredCapture {
         public,
@@ -328,12 +331,22 @@ pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {
 }
 
 pub fn replace(target: &TargetIdentity, value: &str) -> Result<(), String> {
+    replace_checked(target, value, true)
+}
+
+pub fn replace_automatic(target: &TargetIdentity, value: &str) -> Result<(), String> {
+    if crate::host::foreground() != target.native_window { return Err("La fenêtre source a changé.".into()); }
+    replace_checked(target, value, false)
+}
+
+fn replace_checked(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<(), String> {
+    if value.contains('\0') { return Err("Le résultat contient un caractère nul; remplacement refusé.".into()); }
     let expected = target.win32.as_ref().filter(|_| target.editable && target.selection_start.is_some()).ok_or_else(||
         "Ce contrôle ne permet pas un remplacement natif vérifiable; utilisez Copier.".to_string())?;
     #[cfg(windows)]
     unsafe {
         use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetForegroundWindow,SetForegroundWindow}};
-        if GetForegroundWindow().0 as isize != target.native_window && !SetForegroundWindow(HWND(target.native_window as *mut _)).as_bool() {
+        if reactivate && GetForegroundWindow().0 as isize != target.native_window && !SetForegroundWindow(HWND(target.native_window as *mut _)).as_bool() {
             return Err("Impossible de réactiver la fenêtre source.".into());
         }
     }
@@ -492,3 +505,4 @@ mod tests {
         assert_eq!(String::from_utf16(&after).unwrap(), "Début\r\néquipe 🚀 fin");
     }
 }
+

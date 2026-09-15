@@ -1,3 +1,13 @@
+# Nouveautés 0.3.0
+
+Dans **Réglages → Actions et prompts**, modifiez Traduire, Corriger ou Professionnaliser, ou ajoutez votre action. Utilisez `{{text}}` exactement une fois ; `{{targetLanguage}}` est facultatif. Les prompts sont enregistrés automatiquement lorsqu’ils sont valides.
+
+Dans **Raccourcis**, ajoutez une combinaison, choisissez son action et son résultat : **Afficher dans la bulle** ou **Remplacer la sélection**. Cliquez sur Modifier puis pressez la combinaison (Ctrl ou Alt requis). Les conflits détectés par Windows et les combinaisons réservées sont indiqués immédiatement. La fenêtre de réglages s’agrandit depuis ses bords ou sa poignée inférieure droite.
+
+Le remplacement automatique ne s’applique qu’à une sélection native encore identique dans un champ compatible. Si la cible a changé ou n’est pas prise en charge, le résultat reste dans la bulle. Pour corriger ou reformuler, sélectionnez dans Connexion un modèle généraliste qui suit ces instructions ; les profils Hy-MT restent spécialisés en traduction.
+
+L’installateur se trouve dans les [releases](https://github.com/BerthalonLucas/Flow_Translate/releases/latest). Les anciens réglages et les clés sont conservés à la migration ; une ancienne combinaison désormais réservée doit être réenregistrée.
+
 # FlowTranslate
 
 Traduction instantanée de n’importe quelle sélection sous Windows 11 : sélectionner,

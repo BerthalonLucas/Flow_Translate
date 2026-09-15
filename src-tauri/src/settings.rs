@@ -1,3 +1,4 @@
+use crate::actions::{self, ActionDefinition, ShortcutBinding};
 use crate::{
     crypto,
     types::{Profile, Settings},
@@ -21,7 +22,14 @@ pub struct SettingsStore {
 struct PersistedSettings {
     target_language: crate::types::Language,
     mode: crate::types::Mode,
-    shortcut: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shortcut: Option<String>,
+    #[serde(default)]
+    actions: Option<Vec<ActionDefinition>>,
+    #[serde(default)]
+    shortcut_bindings: Option<Vec<ShortcutBinding>>,
+    #[serde(default)]
+    default_action_id: Option<String>,
     history_enabled: bool,
     autostart: bool,
     #[serde(default)]
@@ -76,10 +84,19 @@ impl SettingsStore {
                 },
             );
         }
+        let bindings = raw.shortcut_bindings.unwrap_or_else(|| {
+            let mut bindings = actions::default_bindings(raw.shortcut.unwrap_or_else(|| "Ctrl+Alt+T".into()));
+            // A previously accepted system chord must not prevent startup or discard
+            // the user's profiles. Keep it visible, disabled, for re-recording.
+            bindings[0].enabled = actions::parse_shortcut(&bindings[0].shortcut).is_ok();
+            bindings
+        });
         let settings = Settings {
             target_language: raw.target_language,
             mode: raw.mode,
-            shortcut: raw.shortcut,
+            actions: raw.actions.unwrap_or_else(actions::defaults),
+            shortcut_bindings: bindings,
+            default_action_id: raw.default_action_id.unwrap_or_else(|| "translate".into()),
             history_enabled: raw.history_enabled,
             autostart: raw.autostart,
             connection_expanded: raw.connection_expanded,
@@ -112,7 +129,10 @@ impl SettingsStore {
         let raw = PersistedSettings {
             target_language: settings.target_language,
             mode: settings.mode,
-            shortcut: settings.shortcut.clone(),
+            shortcut: None,
+            actions: Some(settings.actions.clone()),
+            shortcut_bindings: Some(settings.shortcut_bindings.clone()),
+            default_action_id: Some(settings.default_action_id.clone()),
             history_enabled: settings.history_enabled,
             autostart: settings.autostart,
             connection_expanded: settings.connection_expanded,
@@ -169,9 +189,7 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
 }
 
 pub fn validate(settings: &Settings) -> Result<(), String> {
-    if settings.shortcut.trim().is_empty() || settings.shortcut.len() > 80 {
-        return Err("Le raccourci global est invalide.".into());
-    }
+    actions::validate(settings)?;
     for required in ["fast", "quality"] {
         let profile = settings
             .profiles
@@ -223,6 +241,54 @@ pub fn validate_endpoint(value: &str) -> Result<Url, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_settings_keep_profiles_and_migrate_the_original_shortcut() {
+        for shortcut in ["Ctrl+Alt+Y", "Super+T"] {
+            let root = std::env::temp_dir().join(format!("flowtranslate-migration-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&root).unwrap();
+            let old = serde_json::json!({
+                "targetLanguage": "en", "mode": "fast", "shortcut": shortcut,
+                "historyEnabled": true, "autostart": false,
+                "profiles": {
+                    "fast": {"endpoint": "http://127.0.0.1:8001/v1", "model": "custom-fast", "apiKeyDpapi": ""},
+                    "quality": {"endpoint": "https://example.test/v1", "model": "custom-quality", "apiKeyDpapi": ""}
+                }
+            });
+            fs::write(root.join("settings.json"), serde_json::to_vec(&old).unwrap()).unwrap();
+            let store = SettingsStore::new(&root);
+            let migrated = store.load().unwrap();
+            assert_eq!(migrated.shortcut_bindings[0].shortcut, shortcut);
+            assert_eq!(migrated.shortcut_bindings[0].enabled, shortcut == "Ctrl+Alt+Y");
+            assert_eq!(migrated.default_action_id, "translate");
+            assert_eq!(migrated.actions.len(), 3);
+            assert_eq!(migrated.profiles["fast"].model, "custom-fast");
+            assert_eq!(migrated.target_language, crate::types::Language::En);
+            assert!(migrated.history_enabled);
+            store.save(&migrated).unwrap();
+            let restored = store.load().unwrap();
+            assert_eq!(restored.actions, migrated.actions);
+            assert_eq!(restored.shortcut_bindings, migrated.shortcut_bindings);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[cfg(windows)]
+    #[test]
+    fn migrated_credentials_remain_dpapi_encrypted() {
+        let root = std::env::temp_dir().join(format!("flowtranslate-migration-key-{}", uuid::Uuid::new_v4()));
+        let store = SettingsStore::new(&root);
+        let mut value = Settings::default();
+        value.profiles.get_mut("fast").unwrap().api_key = "synthetic-test-key".into();
+        store.save(&value).unwrap();
+        let mut raw: serde_json::Value = serde_json::from_slice(&fs::read(&store.path).unwrap()).unwrap();
+        for key in ["actions", "shortcutBindings", "defaultActionId"] { raw.as_object_mut().unwrap().remove(key); }
+        raw["shortcut"] = serde_json::json!("Ctrl+Alt+Y");
+        fs::write(&store.path, serde_json::to_vec(&raw).unwrap()).unwrap();
+        let migrated = store.load().unwrap();
+        assert_eq!(migrated.profiles["fast"].api_key, "synthetic-test-key");
+        store.save(&migrated).unwrap();
+        assert!(!fs::read_to_string(&store.path).unwrap().contains("synthetic-test-key"));
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn endpoint_guards() {
         assert!(validate_endpoint("http://127.0.0.1:8001").is_ok());

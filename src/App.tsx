@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import * as ScrollArea from '@radix-ui/react-scroll-area';
+import { ActionSettings } from './ActionSettings';
+import { promptError } from './actionDefaults';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Icon, Segmented, SettingSwitch, useFade } from './ui';
 import { bridge } from './bridge';
@@ -29,70 +32,38 @@ export function Capsule() {
 type SaveStatus = 'saved' | 'just-saved' | 'saving' | 'error';
 type Connection = { state: 'ok' | 'unknown' | 'error' | 'checking'; latencyMs?: number; message?: string };
 const modeLabel = (mode: Mode) => mode === 'quality' ? 'Qualité' : 'Rapide';
-const modifierKeys = new Set(['Control', 'Alt', 'Shift', 'Meta', 'AltGraph', 'CapsLock', 'NumLock']);
-
-// Turns a keydown into the "Ctrl+Alt+T" form parsed by the Rust global shortcut.
-function shortcutFromKey(event: ReactKeyboardEvent): string | null {
-  if (modifierKeys.has(event.key)) return null;
-  const modifiers = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super'].filter(Boolean) as string[];
-  if (!modifiers.length) return null;
-  const { code, key } = event;
-  const main = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5) : /^F\d{1,2}$/.test(code) ? code
-    : code === 'Space' ? 'Space' : key.length === 1 ? key.toUpperCase() : ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown'].includes(key) ? key
-    : key.startsWith('Arrow') ? key.slice(5) : null;
-  return main ? [...modifiers, main].join('+') : null;
-}
-
 export function SettingsWindow() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [saveError, setSaveError] = useState('');
-  const [capturing, setCapturing] = useState(false);
-  const [shortcutNotice, setShortcutNotice] = useState('');
   const [connections, setConnections] = useState<Record<Mode, Connection>>({ fast: { state: 'unknown' }, quality: { state: 'unknown' } });
-  const root = useRef<HTMLElement>(null);
-  const keys = useRef<HTMLSpanElement>(null);
   const latest = useRef<Settings | null>(null);
   const saveTimer = useRef(0);
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const lastError = useRef('');
   const settledTimer = useRef(0);
   const loadSettings = () => { setLoadError(false); void bridge.getSettings().then(next => { latest.current = next; setSettings(next); }).catch(() => setLoadError(true)); };
   useEffect(() => { loadSettings(); void bridge.getHistory().then(setHistory).catch(() => undefined); }, []);
   useEffect(() => () => { window.clearTimeout(saveTimer.current); window.clearTimeout(settledTimer.current); }, []);
-  useEffect(() => { if (capturing) keys.current?.focus(); }, [capturing]);
-  // The window height follows the content; Rust applies it on the native window.
-  useEffect(() => {
-    const element = root.current;
-    if (!element || !bridge.native) return;
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => void bridge.resizeSettings(Math.ceil(element.getBoundingClientRect().height)).catch(() => undefined));
-    });
-    observer.observe(element);
-    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [settings === null]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (capturing) { setCapturing(false); return; }
-      void bridge.closeSettings();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [capturing]);
-
   const commit = async (next: Settings): Promise<boolean> => {
     setSaveStatus('saving');
     try {
-      await bridge.saveSettings(next);
+      for (const action of next.actions) {
+        const error = promptError(action.promptTemplate);
+        if (error) throw error;
+      }
+      const pending = saveQueue.current.then(() => bridge.saveSettings(next));
+      saveQueue.current = pending.catch(() => undefined);
+      await pending;
       if (latest.current !== next) return true;
       setSaveStatus('just-saved');
       window.clearTimeout(settledTimer.current);
       settledTimer.current = window.setTimeout(() => setSaveStatus(status => status === 'just-saved' ? 'saved' : status), 3000);
       return true;
     } catch (error) {
+      lastError.current = typeof error === 'string' ? error : 'Les réglages n’ont pas été enregistrés.';
       if (latest.current === next) { setSaveError(typeof error === 'string' ? error : 'Les réglages n’ont pas été enregistrés.'); setSaveStatus('error'); }
       return false;
     }
@@ -107,29 +78,26 @@ export function SettingsWindow() {
   };
   const retry = () => { if (latest.current) void commit(latest.current); };
 
-  if (!settings) return <main className="settings-window settings-loading" ref={root}><h1>Réglages</h1><p role={loadError ? 'alert' : 'status'}>{loadError ? 'Les réglages sont indisponibles. Réessayez ou redémarrez FlowTranslate.' : 'Chargement des réglages…'}</p>{loadError && <button className="primary-action" onClick={loadSettings}>Réessayer</button>} <button className="quiet-action" onClick={() => void bridge.closeSettings()}>Fermer</button></main>;
+  if (!settings) return <main className="settings-window settings-loading"><h1>Réglages</h1><p role={loadError ? 'alert' : 'status'}>{loadError ? 'Les réglages sont indisponibles. Réessayez ou redémarrez FlowTranslate.' : 'Chargement des réglages…'}</p>{loadError && <button className="primary-action" onClick={loadSettings}>Réessayer</button>} <button className="quiet-action" onClick={() => void bridge.closeSettings()}>Fermer</button></main>;
 
   const update = <K extends keyof Settings>(key: K, value: Settings[K], immediate = true) => persist({ ...settings, [key]: value }, immediate);
   const profile = (mode: Mode, key: 'endpoint' | 'model' | 'apiKey', value: string) => {
     setConnections(previous => ({ ...previous, [mode]: { state: 'unknown' } }));
     persist({ ...settings, profiles: { ...settings.profiles, [mode]: { ...settings.profiles[mode], [key]: value } } }, false);
   };
-  const captureShortcut = async (event: ReactKeyboardEvent<HTMLSpanElement>) => {
-    if (!capturing) return;
-    event.preventDefault();
-    if (event.key === 'Escape') { setCapturing(false); return; }
-    const shortcut = shortcutFromKey(event);
-    if (!shortcut) return;
-    setCapturing(false);
-    setShortcutNotice('');
-    const previous = settings;
-    const next = { ...settings, shortcut };
+  const recordShortcut = async (id: string, shortcut: string): Promise<string | null> => {
+    window.clearTimeout(saveTimer.current);
+    const previous = latest.current!;
+    const next = { ...previous, shortcutBindings: previous.shortcutBindings.map(b => b.id === id ? { ...b, shortcut, enabled: true } : b) };
     latest.current = next; setSettings(next);
-    if (!await commit(next)) {
-      // Windows refused the global registration: keep the previous combination.
-      latest.current = previous; setSettings(previous); setSaveStatus('saved');
-      setShortcutNotice('Déjà utilisé par une autre application');
-    }
+    if (await commit(next)) return null;
+    if (latest.current === next) { latest.current = previous; setSettings(previous); setSaveStatus('saved'); }
+    return lastError.current;
+  };
+  const closeSettings = async () => {
+    window.clearTimeout(saveTimer.current);
+    if (latest.current && !await commit(latest.current)) return;
+    await bridge.closeSettings();
   };
   const check = async (mode: Mode) => {
     setConnections(previous => ({ ...previous, [mode]: { state: 'checking' } }));
@@ -154,32 +122,25 @@ export function SettingsWindow() {
     if (connection.state === 'error') return 'Échec de connexion';
     return 'Non vérifié';
   };
-  return <main className="settings-window" ref={root}>
+  return <main className="settings-window" onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); void closeSettings(); } }}>
     <header className="settings-titlebar" onPointerDown={event => { if (bridge.native && event.button === 0 && !(event.target as HTMLElement).closest('button')) void bridge.dragSettings().catch(() => undefined); }}>
       <span className="settings-mark" aria-hidden="true"><svg viewBox="0 0 512 512" width="18" height="18"><rect width="512" height="512" rx="160" fill="#f2f5fa" /><path d="M140 182h208M140 254h144M140 326h84" fill="none" stroke="#1d1f24" strokeWidth="36" strokeLinecap="round" /><path d="m298 298 42 42 62-78" fill="none" stroke="#3b6fc4" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
       <span className="settings-brand">FlowTranslate</span><h1>Réglages</h1>
-      <button className="close-settings" onClick={() => void bridge.closeSettings()} aria-label="Fermer"><Icon name="close" /></button>
+      <button className="close-settings" onClick={() => void closeSettings()} aria-label="Fermer"><Icon name="close" /></button>
     </header>
-    <div className="settings-body">
+    <ScrollArea.Root className="settings-scroll" type="always"><ScrollArea.Viewport className="settings-scroll-viewport"><div className="settings-body">
       <section>
         <h2>Traduction</h2>
         <div className="setting-row"><div className="setting-copy"><strong>Langue cible</strong><small>La source est détectée automatiquement.</small></div>
           <Segmented<Language> label="Langue cible" value={settings.targetLanguage} options={[{ value: 'fr', label: 'Français' }, { value: 'en', label: 'English' }]} onChange={value => update('targetLanguage', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>Profil par défaut</strong><small>Qualité : plus lent, meilleures tournures. Changeable depuis le menu de la bulle.</small></div>
           <Segmented<Mode> label="Profil par défaut" value={settings.mode} options={[{ value: 'quality', label: 'Qualité' }, { value: 'fast', label: 'Rapide' }]} onChange={value => update('mode', value)} /></div>
-        <div className="setting-row"><div className="setting-copy"><strong>Raccourci</strong><small>Sélectionnez un texte, puis pressez-le : la traduction démarre aussitôt. Une nouvelle pression traduit la sélection courante.</small></div>
-          <div className="shortcut-control">
-            <span ref={keys} className="keycaps" data-capturing={capturing || undefined} tabIndex={capturing ? 0 : -1} role="textbox" aria-readonly="true" aria-label="Raccourci" onKeyDown={captureShortcut} onBlur={event => { if (!(event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest('.shortcut-control'))) setCapturing(false); }}>
-              {capturing ? <em>Pressez la combinaison…</em> : settings.shortcut.split('+').map((key, index) => <kbd key={`${key}-${index}`}>{key}</kbd>)}
-            </span>
-            <button className="text-button" onClick={() => { setShortcutNotice(''); setCapturing(value => !value); }}>{capturing ? 'Annuler' : 'Modifier'}</button>
-          </div></div>
-        {shortcutNotice && <p className="row-warning" role="alert">{shortcutNotice}</p>}
         <div className="setting-row"><div className="setting-copy"><strong>Taille du texte</strong><small>Verre court 16, 18 ou 20 px ; lecteur 22, 24 ou 26 px. Le lecteur occupe la moitié de l’écran.</small></div>
           <Segmented<TextSize> label="Taille du texte" value={settings.textSize} options={[{ value: 'normal', label: 'Normale' }, { value: 'large', label: 'Grande' }, { value: 'xlarge', label: 'Très grande' }]} onChange={value => update('textSize', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>Fermeture automatique</strong><small>Le temps de lecture estimé, puis un fondu. Survoler, faire défiler ou épingler la retient.</small></div>
           <Segmented<AutoClose> label="Fermeture automatique" value={settings.autoClose} options={[{ value: 'fast', label: 'Rapide' }, { value: 'normal', label: 'Normale' }, { value: 'slow', label: 'Lente' }, { value: 'never', label: 'Jamais' }]} onChange={value => update('autoClose', value)} /></div>
       </section>
+      <ActionSettings settings={settings} persist={persist} record={recordShortcut} />
       <section>
         <h2>Sur cet appareil</h2>
         <div className="setting-row"><div className="setting-copy"><strong>Conserver l’historique chiffré</strong><small>7 jours, 100 entrées, protégé par Windows (DPAPI). Rien ne quitte l’appareil.</small></div>
@@ -201,13 +162,15 @@ export function SettingsWindow() {
         </div>)}
         {!bridge.native && settings.connectionExpanded && <small className="preview-note">Aperçu navigateur · connexion simulée</small>}
       </section>
-    </div>
+    </div></ScrollArea.Viewport><ScrollArea.Scrollbar className="settings-scrollbar" orientation="vertical"><ScrollArea.Thumb className="settings-scroll-thumb" /></ScrollArea.Scrollbar></ScrollArea.Root>
     <footer>
       <span className="save-status" data-status={saveStatus} aria-live="polite">
         {saveStatus === 'error' ? <button className="text-button retry" onClick={retry} title={saveError}>Non enregistré — réessayer</button> : <><Icon name="check" size={13} />{saveStatus === 'just-saved' ? 'Enregistré à l’instant' : saveStatus === 'saving' ? 'Enregistrement…' : 'Enregistré'}</>}
       </span>
       <span className="settings-meta">{__APP_VERSION__} · <button className="text-button" onClick={() => void bridge.quit()}>Quitter FlowTranslate</button></span>
     </footer>
+    {saveStatus === 'error' && <p className="save-error-detail" role="alert">{saveError}</p>}
+    {bridge.native && <button className="settings-resize-grip" aria-label="Redimensionner les réglages" title="Glisser pour redimensionner" onPointerDown={event => { if (event.button === 0) { event.preventDefault(); void bridge.resizeSettingsCorner().catch(() => { setSaveError('Redimensionnement indisponible. Utilisez les bords de la fenêtre.'); setSaveStatus('error'); }); } }}>◢</button>}
   </main>;
 }
 
@@ -261,3 +224,4 @@ export function App() {
   if (windowName === 'overlay' && (bridge.native || standaloneDemo)) return <OverlayWindow standaloneDemo={standaloneDemo} />;
   return <DemoWindow />;
 }
+

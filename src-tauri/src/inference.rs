@@ -1,6 +1,6 @@
 use crate::{
     settings::validate_endpoint,
-    types::{Language, Profile, StreamKind},
+    types::{Profile, StreamKind},
 };
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -107,8 +107,7 @@ fn rejects_extended_sampling(status: u16, detail: &str) -> bool {
 
 pub async fn stream<F>(
     profile: Profile,
-    text: String,
-    lang: Language,
+    prompt: String,
     cancel: CancellationToken,
     mut emit: F,
 ) -> Result<String, String>
@@ -116,11 +115,6 @@ where
     F: FnMut(Chunk) -> Result<(), String>,
 {
     let endpoint = api_url(&profile.endpoint, "chat/completions")?;
-    let target = match lang {
-        Language::Fr => "French",
-        Language::En => "English",
-    };
-    let prompt = format!("Translate the following text into {target}. Note that you should only output the translated result without any additional explanation:\n{text}");
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -254,6 +248,11 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{actions, types::Language};
+
+    fn translation_prompt(text: &str) -> String {
+        actions::render(&actions::defaults()[0].prompt_template, text, Language::Fr).unwrap()
+    }
 
     #[test]
     fn the_extended_sampling_fields_are_dropped_on_a_strict_endpoint() {
@@ -283,7 +282,7 @@ mod tests {
         };
         check(&profile).await.expect("live model discovery");
         let mut deltas = String::new();
-        let result = stream(profile.clone(), "Please confirm the budget of 1250 EUR for project Orion.".into(), Language::Fr, CancellationToken::new(), |chunk| {
+        let result = stream(profile.clone(), translation_prompt("Please confirm the budget of 1250 EUR for project Orion."), CancellationToken::new(), |chunk| {
             if let Some(text) = chunk.text { deltas.push_str(&text); }
             Ok(())
         }).await.expect("live native streaming translation");
@@ -291,7 +290,7 @@ mod tests {
         assert!(result.contains("Orion") && result.contains("EUR"));
         let cancel = CancellationToken::new();
         let trigger = cancel.clone();
-        let cancelled = stream(profile, "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), Language::Fr, cancel, |chunk| {
+        let cancelled = stream(profile, translation_prompt("Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning."), cancel, |chunk| {
             if chunk.text.is_some() { trigger.cancel(); }
             Ok(())
         }).await;
