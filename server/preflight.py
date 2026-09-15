@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent
 DEFAULTS = {
     "fast": {"gpu": "1", "port": 8001, "minimumFreeMiB": 7400},
     "quality": {"gpu": "0", "port": 8002, "minimumFreeMiB": 13200},
+    "general": {"gpu": "0", "port": 8003, "minimumFreeMiB": 12500},
 }
 
 
@@ -101,7 +102,7 @@ def inspect(profile: str, gpu: str | None = None, env_file: Path | None = ROOT /
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=["fast", "quality", "both"], default="both")
+    parser.add_argument("--profile", choices=["fast", "quality", "general", "both"], default="both")
     parser.add_argument("--gpu", help="index or UUID, for a single profile")
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env",
                         help="Compose env file to evaluate (default: server/.env when present)")

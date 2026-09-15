@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("fast", "quality")]
+    [ValidateSet("fast", "quality", "general")]
     [string]$Profile,
     [ValidateRange(30, 3600)]
     [int]$HealthDeadlineSeconds = 900,

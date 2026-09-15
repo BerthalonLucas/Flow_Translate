@@ -111,6 +111,54 @@ services:
       - --uvicorn-log-level
       - warning
 
+  general:
+    <<: *engine
+    profiles: [general]
+    environment:
+      <<: *engine-environment
+      CUDA_VISIBLE_DEVICES: "${GENERAL_GPU:-0}"
+    ports: ["127.0.0.1:${GENERAL_PORT:-8003}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - google/gemma-4-12B-it-qat-w4a16-ct
+      - --revision
+      - 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
+      - --served-model-name
+      - flowtranslate-general
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - auto
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "4"
+      - --limit-mm-per-prompt
+      - '{"image": 0, "audio": 0}'
+      - --kv-cache-dtype
+      - fp8
+      - --gpu-memory-utilization
+      - "${GENERAL_GPU_MEMORY:-0.85}"
+      - --speculative-config
+      - '{"model": "google/gemma-4-12B-it-qat-q4_0-unquantized-assistant", "revision": "18934064dd4c5c6cc3621f6381e7d377fc8cb7bd", "num_speculative_tokens": 4}'
+      - --no-enable-flashinfer-autotune
+      - --no-enable-log-requests
+      - --max-log-len
+      - "0"
+      - --uvicorn-log-level
+      - warning
+
 volumes:
   model-cache:
   compile-cache:
