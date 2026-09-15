@@ -1,6 +1,7 @@
 # FlowTranslate 0.4.0 — Remplacement dans les éditeurs accessibles — 15 septembre 2026
 
 - Remplacement étendu aux champs web et éditeurs riches exposés par UI Automation : collage natif Ctrl+V, Unicode, texte multiligne, événements de l’éditeur et annulation Ctrl+Z. Le remplacement Win32 existant est conservé.
+- Vérification de la sélection UIA contre la copie réelle de l’éditeur : correction des plages riches qui incluent à tort des mots voisins.
 - Prise en charge des sélections obtenues par copie lorsque le champ modifiable expose une valeur et une position non ambiguë ; la sélection est recopiée et revérifiée avant livraison.
 - Vérification du champ, de la sélection et du document avant écriture, puis du document résultant. Les changements de cible et les champs protégés refusent le remplacement. Surveillance corrigée pour les sélections sans rectangle.
 - Conservation du presse-papiers multiformat (texte, HTML, RTF, images DIB et fichiers) et des copies plus récentes. Un format non conservable refuse l’opération avant modification.

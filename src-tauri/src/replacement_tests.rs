@@ -23,8 +23,8 @@ fn replacement_desktop_driver() {
                 match capture {
                     Ok(capture) => {
                         target = capture.target.as_ref().and_then(crate::capture::complete_target);
-                        serde_json::json!({"ok": true, "replaceable": target.is_some(), "origin": capture.public.origin,
-                            "route": target.as_ref().map(|t| if t.win32.is_some() {"win32"} else if t.copied_selection {"copy-value"} else {"uia-paste"})})
+                        serde_json::json!({"ok": true, "replaceable": target.is_some(), "origin": capture.public.origin, "selected_length": capture.public.text.chars().count(), "document_length": target.as_ref().and_then(|t| t.document.as_ref().map(|d| d.chars().count())),
+                            "route": target.as_ref().map(|t| if t.win32.is_some() {"win32"} else if t.copied_selection && t.document_from_value {"copy-value"} else if t.copied_selection {"copy-text"} else {"uia-paste"})})
                     }
                     Err(error) => serde_json::json!({"ok": false, "error": error}),
                 }

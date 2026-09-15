@@ -60,6 +60,7 @@ try {
   const capture = async (copy = false) => {
     const result = await command({ op: copy ? 'capture-copy' : 'capture' });
     assert.equal(result.replaceable, true, `selection available: ${JSON.stringify(result)}`);
+    assert.equal(result.selected_length, [...selected].length, 'native capture is exactly the visual selection');
     return result;
   };
   for (const [name, locator, options] of [

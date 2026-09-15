@@ -147,7 +147,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             .and_then(|p| p.is_readonly().ok())
                             .is_some_and(|v| !v);
                         let editable = native_window != 0 && (value_editable || range_editable);
-                        let public = Capture {
+                        let mut public = Capture {
                             id: Uuid::new_v4().to_string(),
                             text: text.clone(),
                             source: CaptureSource::Selection,
@@ -158,7 +158,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             replay: None,
             execution: None,
                         };
-                        let target = Some(TargetIdentity {
+                        let mut identity = TargetIdentity {
                             runtime_id,
                             native_window,
                             selected_text: text,
@@ -169,7 +169,32 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             win32: None,
                             document: None,
                             copied_selection: false,
-                        });
+                            document_from_value: false,
+                        };
+                        if editable && win32_target(source_window, &identity.selected_text).is_none() {
+                            validate_target(&identity)?;
+                            let actual = synthetic_copy(source_window).map_err(|_| "L’éditeur ne permet pas de vérifier sa sélection par copie. Réessayez après avoir copié du texte.".to_string())?;
+                            if actual.encode_utf16().count() > 6000 { return Err("Sélection trop longue (6 000 unités de texte).".into()); }
+                            if actual != identity.selected_text {
+                                // Some rich UIA providers overrun inline-node boundaries.
+                                // The editor's copy is authoritative; never translate nearby words.
+                                let value_document = document_text(&element, true).ok().filter(|doc| unique_offset(doc, &actual).is_some());
+                                let from_value = value_document.is_some();
+                                let document = value_document.or_else(|| document_text(&element, false).ok()).ok_or("Le document ne peut pas être vérifié.")?;
+                                let start = unique_offset(&document, &actual).ok_or("La sélection copiée n’a pas une position unique dans le document.")?;
+                                public.text = actual.clone();
+                                public.origin = CaptureOrigin::Copy;
+                                public.anchor = None;
+                                identity.selected_text = actual;
+                                identity.selection_len = identity.selected_text.chars().count();
+                                identity.selection_start = Some(start);
+                                identity.anchor = None;
+                                identity.document = Some(document);
+                                identity.copied_selection = true;
+                                identity.document_from_value = from_value;
+                            }
+                        }
+                        let target = Some(identity);
                         ensure_source_unchanged(source_window)?;
                         return Ok(StoredCapture { public, target });
                     }
@@ -194,7 +219,7 @@ pub fn complete_target(target: &TargetIdentity) -> Option<TargetIdentity> {
         resolved.selection_start = start;
     }
     let start = resolved.selection_start?;
-    let document = document_text(&element, target.copied_selection).ok()?;
+    let document = document_text(&element, target.document_from_value).ok()?;
     // Providers must expose the same document and selection coordinate system.
     let actual = document.chars().skip(start).take(target.selection_len).collect::<String>();
     if actual != target.selected_text { return None; }
@@ -269,7 +294,7 @@ pub(crate) fn clipboard_capture(source_window: isize) -> Result<StoredCapture, S
             let start = unique_offset(&document, &text)?;
             Some(TargetIdentity { runtime_id, native_window: source_window, selected_text: text.clone(), anchor: None,
                 selection_start: Some(start), selection_len: text.chars().count(), editable: true,
-                win32: None, document: Some(document), copied_selection: true })
+                win32: None, document: Some(document), copied_selection: true, document_from_value: true })
         })
     } else { None };
     let target = target.filter(|target| validate_target(target).is_ok());
@@ -326,12 +351,14 @@ pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {
         return Err("Le champ est protégé ou désactivé.".into());
     }
     if let Some(expected) = &target.document {
-        if document_text(&element, target.copied_selection)? != *expected {
+        if document_text(&element, target.document_from_value)? != *expected {
             return Err("Le document a changé; remplacement refusé.".into());
         }
     }
     if target.copied_selection {
-        if element.get_pattern::<UIValuePattern>().and_then(|p| p.is_readonly()).unwrap_or(true) {
+        let value_editable = element.get_pattern::<UIValuePattern>().and_then(|p| p.is_readonly()).is_ok_and(|readonly| !readonly);
+        let range_editable = !target.document_from_value && selection(&element, false).is_ok_and(|(_, _, _, _, editable)| editable);
+        if !value_editable && !range_editable {
             return Err("Le champ n’est plus modifiable.".into());
         }
         // Non-invasive watcher. Delivery additionally copies and compares the live selection.
@@ -425,7 +452,7 @@ fn replace_paste(target: &TargetIdentity, element: &UIElement, value: &str) -> R
     loop {
         // Rich editors may move accessibility focus to a new child after editing.
         // Read the original validated provider, not whichever child is focused now.
-        if document_text(element, target.copied_selection).is_ok_and(|after| canonical(&after) == canonical(&wanted)) {
+        if document_text(element, target.document_from_value).is_ok_and(|after| canonical(&after) == canonical(&wanted)) {
             let _ = previous.restore(sequence);
             return Ok(());
         }
@@ -434,7 +461,7 @@ fn replace_paste(target: &TargetIdentity, element: &UIElement, value: &str) -> R
     }
     #[cfg(test)]
     {
-        let after = document_text(element, target.copied_selection);
+        let after = document_text(element, target.document_from_value);
         let focused = ui_automation().ok().and_then(|a| a.get_focused_element().ok());
         eprintln!("paste proof: original_provider_readable={}, original_length={:?}, expected_length={}, focused_identity_same={}",
             after.is_ok(), after.as_ref().ok().map(|s| s.chars().count()), wanted.chars().count(),
