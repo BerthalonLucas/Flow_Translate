@@ -48,6 +48,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Native replacement in Edge (real SendInput and UIA)
+        run: node scripts/test-replacement-windows.mjs
       - run: npm run tauri -- build --bundles nsis
       - uses: actions/upload-artifact@v4
         with:

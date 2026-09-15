@@ -296,6 +296,10 @@ pub struct TargetIdentity {
     pub selection_len: usize,
     pub editable: bool,
     pub win32: Option<Win32Target>,
+    /// Exact UIA document before a paste; never serialized or logged.
+    pub document: Option<String>,
+    /// TextPattern unavailable: unique selection proved by synthetic copy + ValuePattern.
+    pub copied_selection: bool,
 }
 
 #[derive(Clone, Debug)]

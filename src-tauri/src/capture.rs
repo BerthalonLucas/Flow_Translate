@@ -45,12 +45,9 @@ fn selection(
     let pattern = element
         .get_pattern::<UITextPattern>()
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?;
-    let range = pattern
-        .get_selection()
-        .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "Aucune sélection active.".to_string())?;
+    let mut ranges = pattern.get_selection().map_err(|_| "La sélection est inaccessible.".to_string())?;
+    if ranges.len() != 1 { return Err("Sélection multiple : sélectionnez une seule plage de texte.".into()); }
+    let range = ranges.remove(0);
     let text = range
         .get_text(6001)
         .map_err(|_| "Impossible de lire la sélection.".to_string())?;
@@ -170,6 +167,8 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                             selection_len,
                             editable,
                             win32: None,
+                            document: None,
+                            copied_selection: false,
                         });
                         ensure_source_unchanged(source_window)?;
                         return Ok(StoredCapture { public, target });
@@ -186,21 +185,41 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
 /// Second step of a selection capture, run behind the shown window: the document
 /// offset of the selection and, for an editable control, the Win32 target that makes
 /// a verifiable replacement possible. None when the focus or the selection moved.
-pub fn complete_target(target: &TargetIdentity) -> Option<(usize, Option<Win32Target>)> {
-    let automation = ui_automation().ok()?;
-    let element = automation.get_focused_element().ok()?;
-    if crate::host::foreground() != target.native_window
-        || element.get_runtime_id().ok()? != target.runtime_id
-    {
-        return None;
+pub fn complete_target(target: &TargetIdentity) -> Option<TargetIdentity> {
+    let element = validate_target(target).ok()?;
+    if !target.editable { return None; }
+    let mut resolved = target.clone();
+    if !target.copied_selection {
+        let (_, _, start, _, _) = selection(&element, true).ok()?;
+        resolved.selection_start = start;
     }
-    let (text, _, selection_start, selection_len, _) = selection(&element, true).ok()?;
-    if text != target.selected_text || selection_len != target.selection_len {
-        return None;
-    }
-    let selection_start = selection_start?;
-    let win32 = if target.editable { win32_target(target.native_window, &text) } else { None };
-    Some((selection_start, win32))
+    let start = resolved.selection_start?;
+    let document = document_text(&element, target.copied_selection).ok()?;
+    // Providers must expose the same document and selection coordinate system.
+    let actual = document.chars().skip(start).take(target.selection_len).collect::<String>();
+    if actual != target.selected_text { return None; }
+    resolved.document = Some(document);
+    resolved.win32 = win32_target(target.native_window, &target.selected_text);
+    Some(resolved)
+}
+
+fn document_text(element: &UIElement, value_only: bool) -> Result<String, String> {
+    let text = if value_only {
+        element.get_pattern::<UIValuePattern>().and_then(|p| p.get_value())
+    } else {
+        element.get_pattern::<UITextPattern>().and_then(|p| p.get_document_range()).and_then(|r| r.get_text(1_000_001))
+    }.map_err(|_| "Le document source n’est plus accessible.".to_string())?;
+    if text.encode_utf16().count() > 1_000_000 { return Err("Document trop volumineux pour vérifier le remplacement.".into()); }
+    Ok(text)
+}
+
+fn unique_offset(document: &str, selected: &str) -> Option<usize> {
+    if selected.is_empty() { return None; }
+    // Check overlapping occurrences as well ("aa" in "aaa" is ambiguous).
+    let mut matches = document.char_indices().filter(|(i, _)| document[*i..].starts_with(selected));
+    let (offset, _) = matches.next()?;
+    if matches.next().is_some() { return None; }
+    Some(document[..offset].chars().count())
 }
 
 /// A copy made at `changed_at` is fresh at `now` when it is at most `limit` ms old.
@@ -212,25 +231,17 @@ fn read_clipboard() -> Option<String> {
     Clipboard::new().and_then(|mut c| c.get_text()).ok()
 }
 
-/// Puts the user's text back without feeding Win+V or clipboard monitors.
-fn restore_clipboard(text: &str) {
-    #[cfg(windows)]
-    {
-        use arboard::SetExtWindows;
-        let _ = Clipboard::new()
-            .and_then(|mut c| c.set().exclude_from_monitoring().exclude_from_history().text(text));
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = Clipboard::new().and_then(|mut c| c.set_text(text));
-    }
-}
-
 /// Without a UIA selection: copies for the user (synthetic Ctrl+Insert), else accepts a
 /// copy he made himself in the last three seconds, else nothing to translate.
 fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
     let pressed_at = crate::host::now_ms();
     let changed_at = crate::host::clipboard_changed_at();
+    let candidate = ui_automation().ok().and_then(|a| a.get_focused_element().ok()).and_then(|element| {
+        if element.is_password().ok()? || !element.is_enabled().ok()? { return None; }
+        let pattern = element.get_pattern::<UIValuePattern>().ok()?;
+        if pattern.is_readonly().ok()? { return None; }
+        Some((element.get_runtime_id().ok()?, document_text(&element, true).ok()?))
+    });
     let copied = synthetic_copy(source_window);
     let (text, origin) = match &copied {
         Ok(text) => (Some(text.clone()), CaptureOrigin::Copy),
@@ -252,6 +263,15 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
         return Err("Sélection trop longue (6 000 caractères).".into());
     }
     ensure_source_unchanged(source_window)?;
+    let target = if copied.is_ok() {
+        candidate.and_then(|(runtime_id, document)| {
+            let start = unique_offset(&document, &text)?;
+            Some(TargetIdentity { runtime_id, native_window: source_window, selected_text: text.clone(), anchor: None,
+                selection_start: Some(start), selection_len: text.chars().count(), editable: true,
+                win32: None, document: Some(document), copied_selection: true })
+        })
+    } else { None };
+    let target = target.filter(|target| validate_target(target).is_ok());
     let public = Capture {
         id: Uuid::new_v4().to_string(),
         text,
@@ -263,38 +283,22 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
         replay: None,
             execution: None,
     };
-    Ok(StoredCapture {
-        public,
-        target: None,
-    })
+    Ok(StoredCapture { public, target })
 }
 
-/// Sends the copy chord to the source window and reads what it copied, then restores
-/// the previous text unless something else wrote the clipboard in between (SPEC:
-/// restoration never overwrites newer content). A previous non-text content (image,
-/// files) cannot be put back and stays replaced by the copy. The error names the step
-/// that gave up, for the capture matrix.
+/// Copy only after a complete clipboard snapshot; never discard image/HTML/RTF/file data.
 fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
-    if source_window == 0 || crate::host::foreground() != source_window {
-        return Err("source window lost");
-    }
-    let previous = read_clipboard();
+    ensure_source_unchanged(source_window).map_err(|_| "source window lost")?;
+    if !crate::host::wait_modifiers_released(CHORD_RELEASE) { return Err("modifiers still down"); }
+    let previous = crate::clipboard_guard::Snapshot::capture().map_err(|_| "clipboard cannot be preserved")?;
     crate::host::suppress_clipboard_tracking(OWN_TRAFFIC);
-    let before = crate::host::clipboard_sequence();
-    if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
-        return Err("modifiers still down");
-    }
-    if crate::host::foreground() != source_window {
-        return Err("source window lost after the chord");
-    }
+    ensure_source_unchanged(source_window).map_err(|_| "source window lost after the chord")?;
+    if crate::host::clipboard_sequence() != previous.sequence { return Err("clipboard changed"); }
     crate::host::send_copy_chord().map_err(|_| "SendInput refused")?;
-    let after = crate::host::wait_clipboard_change(before, COPY_SETTLE).ok_or("no clipboard change")?;
+    let after = crate::host::wait_clipboard_change(previous.sequence, COPY_SETTLE).ok_or("no clipboard change")?;
     let copied = read_clipboard().filter(|text| !text.trim().is_empty());
-    if let Some(previous) = previous {
-        if crate::host::clipboard_sequence() == after {
-            restore_clipboard(&previous);
-        }
-    }
+    let _ = previous.restore(after);
+    ensure_source_unchanged(source_window).map_err(|_| "source window lost after copy")?;
     copied.ok_or("copied nothing readable")
 }
 
@@ -316,7 +320,25 @@ pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {
     {
         return Err("La cible a changé; remplacement refusé.".into());
     }
-    let (text, anchor, selection_start, selection_len, _) = selection(&element, true)?;
+    if element.is_password().unwrap_or(true) || !element.is_enabled().unwrap_or(false) {
+        return Err("Le champ est protégé ou désactivé.".into());
+    }
+    if let Some(expected) = &target.document {
+        if document_text(&element, target.copied_selection)? != *expected {
+            return Err("Le document a changé; remplacement refusé.".into());
+        }
+    }
+    if target.copied_selection {
+        if element.get_pattern::<UIValuePattern>().and_then(|p| p.is_readonly()).unwrap_or(true) {
+            return Err("Le champ n’est plus modifiable.".into());
+        }
+        // Non-invasive watcher. Delivery additionally copies and compares the live selection.
+        return Ok(element);
+    }
+    let (text, anchor, selection_start, selection_len, range_editable) = selection(&element, true)?;
+    if target.editable && !range_editable && !element.get_pattern::<UIValuePattern>().and_then(|p| p.is_readonly()).is_ok_and(|v| !v) {
+        return Err("Le champ n’est plus modifiable.".into());
+    }
     let range_changed = target
         .selection_start
         .is_some_and(|expected| selection_start != Some(expected));
@@ -341,8 +363,9 @@ pub fn replace_automatic(target: &TargetIdentity, value: &str) -> Result<(), Str
 
 fn replace_checked(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<(), String> {
     if value.contains('\0') { return Err("Le résultat contient un caractère nul; remplacement refusé.".into()); }
-    let expected = target.win32.as_ref().filter(|_| target.editable && target.selection_start.is_some()).ok_or_else(||
-        "Ce contrôle ne permet pas un remplacement natif vérifiable; utilisez Copier.".to_string())?;
+    if !target.editable || target.selection_start.is_none() || (target.win32.is_none() && target.document.is_none()) {
+        return Err("La sélection ne peut pas être vérifiée. Utilisez Copier.".into());
+    }
     #[cfg(windows)]
     unsafe {
         use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetForegroundWindow,SetForegroundWindow}};
@@ -350,10 +373,59 @@ fn replace_checked(target: &TargetIdentity, value: &str, reactivate: bool) -> Re
             return Err("Impossible de réactiver la fenêtre source.".into());
         }
     }
-    let _element = validate_target(target)?;
-    #[cfg(windows)]
-    replace_win32(expected, value)?;
-    Ok(())
+    let element = validate_target(target)?;
+    if let Some(expected) = &target.win32 { return replace_win32(expected, value); }
+    replace_paste(target, &element, value)
+}
+
+fn patched_text(document: &str, start: usize, selected: &str, value: &str) -> Option<String> {
+    let offset = document.char_indices().map(|(i, _)| i).chain(Some(document.len())).nth(start)?;
+    if !document[offset..].starts_with(selected) { return None; }
+    Some(format!("{}{}{}", &document[..offset], value, &document[offset + selected.len()..]))
+}
+fn canonical(text: &str) -> String { text.replace("\r\n", "\n").replace('\r', "\n") }
+
+fn replace_paste(target: &TargetIdentity, _element: &UIElement, value: &str) -> Result<(), String> {
+    if !crate::host::wait_modifiers_released(CHORD_RELEASE) { return Err("Relâchez les touches du raccourci puis réessayez.".into()); }
+    validate_target(target)?;
+    if target.copied_selection {
+        let selected = synthetic_copy(target.native_window).map_err(|_| "La sélection ne peut pas être revérifiée.".to_string())?;
+        if selected != target.selected_text { return Err("La sélection a changé; remplacement refusé.".into()); }
+    }
+    let document = target.document.as_deref().ok_or("Le document source est indisponible.")?;
+    let wanted = patched_text(document, target.selection_start.ok_or("Sélection sans position.")?, &target.selected_text, value)
+        .ok_or("La sélection a changé; remplacement refusé.")?;
+    if canonical(document) == canonical(&wanted) { return Ok(()); }
+    let previous = crate::clipboard_guard::Snapshot::capture()?;
+    crate::host::suppress_clipboard_tracking(Duration::from_secs(4));
+    let sequence = previous.put_text(value)?;
+    if let Err(error) = validate_target(target) {
+        let _ = previous.restore(sequence);
+        return Err(error);
+    }
+    if crate::host::clipboard_sequence() != sequence || crate::host::modifiers_down() {
+        let _ = previous.restore(sequence);
+        return Err("Le presse-papiers ou les touches actives ont changé; collage annulé.".into());
+    }
+    // Never send a second paste, even after timeout/partial injection. Leave the
+    // result on the clipboard until it was actually observed in the document.
+    crate::host::send_paste_chord()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Ok(automation) = ui_automation() {
+            if let Ok(element) = automation.get_focused_element() {
+                if crate::host::foreground() == target.native_window && element.get_runtime_id().ok().as_ref() == Some(&target.runtime_id) {
+                    if document_text(&element, target.copied_selection).is_ok_and(|after| canonical(&after) == canonical(&wanted)) {
+                        let _ = previous.restore(sequence); // sequence checked atomically under OpenClipboard
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline { break; }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Err("Collage envoyé mais non confirmé. Vérifiez le champ avant de réessayer ; le résultat reste dans le presse-papiers et la bulle.".into())
 }
 
 #[cfg(windows)]
@@ -406,6 +478,20 @@ fn replace_win32(expected:&Win32Target,value:&str)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_patch_preserves_surroundings_and_unicode() {
+        assert_eq!(patched_text("Début 😀 café\r\nfin", 8, "café", "équipe 🚀\nmerci").unwrap(), "Début 😀 équipe 🚀\nmerci\r\nfin");
+        assert!(patched_text("abc", 1, "wrong", "x").is_none());
+        assert!(patched_text("abc", 5, "", "x").is_none());
+    }
+    #[test]
+    fn copy_fallback_requires_an_unambiguous_document_position() {
+        assert_eq!(unique_offset("😀 un café ici", "café"), Some(5));
+        assert_eq!(unique_offset("un un", "un"), None);
+        assert_eq!(unique_offset("aaa", "aa"), None);
+        assert_eq!(unique_offset("abc", ""), None);
+    }
 
     #[test]
     fn only_known_edit_classes() {
