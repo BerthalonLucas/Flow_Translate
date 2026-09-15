@@ -178,17 +178,17 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                                 let _ = step;
                                 "L’éditeur ne permet pas de vérifier sa sélection par copie. Réessayez après avoir copié du texte.".to_string() })?;
                             if actual.encode_utf16().count() > 6000 { return Err("Sélection trop longue (6 000 unités de texte).".into()); }
-                            if actual != identity.selected_text {
+                            if line_endings(&actual) != line_endings(&identity.selected_text) {
                                 // Some rich UIA providers overrun inline-node boundaries.
                                 // The editor's copy is authoritative; never translate nearby words.
-                                let value_document = document_text(&element, true).ok().filter(|doc| unique_offset(doc, &actual).is_some());
+                                let value_document = document_text(&element, true).ok().filter(|doc| copied_range(doc, &actual).is_some());
                                 let from_value = value_document.is_some();
                                 let document = value_document.or_else(|| document_text(&element, false).ok()).ok_or("Le document ne peut pas être vérifié.")?;
-                                let start = unique_offset(&document, &actual).ok_or("La sélection copiée n’a pas une position unique dans le document.")?;
+                                let (start, selected) = copied_range(&document, &actual).ok_or("La sélection copiée n’a pas une position unique dans le document.")?;
                                 public.text = actual.clone();
                                 public.origin = CaptureOrigin::Copy;
                                 public.anchor = None;
-                                identity.selected_text = actual;
+                                identity.selected_text = selected;
                                 identity.selection_len = identity.selected_text.chars().count();
                                 identity.selection_start = Some(start);
                                 identity.anchor = None;
@@ -251,6 +251,26 @@ fn unique_offset(document: &str, selected: &str) -> Option<usize> {
     Some(document[..offset].chars().count())
 }
 
+fn line_endings(text: &str) -> String { text.replace("\r\n", "\n").replace('\r', "\n") }
+
+/// Clipboard CRLF and provider LF/CR must map to the exact original document range.
+/// Ambiguity across any newline representation is refused, including overlaps.
+fn copied_range(document: &str, copied: &str) -> Option<(usize, String)> {
+    let normalized = line_endings(document);
+    let selection = line_endings(copied);
+    let start = unique_offset(&normalized, &selection)?;
+    let end = start + selection.chars().count();
+    let mut boundaries = Vec::new();
+    let mut chars = document.char_indices().peekable();
+    while let Some((offset, ch)) = chars.next() {
+        boundaries.push(offset);
+        if ch == '\r' && chars.peek().is_some_and(|(_, next)| *next == '\n') { chars.next(); }
+    }
+    boundaries.push(document.len());
+    let (first, last) = (*boundaries.get(start)?, *boundaries.get(end)?);
+    Some((document[..first].chars().count(), document[first..last].to_string()))
+}
+
 /// A copy made at `changed_at` is fresh at `now` when it is at most `limit` ms old.
 pub fn fresh(changed_at: Option<u64>, now: u64, limit: u64) -> bool {
     changed_at.is_some_and(|at| at <= now && now - at <= limit)
@@ -294,9 +314,10 @@ pub(crate) fn clipboard_capture(source_window: isize) -> Result<StoredCapture, S
     ensure_source_unchanged(source_window)?;
     let target = if copied.is_ok() {
         candidate.and_then(|(runtime_id, document)| {
-            let start = unique_offset(&document, &text)?;
-            Some(TargetIdentity { runtime_id, native_window: source_window, selected_text: text.clone(), anchor: None,
-                selection_start: Some(start), selection_len: text.chars().count(), editable: true,
+            let (start, selected) = copied_range(&document, &text)?;
+            let selection_len = selected.chars().count();
+            Some(TargetIdentity { runtime_id, native_window: source_window, selected_text: selected, anchor: None,
+                selection_start: Some(start), selection_len, editable: true,
                 win32: None, document: Some(document), copied_selection: true, document_from_value: true })
         })
     } else { None };
@@ -418,14 +439,14 @@ fn patched_text(document: &str, start: usize, selected: &str, value: &str) -> Op
 // Chromium preserves boundary spaces in contenteditable by turning them into NBSP
 // during native paste. Normalize that representation only for AFTER-write proof;
 // pre-write document/selection identity remains byte-for-byte exact.
-fn canonical(text: &str) -> String { text.replace("\r\n", "\n").replace('\r', "\n").replace('\u{a0}', " ") }
+fn canonical(text: &str) -> String { line_endings(text).replace('\u{a0}', " ") }
 
 fn replace_paste(target: &TargetIdentity, element: &UIElement, value: &str) -> Result<(), String> {
     if !crate::host::wait_modifiers_released(CHORD_RELEASE) { return Err("Relâchez les touches du raccourci puis réessayez.".into()); }
     validate_target(target)?;
     if target.copied_selection {
         let selected = synthetic_copy(target.native_window).map_err(|_| "La sélection ne peut pas être revérifiée.".to_string())?;
-        if selected != target.selected_text { return Err("La sélection a changé; remplacement refusé.".into()); }
+        if line_endings(&selected) != line_endings(&target.selected_text) { return Err("La sélection a changé; remplacement refusé.".into()); }
     }
     let document = target.document.as_deref().ok_or("Le document source est indisponible.")?;
     let wanted = patched_text(document, target.selection_start.ok_or("Sélection sans position.")?, &target.selected_text, value)
@@ -528,6 +549,14 @@ fn replace_win32(expected:&Win32Target,value:&str)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copied_multiline_selection_maps_to_original_document_offsets() {
+        assert_eq!(copied_range("😀 avant a\nb après", "a\r\nb"), Some((8, "a\nb".into())));
+        assert_eq!(copied_range("a\r\nb et a\nb", "a\nb"), None);
+        assert_eq!(copied_range("a\r\nb", "a\nb"), Some((0, "a\r\nb".into())));
+        assert_eq!(copied_range("a\r\nb\rc", "a\nb\n"), Some((0, "a\r\nb\r".into())));
+    }
 
     #[test]
     fn paste_proof_normalizes_only_editor_space_and_line_endings() {

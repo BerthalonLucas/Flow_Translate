@@ -42,25 +42,25 @@ try {
   const selected = 'café 😀';
   const replacement = 'équipe 🚀';
   await page.evaluate(() => { document.addEventListener('input', event => { event.target.dataset.nativeInput = event.inputType ?? 'input'; }); });
-  const prepare = async (locator, { rich = false, multiline = false } = {}) => {
+  const prepare = async (locator, { rich = false, multiline = false, sourceMultiline = false } = {}) => {
     await page.bringToFront();
     await locator.evaluate((el, { original, selected, rich, multiline }) => {
       const text = multiline ? original + '\nSeconde ligne' : original;
-      if (rich) el.innerHTML = '<b>Début 🚀 </b><span>café 😀</span><i> fin</i>';
+      if (rich) el.innerHTML = '<b>Début 🚀 </b><span>' + selected.replace(/\n/g, '<br>') + '</span><i> fin</i>';
       else el.value = text;
       el.focus();
       if (rich) {
         const range = document.createRange(); range.selectNodeContents(el.querySelector('span'));
         const selection = el.ownerDocument.getSelection(); selection.removeAllRanges(); selection.addRange(range);
       } else el.setSelectionRange(text.indexOf(selected), text.indexOf(selected) + selected.length);
-    }, { original, selected, rich, multiline });
+    }, { original: sourceMultiline ? original.replace(selected, selected + '\nligne sélectionnée') : original, selected: sourceMultiline ? selected + '\nligne sélectionnée' : selected, rich, multiline });
     await sleep(300);
   };
-  const content = locator => locator.evaluate(el => 'value' in el ? el.value : el.textContent.replace(/\u00a0/g, ' '));
-  const capture = async (copy = false) => {
+  const content = locator => locator.evaluate(el => 'value' in el ? el.value : el.innerText.replace(/\u00a0/g, ' '));
+  const capture = async (copy = false, selectedText = selected) => {
     const result = await command({ op: copy ? 'capture-copy' : 'capture' });
     assert.equal(result.replaceable, true, `selection available: ${JSON.stringify(result)}`);
-    assert.equal(result.selected_length, [...selected].length, 'native capture is exactly the visual selection');
+    assert.equal(result.selected_length, [...selectedText].length, 'native capture is exactly the visual selection');
     return result;
   };
   for (const [name, locator, options] of [
@@ -68,6 +68,8 @@ try {
     ['input via copy', page.locator('#input'), { copy: true }],
     ['textarea multiline', page.locator('#textarea'), { multiline: true }],
     ['contenteditable formatted', page.locator('#rich'), { rich: true }],
+    ['textarea multiline source', page.locator('#textarea'), { sourceMultiline: true }],
+    ['contenteditable multiline source', page.locator('#rich'), { rich: true, sourceMultiline: true }],
     ['iframe', page.frameLocator('iframe').locator('#frame'), {}],
     ['shadow DOM', page.locator('#shadow-input'), {}],
   ]) {
@@ -75,10 +77,11 @@ try {
     await command({ op: 'clipboard-seed' });
     await prepare(locator, options);
     const before = await content(locator);
-    const captured = await capture(options.copy);
+    const selectedText = options.sourceMultiline ? selected + '\nligne sélectionnée' : selected;
+    const captured = await capture(options.copy, selectedText);
     const value = options.multiline ? replacement + '\nmerci' : replacement;
     const result = await command({ op: 'replace', value });
-    assert.equal(await content(locator), before.replace(selected, value), `${name}: editor contents`);
+    assert.equal(await content(locator), before.replace(selectedText, value), `${name}: editor contents`);
     assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`);
     if (!['iframe', 'shadow DOM'].includes(name)) assert.equal(await locator.getAttribute('data-native-input'), 'insertFromPaste', `${name}: editor input event`);
     assert.equal((await command({ op: 'clipboard-check' })).ok, true, `${name}: rich clipboard restored`);
