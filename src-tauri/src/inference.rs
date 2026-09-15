@@ -248,6 +248,11 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{actions, types::Language};
+
+    fn translation_prompt(text: &str) -> String {
+        actions::render(&actions::defaults()[0].prompt_template, text, Language::Fr).unwrap()
+    }
 
     #[test]
     fn the_extended_sampling_fields_are_dropped_on_a_strict_endpoint() {
@@ -277,7 +282,7 @@ mod tests {
         };
         check(&profile).await.expect("live model discovery");
         let mut deltas = String::new();
-        let result = stream(profile.clone(), "Please confirm the budget of 1250 EUR for project Orion.".into(), Language::Fr, CancellationToken::new(), |chunk| {
+        let result = stream(profile.clone(), translation_prompt("Please confirm the budget of 1250 EUR for project Orion."), CancellationToken::new(), |chunk| {
             if let Some(text) = chunk.text { deltas.push_str(&text); }
             Ok(())
         }).await.expect("live native streaming translation");
@@ -285,7 +290,7 @@ mod tests {
         assert!(result.contains("Orion") && result.contains("EUR"));
         let cancel = CancellationToken::new();
         let trigger = cancel.clone();
-        let cancelled = stream(profile, "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), Language::Fr, cancel, |chunk| {
+        let cancelled = stream(profile, translation_prompt("Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning."), cancel, |chunk| {
             if chunk.text.is_some() { trigger.cancel(); }
             Ok(())
         }).await;
@@ -321,4 +326,3 @@ mod tests {
         assert_eq!(d.push(b"data: [DONE]\r\n\r\n").unwrap(), vec![Item::Done]);
     }
 }
-

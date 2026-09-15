@@ -109,6 +109,11 @@ impl Inner {
         }
     }
     fn cancel(&mut self, id: Option<&str>) {
+        // A completed response may still be waiting for its native target.
+        // Cancellation must also revoke that deferred automatic write.
+        if let Some(run) = self.execution.as_mut() {
+            if id.is_none() || run.auto_request.as_deref() == id { run.auto_request = None; }
+        }
         if self
             .active
             .as_ref()
@@ -465,7 +470,7 @@ fn translate(
         {
             return Err("La capture n’est plus active.".into());
         }
-        let run = i.execution.as_mut().ok_or("Cette capture ne peut pas être relancée. Sélectionnez à nouveau le texte.")?;
+        let run = i.execution.as_ref().ok_or("Cette capture ne peut pas être relancée. Sélectionnez à nouveau le texte.")?;
         if request.action_id != run.info.action_id || request.target_language != run.info.target_language {
             return Err("L’action ou la langue ne correspond pas à la capture.".into());
         }
@@ -474,8 +479,8 @@ fn translate(
         let profile = run.profiles.get(key).ok_or("Le profil est absent.")?.clone();
         let prompt = actions::render(&run.action.prompt_template, &request.text, request.target_language)?;
         let execution_info = run.info.clone();
-        run.begin(&request.id);
         i.cancel(None);
+        i.execution.as_mut().expect("validated execution").begin(&request.id);
         i.completed = None;
         let cancel = CancellationToken::new();
         i.active = Some(Active {
@@ -1436,6 +1441,22 @@ pub fn run() {
 mod tests {
     use super::*;
     #[test]
+    fn cancel_revokes_automatic_delivery_even_after_inference_finishes() {
+        let settings = Settings::default();
+        let mut binding = settings.shortcut_bindings[0].clone();
+        binding.output_mode = OutputMode::Replace;
+        let mut i = Inner::new(settings.clone());
+        let mut run = Execution::snapshot(&settings, Some(&binding)).unwrap();
+        run.begin("completed");
+        i.execution = Some(run);
+        i.cancel(Some("older"));
+        assert_eq!(i.execution.as_ref().unwrap().auto_request.as_deref(), Some("completed"));
+        i.cancel(Some("completed"));
+        assert!(!i.execution.as_mut().unwrap().claim_delivery("completed"));
+        i.execution.as_mut().unwrap().begin("retry");
+        assert!(!i.execution.as_mut().unwrap().claim_delivery("retry"));
+    }
+    #[test]
     fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {
         let regions = [
             SurfaceRegion { x: 92., y: 500., width: 300., height: 200., radius: 28. },
@@ -1509,4 +1530,3 @@ mod tests {
         assert!(validate_regions(&[SurfaceRegion { width: 281., ..valid }], 280., 114.).is_err());
     }
 }
-

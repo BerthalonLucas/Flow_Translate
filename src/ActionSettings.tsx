@@ -16,7 +16,8 @@ function fromKey(event: KeyboardEvent): { value?: string; error?: string } {
   if (event.key === 'F12') return { error: 'F12 est réservée par Windows.' };
   if ((event.ctrlKey && event.altKey && event.key === 'Delete') || (event.altKey && ['Tab', 'F4', 'Escape'].includes(event.key))) return { error: 'Cette combinaison est réservée à Windows.' };
   const { code, key } = event;
-  const main = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5)
+  // Windows registers virtual letter keys: respect the active layout (AZERTY too).
+  const main = /^[a-z]$/i.test(key) ? key.toUpperCase() : /^Digit\d$/.test(code) ? code.slice(5)
     : /^F([1-9]|1[01]|2[0-4]|1[3-9])$/.test(key) ? key : code === 'Space' ? 'Space'
     : ['Enter', 'Tab', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown'].includes(key) ? key
     : key.startsWith('Arrow') ? key.slice(5) : null;
@@ -82,4 +83,3 @@ export function ActionSettings({ settings, persist, record }: Props) {
     </section>
   </>;
 }
-
