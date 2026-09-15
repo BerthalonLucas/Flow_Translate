@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
-import type { Capture, CaptureNotice, CaptureTarget, Language, Mode, Settings, StreamEvent } from './types';
+import type { Capture, CaptureNotice, CaptureTarget, Language, Mode, Screen, Settings, StreamEvent } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
@@ -12,6 +12,8 @@ export function useTranslation(readyOnMount = false) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimer = useRef(0);
+  // The screen the glass is on (the capture's, then `work-area` when the cursor moves a bottom form).
+  const [screen, setScreen] = useState<Screen | null>(null);
   const [closingCaptureId, setClosingCaptureId] = useState<string | null>(null);
   const closingRef = useRef<string | null>(null);
   const requestRef = useRef<string | null>(null);
@@ -65,6 +67,7 @@ export function useTranslation(readyOnMount = false) {
     setClosingCaptureId(null);
     window.clearTimeout(noticeTimer.current);
     setNotice(null);
+    setScreen(capture.screen ?? null);
     dispatch({ type: 'CAPTURE', capture });
     if (capture.replay) {
       // A result shown again from the tray: complete at once, nothing to translate.
@@ -105,6 +108,7 @@ export function useTranslation(readyOnMount = false) {
       }),
       bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
       bridge.on<CaptureNotice>('capture-notice', ({ message }) => showNotice(message)),
+      bridge.on<Screen>('work-area', next => setScreen(next)),
     ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
       else {
@@ -131,7 +135,7 @@ export function useTranslation(readyOnMount = false) {
     void bridge.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
-  return { state, settings, dispatch, receiveCapture, start, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
+  return { state, settings, screen, dispatch, receiveCapture, start, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;

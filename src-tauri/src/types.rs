@@ -24,13 +24,25 @@ pub struct Rect {
     pub height: f64,
 }
 
+/// Where the window lives (2026-09-14, calibrated reading): `anchored` beside the
+/// selection (the waiting pill and the short glass), `bottom` centred on the bottom of
+/// the cursor's screen (the reader band, and every capture without an anchor).
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Presentation {
-    Contextual,
-    Reader,
-    /// Bottom-centre window whose bottom edge carries the tab; the glass grows upward.
-    Docked,
+    Anchored,
+    Bottom,
+}
+
+/// The work area of the screen a window is on, in logical pixels, with its DPI scale:
+/// the frontend sizes the reader band from it (half the width, at most 45 % of the
+/// height), never from a hard-coded resolution.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Screen {
+    pub width: f64,
+    pub height: f64,
+    pub scale: f64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -59,6 +71,9 @@ pub struct Capture {
     pub origin: CaptureOrigin,
     pub can_replace: bool,
     pub anchor: Option<Rect>,
+    /// The screen the capture opens on (its selection's, or the cursor's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<Screen>,
     /// A result shown again (tray « Revoir la dernière traduction »): the frontend
     /// displays it as complete instead of asking for a translation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +133,28 @@ pub struct Profile {
     pub api_key: String,
 }
 
+/// Reading presets (2026-09-14): short glass 16/24 · reader 22/33, 18/27 · 24/36,
+/// 20/30 · 26/39 (font size / line height, logical pixels). The frontend owns the values.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextSize {
+    #[default]
+    Normal,
+    Large,
+    Xlarge,
+}
+
+/// How fast the glass leaves once read: the reading budget × 0.7, × 1, × 1.5, or never.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoClose {
+    Fast,
+    #[default]
+    Normal,
+    Slow,
+    Never,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -128,6 +165,10 @@ pub struct Settings {
     pub autostart: bool,
     #[serde(default)]
     pub connection_expanded: bool,
+    #[serde(default)]
+    pub text_size: TextSize,
+    #[serde(default)]
+    pub auto_close: AutoClose,
     pub profiles: HashMap<String, Profile>,
 }
 
@@ -157,6 +198,8 @@ impl Default for Settings {
             history_enabled: false,
             autostart: false,
             connection_expanded: false,
+            text_size: TextSize::Normal,
+            auto_close: AutoClose::Normal,
             profiles,
         }
     }
@@ -233,7 +276,6 @@ pub struct TargetInvalidated {
 pub enum PlacementSide {
     Above,
     Below,
-    Bottom,
 }
 
 #[derive(Clone, Debug)]

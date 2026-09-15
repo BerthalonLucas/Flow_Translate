@@ -4,7 +4,7 @@ import { Icon, Segmented, SettingSwitch, useFade } from './ui';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
 import { useTranslation } from './useTranslation';
-import type { Capture, HistoryEntry, Language, Mode, Settings } from './types';
+import type { AutoClose, Capture, HistoryEntry, Language, Mode, Settings, TextSize } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Alex,\n\nThank you for your feedback. The updated proposal includes the delivery timeline, responsibilities, and payment terms. Could you confirm these details before Thursday?\n\nWe have kept the total budget unchanged and clarified the review process. Please check the dates and amounts before we share the final version with the team.\n\nBest regards,\nMarie' };
@@ -175,6 +175,10 @@ export function SettingsWindow() {
             <button className="text-button" onClick={() => { setShortcutNotice(''); setCapturing(value => !value); }}>{capturing ? 'Annuler' : 'Modifier'}</button>
           </div></div>
         {shortcutNotice && <p className="row-warning" role="alert">{shortcutNotice}</p>}
+        <div className="setting-row"><div className="setting-copy"><strong>Taille du texte</strong><small>Verre court 16, 18 ou 20 px ; lecteur 22, 24 ou 26 px. Le lecteur occupe la moitié de l’écran.</small></div>
+          <Segmented<TextSize> label="Taille du texte" value={settings.textSize} options={[{ value: 'normal', label: 'Normale' }, { value: 'large', label: 'Grande' }, { value: 'xlarge', label: 'Très grande' }]} onChange={value => update('textSize', value)} /></div>
+        <div className="setting-row"><div className="setting-copy"><strong>Fermeture automatique</strong><small>Le temps de lecture estimé, puis un fondu. Survoler, faire défiler ou épingler la retient.</small></div>
+          <Segmented<AutoClose> label="Fermeture automatique" value={settings.autoClose} options={[{ value: 'fast', label: 'Rapide' }, { value: 'normal', label: 'Normale' }, { value: 'slow', label: 'Lente' }, { value: 'never', label: 'Jamais' }]} onChange={value => update('autoClose', value)} /></div>
       </section>
       <section>
         <h2>Sur cet appareil</h2>

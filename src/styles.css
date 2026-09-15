@@ -1,11 +1,11 @@
 :root { font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: #f7f8fc; font-synthesis: none; }
 /* Design handoff « 1a » tokens (2026-09-09). */
 :root {
-  --glass-bg: rgba(22, 24, 29, .92); /* the packaged window paints only the DOM: no native material behind the glass */
-  --glass-sheen: radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.09), transparent 60%);
-  --glass-border: rgba(255,255,255,.12);
+  --glass-bg: rgba(24,26,31,.96); /* one graphite for glass, pill and menu (2026-09-14); the packaged window paints only the DOM */
+  --glass-sheen: radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.09), transparent 60%); /* capsule only */
+  --glass-border: rgba(255,255,255,.2);
   --glass-shadow: 0 12px 32px rgba(0,0,0,.34); /* the native halo (glass.css) is sized to this shadow */
-  --pill-bg: rgba(40,43,50,.96);
+  --pill-bg: rgba(24,26,31,.96);
   --menu-bg: rgba(24,26,31,.96);
   --hover: rgba(255,255,255,.12);
   --pressed: rgba(255,255,255,.16);
@@ -27,7 +27,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 0; min-height: 100vh; }
-body.flowtranslate-overlay { min-width: 300px; }
+body.flowtranslate-overlay { min-width: 0; }
 /* The native settings WebView is opaque graphite edge to edge. */
 body.flowtranslate-settings { min-height: 0; background: var(--settings-bg); }
 button, input, select { font: inherit; }
@@ -131,5 +131,5 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; scroll-behavior: auto !important; } }
 
 .preview-label { position: fixed; left: 14px; top: 12px; color: #233e5c; font-size: 11px; }
-.initialization-error { width: 300px; padding: 16px; border-radius: 28px; background: rgba(22,24,29,.82); font-size: 13px; }
+.initialization-error { width: 380px; padding: 16px; border-radius: 28px; background: rgba(24,26,31,.96); font-size: 13px; }
 @media (max-height: 250px) { .preview-label { display: none; } }

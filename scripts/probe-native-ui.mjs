@@ -33,7 +33,8 @@ const sessionLocked = () => { const check = hitTest(700, 700); return check.curs
 // Sends WM_NCACTIVATE(FALSE, 0) to the HWND (scenario L of release/ui-evidence/band-repro) and
 // compares the screen under its top band before and after: since 0.1.7 the subclass keeps
 // DefWindowProc from painting a title band there.
-const poke = hwnd => JSON.parse(execFileSync('powershell', [...probeArgs, '-Poke', String(parseInt(hwnd, 16)), '-Out', output], { encoding: 'utf8' }));
+// quiet: the same two captures without any message, a control for what moves behind the window.
+const poke = (hwnd, quiet = false) => JSON.parse(execFileSync('powershell', [...probeArgs, '-Poke', String(parseInt(hwnd, 16)), '-Out', output, ...(quiet ? ['-Quiet'] : [])], { encoding: 'utf8' }));
 try {
   const overlayTargets = () => browser.contexts().flatMap(context => context.pages()).filter(page => /tauri\.localhost/.test(page.url()) && new URL(page.url()).searchParams.get('window') === 'overlay');
   await expect.poll(() => overlayTargets().length, { timeout: 10000, message: 'Expected exactly one packaged FlowTranslate overlay' }).toBe(1);
@@ -94,10 +95,13 @@ try {
       const frameless = result.framelessAfterFocus;
       await pointCursor(frameless.inside.x, frameless.inside.y);
       await page.waitForTimeout(150);
+      // A video or a slideshow behind the window moves between the two captures: the
+      // control (no message) measures that, the poke must not add a band on top of it.
+      const control = poke(frameless.hwnd, true);
       const silent = poke(frameless.hwnd);
-      report.frameSilent = silent;
+      report.frameSilent = { ...silent, controlMeanDiff: control.meanDiff };
       expect(silent.windowMoved, 'the window kept its rect across WM_NCACTIVATE').toBe(false);
-      expect(silent.meanDiff, 'WM_NCACTIVATE(FALSE, 0) paints nothing in the top band').toBeLessThanOrEqual(FRAME_SILENT_TOLERANCE);
+      expect(silent.meanDiff, `WM_NCACTIVATE(FALSE, 0) paints nothing in the top band (control ${control.meanDiff})`).toBeLessThanOrEqual(FRAME_SILENT_TOLERANCE + 2 * control.meanDiff);
       result.framelessAfterPoke = await expectFrameless('after WM_NCACTIVATE');
     }
   }

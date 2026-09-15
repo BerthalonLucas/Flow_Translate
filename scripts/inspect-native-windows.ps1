@@ -5,6 +5,7 @@ param(
     [string]$HitTest = '',
     [string]$MoveCursor = '',
     [int64]$Poke = 0,
+    [switch]$Quiet,
     [string]$Out = ''
 )
 # Lists the top-level HWNDs of FlowTranslate (or of one process) as JSON:
@@ -17,6 +18,8 @@ param(
 # WM_NCACTIVATE(FALSE, 0), the message that painted a title band into the frameless
 # window until 0.1.7, and compares the screen under the window's top band before and
 # after (mean absolute difference per sampled channel: 0 when Windows painted nothing);
+# -Quiet with -Poke takes the same two captures without sending anything: the control
+# measures what already moves behind the window (a video, a slideshow);
 # -Out <dir> also saves both captures (poke-before.png, poke-after.png).
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -61,7 +64,7 @@ if ($Poke) {
     $g.Dispose(); $bmp }
   $before = & $snap
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $returned = [FlowTranslateNativeProbe]::SendMessage($h, 0x86, [IntPtr]0, [IntPtr]0)
+  $returned = if ($Quiet) { -1 } else { [FlowTranslateNativeProbe]::SendMessage($h, 0x86, [IntPtr]0, [IntPtr]0) }
   $sendMs = $sw.ElapsedMilliseconds
   Start-Sleep -Milliseconds 150
   $after = & $snap
@@ -71,11 +74,11 @@ if ($Poke) {
     $sum += [Math]::Abs($a.R - $b.R) + [Math]::Abs($a.G - $b.G) + [Math]::Abs($a.B - $b.B)
     $lumBefore += ($a.R + $a.G + $a.B) / 3; $lumAfter += ($b.R + $b.G + $b.B) / 3
     $samples++ } }
-  if ($Out) { New-Item -ItemType Directory -Path $Out -Force | Out-Null; $before.Save((Join-Path $Out 'poke-before.png')); $after.Save((Join-Path $Out 'poke-after.png')) }
+  if ($Out -and -not $Quiet) { New-Item -ItemType Directory -Path $Out -Force | Out-Null; $before.Save((Join-Path $Out 'poke-before.png')); $after.Save((Join-Path $Out 'poke-after.png')) }
   $before.Dispose(); $after.Dispose()
   $rectAfter = New-Object FlowTranslateNativeProbe+RECT; [void][FlowTranslateNativeProbe]::GetWindowRect($h, [ref]$rectAfter)
   $moved = ($rectAfter.L -ne $rect.L) -or ($rectAfter.T -ne $rect.T) -or ($rectAfter.R -ne $rect.R) -or ($rectAfter.B -ne $rect.B)
-  Write-Output (([ordered]@{ hwnd = ('0x{0:X}' -f $Poke); message = 'WM_NCACTIVATE(FALSE, 0)'; returned = [int64]$returned; sendMs = $sendMs; band = @{ x = $rect.L; y = $rect.T; width = $width; height = $band }; windowMoved = $moved; samples = $samples; meanDiff = [Math]::Round($sum / (3 * $samples), 3); luminanceBefore = [Math]::Round($lumBefore / $samples, 1); luminanceAfter = [Math]::Round($lumAfter / $samples, 1) }) | ConvertTo-Json -Compress -Depth 4)
+  Write-Output (([ordered]@{ hwnd = ('0x{0:X}' -f $Poke); message = $(if ($Quiet) { 'none (control)' } else { 'WM_NCACTIVATE(FALSE, 0)' }); returned = [int64]$returned; sendMs = $sendMs; band = @{ x = $rect.L; y = $rect.T; width = $width; height = $band }; windowMoved = $moved; samples = $samples; meanDiff = [Math]::Round($sum / (3 * $samples), 3); luminanceBefore = [Math]::Round($lumBefore / $samples, 1); luminanceAfter = [Math]::Round($lumAfter / $samples, 1) }) | ConvertTo-Json -Compress -Depth 4)
   return
 }
 if ($MoveCursor) {

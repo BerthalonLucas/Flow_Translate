@@ -26,6 +26,10 @@ struct PersistedSettings {
     autostart: bool,
     #[serde(default)]
     connection_expanded: bool,
+    #[serde(default)]
+    text_size: crate::types::TextSize,
+    #[serde(default)]
+    auto_close: crate::types::AutoClose,
     profiles: HashMap<String, PersistedProfile>,
 }
 
@@ -79,6 +83,8 @@ impl SettingsStore {
             history_enabled: raw.history_enabled,
             autostart: raw.autostart,
             connection_expanded: raw.connection_expanded,
+            text_size: raw.text_size,
+            auto_close: raw.auto_close,
             profiles,
         };
         validate(&settings)?;
@@ -110,6 +116,8 @@ impl SettingsStore {
             history_enabled: settings.history_enabled,
             autostart: settings.autostart,
             connection_expanded: settings.connection_expanded,
+            text_size: settings.text_size,
+            auto_close: settings.auto_close,
             profiles,
         };
         let bytes = serde_json::to_vec_pretty(&raw)
@@ -235,8 +243,12 @@ mod tests {
         let mut value = Settings::default();
         store.save(&value).unwrap();
         value.mode = crate::types::Mode::Fast;
+        value.text_size = crate::types::TextSize::Large;
+        value.auto_close = crate::types::AutoClose::Never;
         store.save(&value).unwrap();
-        assert_eq!(store.load().unwrap().mode, crate::types::Mode::Fast);
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.mode, crate::types::Mode::Fast);
+        assert_eq!((loaded.text_size, loaded.auto_close), (crate::types::TextSize::Large, crate::types::AutoClose::Never));
         let _ = std::fs::remove_dir_all(root);
     }
 }

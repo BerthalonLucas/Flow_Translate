@@ -1,17 +1,16 @@
 import { expect, test } from '@playwright/test';
 
-test('the enlarged native overlay measures 420px from a 300px host window', async ({ page }) => {
-  await page.setViewportSize({ width: 300, height: 234 });
-  await page.goto('/?window=overlay&demo=1');
-
-  await expect(page.getByRole('button', { name: 'Plus d’options' })).toBeEnabled();
+// The packaged root (native-overlay) holds the reader band centred on the bottom of a
+// preview standing in for the screen: half its width, no hard-coded size.
+test('the native reader band measures half the host width from a 1000px host window', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await page.goto('/?window=overlay&demo=1&scenario=long');
+  await expect(page.locator('.wait-pill')).toBeVisible();
   await page.locator('.standalone-demo').evaluate(element => { element.className = 'native-overlay'; });
-  await page.getByRole('button', { name: 'Plus d’options' }).click();
-
-  const enlarge = page.getByRole('menuitem', { name: 'Agrandir' });
-  await expect(enlarge).toBeVisible();
-  await enlarge.focus();
-  await page.keyboard.press('Enter');
-
-  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '420px');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
+  await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
+  await expect(page.locator('.translation-bubble')).toHaveCSS('width', '500px');
+  const box = (await page.locator('.translation-bubble').boundingBox());
+  expect(Math.abs(box.x + box.width / 2 - 500)).toBeLessThanOrEqual(1);
+  expect(box.height).toBeLessThanOrEqual(Math.round(700 * 0.45));
 });

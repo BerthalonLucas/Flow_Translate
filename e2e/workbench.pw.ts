@@ -13,7 +13,10 @@ test('workbench replays the real translation and keeps a reproducible URL', asyn
   await page.getByRole('button', { name: 'Traduction longue' }).click();
   await expect(page).toHaveURL(/scenario=long/);
   await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'complete');
-  await expect(frame.locator('.translation-bubble')).toHaveCSS('width', '300px');
+  // The reader band: half of the frame (its border leaves 898 px inside the 900 px iframe).
+  await expect(frame.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
+  const inner = await frame.locator('html').evaluate(() => window.innerWidth);
+  await expect(frame.locator('.translation-bubble')).toHaveCSS('width', `${Math.round(inner / 2)}px`);
   await expect(frame.locator('.translation-copy')).toHaveAttribute('data-scroll-edge', 'top');
 });
 
@@ -21,7 +24,8 @@ for (const scenario of ['pending', 'partial'] as const) {
   test(`${scenario} is inspectable, cannot be copied and can be dismissed`, async ({ page }) => {
     await page.goto(`/lab-frame.html?scenario=${scenario}&motion=reduce`);
     await expect(page.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', scenario === 'pending' ? 'streaming' : 'error');
-    await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeDisabled();
+    if (scenario === 'pending') { await expect(page.locator('.wait-pill')).toBeVisible(); await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toHaveCount(0); }
+    else await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeDisabled();
     if (scenario === 'partial') await expect(page.locator('.translation-text')).toHaveText('Pourriez-vous envoyer la proposition');
     await page.keyboard.press('Escape');
     await expect(page.locator('.glass-overlay')).toHaveCount(0);

@@ -21,6 +21,16 @@ for (const theme of ['light', 'dark']) {
     });
   }
 }
+// The reader band on Lucas's screens: half of 1920 and of 2560, 22/33, 45 % of the height at most.
+for (const [width, height] of [[1920, 1080], [2560, 1440]]) {
+  test(`reader on a ${width} px screen`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto(`/lab-frame.html?scenario=long&theme=dark&motion=reduce`);
+    await expect(page.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'complete');
+    await expect(page.locator('.translation-bubble')).toHaveCSS('width', `${width / 2}px`);
+    await expect(page).toHaveScreenshot(`reader-${width}.png`);
+  });
+}
 test('settings at narrow width', async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 640 });
   await page.goto('/lab-frame.html?scenario=settings&motion=reduce');
