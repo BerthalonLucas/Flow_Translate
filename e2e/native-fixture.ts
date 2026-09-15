@@ -1,9 +1,10 @@
+import { defaultActions, defaultBindings } from '../src/actionDefaults';
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 import type { Capture, Settings, TranslationRequest } from '../src/types';
 
-let settings: Settings = { targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
+let settings: Settings = { targetLanguage: 'fr', mode: 'quality', defaultActionId: 'translate', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
 // Like Rust since 0.1.8: canReplace is false until the second capture step (`capture-target`).
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.
@@ -20,7 +21,7 @@ mockIPC((command, args) => {
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
   if (command === 'get_history') return [];
-  if (command === 'save_settings') { const next = args?.settings as Settings; if (refuseShortcut && next.shortcut !== settings.shortcut) return Promise.reject('Le raccourci est déjà utilisé ou indisponible.'); settings = next; return; }
+  if (command === 'save_settings') { const next = args?.settings as Settings; if (refuseShortcut && JSON.stringify(next.shortcutBindings) !== JSON.stringify(settings.shortcutBindings)) return Promise.reject('Le raccourci est déjà utilisé ou indisponible.'); settings = next; return; }
   if (command === 'check_connection') return { connected, message: connected ? 'Modèle trouvé.' : 'Serveur indisponible.' };
   if (command === 'frontend_ready') return currentCapture;
   if (command === 'translate') request = args?.request as TranslationRequest;
@@ -52,3 +53,4 @@ Object.assign(window, { nativeFixture: {
   replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, anchor: null, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality', targetLanguage: 'fr' } }; return emit('capture', currentCapture); },
 } });
 await import('../src/main');
+

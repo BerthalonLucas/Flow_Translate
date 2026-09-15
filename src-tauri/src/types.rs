@@ -1,3 +1,4 @@
+use crate::actions::{ActionDefinition, ExecutionInfo, ShortcutBinding};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -78,6 +79,8 @@ pub struct Capture {
     /// displays it as complete instead of asking for a translation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<Replay>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionInfo>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -160,7 +163,9 @@ pub enum AutoClose {
 pub struct Settings {
     pub target_language: Language,
     pub mode: Mode,
-    pub shortcut: String,
+    pub actions: Vec<ActionDefinition>,
+    pub shortcut_bindings: Vec<ShortcutBinding>,
+    pub default_action_id: String,
     pub history_enabled: bool,
     pub autostart: bool,
     #[serde(default)]
@@ -194,7 +199,9 @@ impl Default for Settings {
         Self {
             target_language: Language::Fr,
             mode: Mode::Quality,
-            shortcut: "Ctrl+Alt+T".into(),
+            actions: crate::actions::defaults(),
+            shortcut_bindings: crate::actions::default_bindings("Ctrl+Alt+T".into()),
+            default_action_id: "translate".into(),
             history_enabled: false,
             autostart: false,
             connection_expanded: false,
@@ -220,6 +227,7 @@ impl Settings {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslationRequest {
+    pub action_id: String,
     pub id: String,
     pub capture_id: String,
     pub text: String,
@@ -307,6 +315,7 @@ pub struct StoredCapture {
 
 #[derive(Clone, Debug)]
 pub struct CompletedResult {
+    pub execution: Option<ExecutionInfo>,
     pub request_id: String,
     pub capture_id: String,
     pub source_text: String,
@@ -315,3 +324,4 @@ pub struct CompletedResult {
     pub mode: Mode,
     pub complete: bool,
 }
+

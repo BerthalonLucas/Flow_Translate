@@ -1,3 +1,5 @@
+mod actions;
+use actions::{Execution, OutputMode};
 mod capture;
 mod crypto;
 mod history;
@@ -28,6 +30,7 @@ struct Inner {
     pending_capture: Option<Capture>,
     active: Option<Active>,
     completed: Option<CompletedResult>,
+    execution: Option<Execution>,
     side: Option<PlacementSide>,
     frontend_ready: bool,
     visible: bool,
@@ -70,6 +73,7 @@ impl Inner {
             pending_capture: None,
             active: None,
             completed: None,
+            execution: None,
             side: None,
             frontend_ready: false,
             visible: false,
@@ -134,6 +138,7 @@ impl Inner {
 struct AppState {
     inner: Arc<Mutex<Inner>>,
     settings_store: SettingsStore,
+    settings_lock: Mutex<()>,
     history: HistoryStore,
     demo: bool,
     demo_clipboard: bool,
@@ -151,18 +156,17 @@ fn get_settings(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Res
 }
 
 fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
-    let shortcut: Shortcut = value
-        .parse()
-        .map_err(|_| "Le raccourci n’est pas reconnu.".to_string())?;
+    let shortcut = actions::parse_shortcut(value)?;
+    let shortcut_id = shortcut.id();
     app.global_shortcut()
-        .on_shortcut(shortcut, |app, _, event| {
+        .on_shortcut(shortcut, move |app, _, event| {
             if event.state == ShortcutState::Pressed {
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<AppState>();
                     // Every press translates the current selection (clipboard fallback
                     // included); the docked tab brings the previous glass back on hover.
-                    if let Err(message) = capture_text(app.clone(), state) {
+                    if let Err(message) = capture_with_binding(app.clone(), &state, Some(shortcut_id)) {
                         capture_error(&app, &message, true);
                     }
                 });
@@ -176,6 +180,7 @@ fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
+    let _save_guard = state.settings_lock.lock().map_err(|_| lock_error())?;
     settings::validate(&settings)?;
     let old = state
         .inner
@@ -183,9 +188,17 @@ fn save_settings(
         .map_err(|_| lock_error())?
         .settings
         .clone();
-    let changed = settings.shortcut != old.shortcut;
-    if changed {
-        register_shortcut(&app, &settings.shortcut)?;
+    let old_keys = old.shortcut_bindings.iter().filter(|b| b.enabled).map(|b| actions::parse_shortcut(&b.shortcut)).collect::<Result<Vec<_>, _>>()?;
+    let new_keys = settings.shortcut_bindings.iter().filter(|b| b.enabled).map(|b| actions::parse_shortcut(&b.shortcut)).collect::<Result<Vec<_>, _>>()?;
+    let mut added: Vec<Shortcut> = Vec::new();
+    for binding in settings.shortcut_bindings.iter().filter(|b| b.enabled) {
+        let key = actions::parse_shortcut(&binding.shortcut)?;
+        if old_keys.iter().any(|old| old.id() == key.id()) { continue; }
+        if let Err(error) = register_shortcut(&app, &binding.shortcut) {
+            for key in added { let _ = app.global_shortcut().unregister(key); }
+            return Err(error);
+        }
+        added.push(key);
     }
     let result = (|| {
         if settings.autostart != old.autostart {
@@ -199,9 +212,7 @@ fn save_settings(
         state.settings_store.save(&settings)
     })();
     if let Err(err) = result {
-        if changed {
-            let _ = app.global_shortcut().unregister(settings.shortcut.as_str());
-        }
+        for key in added { let _ = app.global_shortcut().unregister(key); }
         if settings.autostart != old.autostart {
             let _ = if old.autostart {
                 app.autolaunch().enable()
@@ -211,15 +222,14 @@ fn save_settings(
         }
         return Err(err);
     }
-    if changed {
-        let _ = app.global_shortcut().unregister(old.shortcut.as_str());
-    }
+
     state.inner.lock().map_err(|_| lock_error())?.settings = settings.clone();
-    app.emit_to("settings", "settings-changed", &settings)
-        .map_err(|_| "Notification des réglages indisponible.".to_string())?;
-    let mut public=settings;
-    for profile in public.profiles.values_mut(){profile.api_key.clear();}
-    for label in ["overlay","capsule"]{app.emit_to(label,"settings-changed",&public).map_err(|_|"Notification des réglages indisponible.".to_string())?;}
+    for key in old_keys { if !new_keys.iter().any(|new| new.id() == key.id()) { let _ = app.global_shortcut().unregister(key); } }
+    let _ = app.emit_to("settings", "settings-changed", &settings);
+    let mut public = settings;
+    for profile in public.profiles.values_mut() { profile.api_key.clear(); }
+    for label in ["overlay", "capsule"] { let _ = app.emit_to(label, "settings-changed", &public); }
+
     Ok(())
 }
 fn store_capture(
@@ -227,14 +237,19 @@ fn store_capture(
     state: &AppState,
     captured: StoredCapture,
     source: isize,
+    mut execution: Option<Execution>,
 ) -> Result<Capture, String> {
     let mut captured = captured;
     // An anchored capture opens on its selection's screen; the others on the cursor's.
     // The frontend sizes the reader band from that screen (`Capture.screen`).
     let (work, scale, monitor) = host::monitor_at(captured.public.anchor);
     captured.public.screen = Some(Screen { width: work.width / scale, height: work.height / scale, scale });
-    let public = captured.public.clone();
     let deferred = captured.target.clone().filter(|_| !state.demo);
+    if let Some(run) = execution.as_mut() {
+        run.target_pending = deferred.is_some();
+        captured.public.execution = Some(run.info.clone());
+    }
+    let public = captured.public.clone();
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         i.cancel(None);
@@ -242,6 +257,7 @@ fn store_capture(
         i.notice_generation = i.notice_generation.wrapping_add(1);
         i.side = None;
         i.capture = Some(captured);
+        i.execution = execution;
         i.visible = true;
         i.source_window = source;
         i.source_rect = host::window_rect(source);
@@ -288,18 +304,22 @@ fn store_capture(
         let app = app.clone();
         let capture_id = public.id.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            let Some((selection_start, win32)) = capture::complete_target(&target) else { return };
-            let can_replace = win32.is_some();
+            let resolved = capture::complete_target(&target);
             let state = app.state::<AppState>();
-            {
+            let can_replace = {
                 let Ok(mut i) = state.inner.lock() else { return };
-                let Some(current) = i.capture.as_mut().filter(|c| c.public.id == capture_id) else { return };
-                let Some(identity) = current.target.as_mut() else { return };
-                identity.selection_start = Some(selection_start);
-                identity.win32 = win32;
-                current.public.can_replace = can_replace;
-            }
+                if i.capture.as_ref().is_none_or(|c| c.public.id != capture_id) { return; }
+                if let Some(run) = i.execution.as_mut() { run.target_pending = false; }
+                let Some(current) = i.capture.as_mut() else { return };
+                if let (Some(identity), Some((selection_start, win32))) = (current.target.as_mut(), resolved) {
+                    identity.selection_start = Some(selection_start);
+                    identity.win32 = win32;
+                    current.public.can_replace = identity.win32.is_some();
+                }
+                current.public.can_replace
+            };
             let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace });
+            schedule_auto_delivery(&app, None);
         });
     }
     Ok(public)
@@ -375,9 +395,10 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             target_language: result.target_language,
         }),
         screen: None,
+        execution: result.execution.clone().map(|mut info| { info.output_mode = OutputMode::Display; info }),
     };
     let capture_id = public.id.clone();
-    store_capture(app, &state, StoredCapture { public, target: None }, host::foreground())?;
+    store_capture(app, &state, StoredCapture { public, target: None }, host::foreground(), None)?;
     let mut i = state.inner.lock().map_err(|_| lock_error())?;
     if i.capture.as_ref().is_some_and(|c| c.public.id == capture_id) {
         i.completed = Some(CompletedResult { capture_id, ..result });
@@ -386,6 +407,19 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
+    capture_with_binding(app, &state, None)
+}
+fn capture_with_binding(app: AppHandle, state: &AppState, shortcut_id: Option<u32>) -> Result<Capture, String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        if host::belongs_to(&window, host::foreground()) { return Err("Fermez les réglages avant d’utiliser un raccourci.".into()); }
+    }
+    let execution = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        let binding = if let Some(id) = shortcut_id {
+            Some(i.settings.shortcut_bindings.iter().find(|b| b.enabled && actions::parse_shortcut(&b.shortcut).is_ok_and(|key| key.id() == id)).ok_or("Ce raccourci n’est plus actif.")?)
+        } else { None };
+        Execution::snapshot(&i.settings, binding)?
+    };
     let source = host::foreground();
     let mut captured = capture::capture_current(state.demo, source)?;
     if state.demo_long {
@@ -397,7 +431,7 @@ fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, S
         captured.public.can_replace = false;
         captured.target = None;
     }
-    let result = store_capture(&app, &state, captured, source);
+    let result = store_capture(&app, state, captured, source, Some(execution));
     if result.is_ok() {
         reset_tray_tooltip(&app, state.simulated);
     }
@@ -419,7 +453,7 @@ fn translate(
     if request.text.is_empty() || request.text.chars().count() > 6000 {
         return Err("La traduction accepte de 1 à 6 000 caractères.".into());
     }
-    let (profile, cancel, inner, history, demo, demo_long) = {
+    let (profile, prompt, execution_info, cancel, inner, history, demo, demo_long) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         let captured = i
             .capture
@@ -431,7 +465,16 @@ fn translate(
         {
             return Err("La capture n’est plus active.".into());
         }
-        let profile = i.settings.profile(request.mode)?.clone();
+        let run = i.execution.as_mut().ok_or("Cette capture ne peut pas être relancée. Sélectionnez à nouveau le texte.")?;
+        if request.action_id != run.info.action_id || request.target_language != run.info.target_language {
+            return Err("L’action ou la langue ne correspond pas à la capture.".into());
+        }
+        if !run.started && request.mode != run.info.mode { return Err("Le profil ne correspond pas à la capture.".into()); }
+        let key = match request.mode { Mode::Fast => "fast", Mode::Quality => "quality" };
+        let profile = run.profiles.get(key).ok_or("Le profil est absent.")?.clone();
+        let prompt = actions::render(&run.action.prompt_template, &request.text, request.target_language)?;
+        let execution_info = run.info.clone();
+        run.begin(&request.id);
         i.cancel(None);
         i.completed = None;
         let cancel = CancellationToken::new();
@@ -441,6 +484,8 @@ fn translate(
         });
         (
             profile,
+            prompt,
+            execution_info,
             cancel,
             state.inner.clone(),
             state.history.clone(),
@@ -487,8 +532,7 @@ fn translate(
         } else {
             inference::stream(
                 profile,
-                request.text.clone(),
-                request.target_language,
+                prompt,
                 cancel,
                 |chunk| {
                     let i = inner.lock().map_err(|_| lock_error())?;
@@ -518,9 +562,11 @@ fn translate(
         if !i.current(&id) {
             return;
         }
+        let timeout_id = id.clone();
         match result {
             Ok(text) => {
                 i.completed = Some(CompletedResult {
+                    execution: Some(execution_info),
                     request_id: id.clone(),
                     capture_id: request.capture_id,
                     source_text: request.text.clone(),
@@ -550,6 +596,16 @@ fn translate(
                         message: None,
                     },
                 );
+                drop(i);
+                schedule_auto_delivery(&app, None);
+                // Bound a delayed target resolver. A late resolver must not deliver twice.
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let state = handle.state::<AppState>();
+                    let current = state.inner.lock().is_ok_and(|i| i.completed.as_ref().is_some_and(|r| r.request_id == timeout_id));
+                    if current { schedule_auto_delivery(&handle, Some(timeout_id)); }
+                });
             }
             Err(message) => {
                 i.active = None;
@@ -583,6 +639,33 @@ fn result_for(state: &AppState, id: &str) -> Result<CompletedResult, String> {
         .clone()
         .filter(|r| r.request_id == id && r.complete && i.visible)
         .ok_or_else(|| "Aucun résultat complet pour cette requête.".into())
+}
+fn schedule_auto_delivery(app: &AppHandle, timeout_id: Option<String>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        // Keep the state lock through the native revalidation/write: a new capture,
+        // relaunch or dismissal cannot commit between the identity check and delivery.
+        let Ok(mut i) = state.inner.lock() else { return };
+        if !i.visible || i.pending_dismiss.is_some() || i.active.is_some() { return; }
+        let Some(result) = i.completed.clone() else { return };
+        let Some(run) = i.execution.as_mut() else { return };
+        if let Some(id) = timeout_id {
+            if result.request_id != id { return; }
+            run.target_pending = false;
+        }
+        if !run.claim_delivery(&result.request_id) { return; }
+        let target = i.capture.as_ref().filter(|c| c.public.id == result.capture_id && c.public.can_replace).and_then(|c| c.target.clone());
+        let applied = target.as_ref().is_some_and(|target| capture::replace_automatic(target, &result.translated_text).is_ok());
+        if applied {
+            if let Some(c) = i.capture.as_mut() { c.public.can_replace = false; c.target = None; }
+        }
+        let _ = app.emit_to("overlay", "result-delivery", serde_json::json!({
+            "requestId": result.request_id,
+            "status": if applied { "applied" } else { "fallback" },
+            "message": if applied { "La sélection a été remplacée." } else { "Remplacement automatique impossible. Le résultat reste dans la bulle ; utilisez Copier." }
+        }));
+    });
 }
 #[tauri::command]
 fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
@@ -675,19 +758,6 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
     w.show()
         .and_then(|_| w.set_focus())
         .map_err(|_| "Ouverture des réglages impossible.".into())
-}
-#[tauri::command]
-fn resize_settings(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
-    // The settings window has no system frame: its height follows the React content,
-    // capped to the work area so the document scrolls instead of leaving the screen.
-    if window.label() != "settings" { return Err("Fenêtre inattendue.".into()); }
-    if !height.is_finite() || height < 120. || height > 2000. { return Err("Hauteur invalide.".into()); }
-    let scale = window.scale_factor().map_err(|_| "Fenêtre indisponible.".to_string())?;
-    let (work, _) = host::monitor(host::window_rect(host::handle(&window)));
-    let logical_height = height.min((work.height / scale - 40.).max(120.)).round();
-    window
-        .set_size(tauri::LogicalSize::new(520., logical_height))
-        .map_err(|_| "Redimensionnement indisponible.".to_string())
 }
 #[tauri::command]
 fn drag_settings(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -1241,11 +1311,12 @@ pub fn run() {
             });
             let demo_clipboard = args.iter().any(|a| a == "--demo-clipboard");
             let demo_long = args.iter().any(|a| a == "--demo-long");
-            let shortcut = settings.shortcut.clone();
+            let shortcuts = settings.shortcut_bindings.iter().filter(|b| b.enabled).map(|b| b.shortcut.clone()).collect::<Vec<_>>();
             let simulated = demo || args.iter().any(|a| a == "--simulate-inference");
             app.manage(AppState {
                 inner: Arc::new(Mutex::new(Inner::new(settings))),
                 settings_store: store,
+                settings_lock: Mutex::new(()),
                 history,
                 demo,
                 demo_clipboard,
@@ -1314,9 +1385,11 @@ pub fn run() {
                     }
                 });
             }
-            if let Err(message) = register_shortcut(app.handle(), &shortcut) {
-                capture_error(app.handle(), &message, false);
-                let _ = open_settings(app.handle().clone());
+            for shortcut in shortcuts {
+                if let Err(message) = register_shortcut(app.handle(), &shortcut) {
+                    capture_error(app.handle(), &message, false);
+                    let _ = open_settings(app.handle().clone());
+                }
             }
             host::install_escape_hook()?;
             watch_context(app.handle().clone());
@@ -1348,7 +1421,6 @@ pub fn run() {
             override_cursor,
             resize_overlay,
             overlay_dimming,
-            resize_settings,
             drag_settings,
             quit_app,
             start_drag,
@@ -1437,3 +1509,4 @@ mod tests {
         assert!(validate_regions(&[SurfaceRegion { width: 281., ..valid }], 280., 114.).is_err());
     }
 }
+

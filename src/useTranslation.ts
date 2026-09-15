@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
-import type { Capture, CaptureNotice, CaptureTarget, Language, Mode, Screen, Settings, StreamEvent } from './types';
+import type { Capture, CaptureNotice, CaptureTarget, Language, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
@@ -45,14 +45,14 @@ export function useTranslation(readyOnMount = false) {
   }, []);
 
   const start = useCallback((capture: Capture, forced?: { mode?: Mode; targetLanguage?: Language }) => {
-    const mode = forced?.mode ?? settingsRef.current?.mode ?? 'quality';
-    const targetLanguage = forced?.targetLanguage ?? settingsRef.current?.targetLanguage ?? 'fr';
+    const mode = forced?.mode ?? capture.execution?.mode ?? settingsRef.current?.mode ?? 'quality';
+    const targetLanguage = forced?.targetLanguage ?? capture.execution?.targetLanguage ?? settingsRef.current?.targetLanguage ?? 'fr';
     const id = crypto.randomUUID();
     discardPending();
     requestRef.current = id;
     dispatch({ type: 'START', requestId: id, mode, targetLanguage });
-    void bridge.translate({ id, captureId: capture.id, text: capture.text, targetLanguage, mode }).catch(() => {
-      if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: 'La traduction n’a pas pu démarrer.' } });
+    void bridge.translate({ id, captureId: capture.id, text: capture.text, targetLanguage, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate' }).catch((error: unknown) => {
+      if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : 'L’action n’a pas pu démarrer.' } });
     });
   }, [discardPending]);
 
@@ -108,6 +108,11 @@ export function useTranslation(readyOnMount = false) {
       }),
       bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
       bridge.on<CaptureNotice>('capture-notice', ({ message }) => showNotice(message)),
+      bridge.on<ResultDelivery>('result-delivery', event => {
+        if (event.requestId !== requestRef.current || closingRef.current) return;
+        dispatch({ type: 'DELIVERY', event });
+        showNotice(event.message);
+      }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
     ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
@@ -139,3 +144,4 @@ export function useTranslation(readyOnMount = false) {
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;
+

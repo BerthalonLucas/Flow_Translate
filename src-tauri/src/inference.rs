@@ -1,6 +1,6 @@
 use crate::{
     settings::validate_endpoint,
-    types::{Language, Profile, StreamKind},
+    types::{Profile, StreamKind},
 };
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -107,8 +107,7 @@ fn rejects_extended_sampling(status: u16, detail: &str) -> bool {
 
 pub async fn stream<F>(
     profile: Profile,
-    text: String,
-    lang: Language,
+    prompt: String,
     cancel: CancellationToken,
     mut emit: F,
 ) -> Result<String, String>
@@ -116,11 +115,6 @@ where
     F: FnMut(Chunk) -> Result<(), String>,
 {
     let endpoint = api_url(&profile.endpoint, "chat/completions")?;
-    let target = match lang {
-        Language::Fr => "French",
-        Language::En => "English",
-    };
-    let prompt = format!("Translate the following text into {target}. Note that you should only output the translated result without any additional explanation:\n{text}");
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -327,3 +321,4 @@ mod tests {
         assert_eq!(d.push(b"data: [DONE]\r\n\r\n").unwrap(), vec![Item::Done]);
     }
 }
+

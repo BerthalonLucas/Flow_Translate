@@ -46,15 +46,17 @@
       {
         "label": "settings",
         "create": false,
-        "title": "Réglages FlowTranslate",
+        "title": "R\u00e9glages FlowTranslate",
         "url": "/?window=settings",
-        "width": 520,
-        "height": 540,
+        "width": 620,
+        "height": 720,
         "visible": false,
         "decorations": false,
         "transparent": false,
-        "resizable": false,
-        "center": true
+        "resizable": true,
+        "center": true,
+        "minWidth": 460,
+        "minHeight": 420
       }
     ],
     "security": {
@@ -63,8 +65,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser",

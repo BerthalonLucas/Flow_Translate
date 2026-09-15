@@ -133,3 +133,49 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .preview-label { position: fixed; left: 14px; top: 12px; color: #233e5c; font-size: 11px; }
 .initialization-error { width: 380px; padding: 16px; border-radius: 28px; background: rgba(24,26,31,.96); font-size: 13px; }
 @media (max-height: 250px) { .preview-label { display: none; } }
+
+/* Flexible settings window: fixed title/footer, one scrollable body. */
+body.flowtranslate-settings { height: 100vh; overflow: hidden; }
+.settings-window { width: 100%; max-width: none; height: 100vh; min-height: 0; overflow: hidden; }
+.settings-titlebar, .settings-window footer { flex: none; }
+.settings-scroll { flex: 1; min-height: 0; overflow: hidden; }
+.settings-scroll-viewport { width: 100%; height: 100%; }
+.settings-scrollbar { display: flex; width: 12px; padding: 3px; user-select: none; touch-action: none; }
+.settings-scrollbar:hover { background: rgba(255,255,255,.035); }
+.settings-scroll-thumb { flex: 1; position: relative; min-height: 36px; border-radius: 999px; background: rgba(210,224,244,.36); transition: background-color 140ms ease; }
+.settings-scrollbar:hover .settings-scroll-thumb { background: rgba(210,224,244,.6); }
+.settings-body { padding: 8px 22px 24px; gap: 24px; }
+.settings-window :is(select, textarea) { width: 100%; min-width: 0; border: 1px solid rgba(255,255,255,.12); border-radius: 7px; color: var(--settings-text); background: var(--settings-field); font: inherit; }
+.settings-window select { min-height: 34px; padding: 5px 8px; color-scheme: dark; }
+.settings-window textarea { min-height: 90px; padding: 10px; resize: vertical; font: 12px/1.5 "Cascadia Code", Consolas, monospace; }
+.settings-window textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+.section-heading p, .settings-help { margin: 3px 2px 0; color: rgba(238,240,244,.6); font-size: 12px; }
+.section-heading .text-button { flex: none; }
+.default-action { max-width: 280px; margin: 4px 0 10px; }
+.action-list, .shortcut-list { display: grid; gap: 8px; padding: 0; margin: 0; min-width: 0; border: 0; }
+.action-card, .shortcut-card { border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(255,255,255,.04); }
+.action-card summary { display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; list-style: none; font-weight: 500; }
+.action-card summary::-webkit-details-marker { display: none; }
+.action-card summary small { margin-left: auto; color: rgba(238,240,244,.45); font-size: 11px; font-weight: normal; }
+.action-card[open] summary svg { transform: rotate(180deg); }
+.action-editor { display: grid; gap: 10px; padding: 0 12px 12px; }
+.action-editor small { color: rgba(238,240,244,.6); }
+.action-editor code { color: #cfe0fa; }
+.action-editor .text-button { justify-self: start; }
+.shortcut-card { display: grid; gap: 12px; padding: 12px; }
+.shortcut-card-heading { display: flex; align-items: center; gap: 9px; font-size: 12px; color: rgba(238,240,244,.6); }
+.shortcut-card-heading .icon-button { width: 26px; height: 26px; margin-left: auto; color: inherit; }
+.shortcut-control { justify-content: space-between; }
+.shortcut-options { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.settings-help { line-height: 1.5; margin-top: 8px; }
+.save-error-detail { flex: none; margin: 0; padding: 4px 22px 10px; color: var(--error-text); font-size: 12px; }
+.settings-resize-grip { position: absolute; right: 0; bottom: 0; padding: 0; width: 16px; height: 16px; border: 0; color: rgba(238,240,244,.35); background: transparent; cursor: nwse-resize; font-size: 11px; }
+@media (max-width: 540px) {
+  .setting-row { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+  .setting-row .setting-copy { flex: 1 1 240px; }
+  .segmented { flex-wrap: wrap; }
+  .shortcut-options, .field-grid { grid-template-columns: 1fr; }
+  .section-heading { flex-wrap: wrap; }
+}
+

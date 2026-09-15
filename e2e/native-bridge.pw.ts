@@ -307,7 +307,7 @@ test('IPC fixture: a refused shortcut keeps the previous combination and explain
   await page.evaluate(() => window.nativeFixture.refuseShortcut());
   await page.getByRole('button', { name: 'Modifier', exact: true }).click();
   await page.keyboard.press('Control+Alt+Y');
-  await expect(page.getByRole('alert')).toHaveText('Déjà utilisé par une autre application');
+  await expect(page.getByRole('alert')).toHaveText('Le raccourci est déjà utilisé ou indisponible.');
   await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'T']);
   await expect(page.locator('.save-status')).toHaveText('Enregistré');
 });
@@ -464,3 +464,4 @@ test('IPC fixture: a replayed result is complete at once, at the bottom, and ask
   expect(await translations()).toBe(before);
   await expect.poll(async () => (await geometry(page))?.presentation).toBe('bottom');
 });
+

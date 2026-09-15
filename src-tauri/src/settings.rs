@@ -1,3 +1,4 @@
+use crate::actions::{self, ActionDefinition, ShortcutBinding};
 use crate::{
     crypto,
     types::{Profile, Settings},
@@ -21,7 +22,14 @@ pub struct SettingsStore {
 struct PersistedSettings {
     target_language: crate::types::Language,
     mode: crate::types::Mode,
-    shortcut: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shortcut: Option<String>,
+    #[serde(default)]
+    actions: Option<Vec<ActionDefinition>>,
+    #[serde(default)]
+    shortcut_bindings: Option<Vec<ShortcutBinding>>,
+    #[serde(default)]
+    default_action_id: Option<String>,
     history_enabled: bool,
     autostart: bool,
     #[serde(default)]
@@ -79,7 +87,9 @@ impl SettingsStore {
         let settings = Settings {
             target_language: raw.target_language,
             mode: raw.mode,
-            shortcut: raw.shortcut,
+            actions: raw.actions.unwrap_or_else(actions::defaults),
+            shortcut_bindings: raw.shortcut_bindings.unwrap_or_else(|| actions::default_bindings(raw.shortcut.unwrap_or_else(|| "Ctrl+Alt+T".into()))),
+            default_action_id: raw.default_action_id.unwrap_or_else(|| "translate".into()),
             history_enabled: raw.history_enabled,
             autostart: raw.autostart,
             connection_expanded: raw.connection_expanded,
@@ -112,7 +122,10 @@ impl SettingsStore {
         let raw = PersistedSettings {
             target_language: settings.target_language,
             mode: settings.mode,
-            shortcut: settings.shortcut.clone(),
+            shortcut: None,
+            actions: Some(settings.actions.clone()),
+            shortcut_bindings: Some(settings.shortcut_bindings.clone()),
+            default_action_id: Some(settings.default_action_id.clone()),
             history_enabled: settings.history_enabled,
             autostart: settings.autostart,
             connection_expanded: settings.connection_expanded,
@@ -169,9 +182,7 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
 }
 
 pub fn validate(settings: &Settings) -> Result<(), String> {
-    if settings.shortcut.trim().is_empty() || settings.shortcut.len() > 80 {
-        return Err("Le raccourci global est invalide.".into());
-    }
+    actions::validate(settings)?;
     for required in ["fast", "quality"] {
         let profile = settings
             .profiles
@@ -252,3 +263,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+

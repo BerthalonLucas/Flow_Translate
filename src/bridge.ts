@@ -1,13 +1,14 @@
+import { defaultActions, defaultBindings } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  targetLanguage: 'fr', mode: 'quality', shortcut: 'Ctrl+Alt+T', historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
+  targetLanguage: 'fr', mode: 'quality', defaultActionId: 'translate', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -84,7 +85,9 @@ export const bridge = {
     if (native) { const { getCurrentWindow } = await import('@tauri-apps/api/window'); return getCurrentWindow().close(); }
     location.assign('/');
   },
-  resizeSettings: (height: number) => command<void>('resize_settings', { height }),
+  resizeSettingsCorner: async () => {
+    if (native) { const { getCurrentWindow } = await import('@tauri-apps/api/window'); await getCurrentWindow().startResizeDragging('SouthEast'); }
+  },
   dragSettings: () => command<void>('drag_settings'),
   quit: () => command<void>('quit_app'),
   translate: (request: TranslationRequest) => command<void>('translate', { request }),
@@ -112,3 +115,4 @@ export const bridge = {
   // Browser preview only: what Rust emits when the cursor changes screen under a bottom form.
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
 };
+
