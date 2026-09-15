@@ -1,6 +1,9 @@
 mod actions;
 use actions::{Execution, OutputMode};
 mod capture;
+mod clipboard_guard;
+#[cfg(test)]
+mod replacement_tests;
 mod crypto;
 mod history;
 mod host;
@@ -316,10 +319,9 @@ fn store_capture(
                 if i.capture.as_ref().is_none_or(|c| c.public.id != capture_id) { return; }
                 if let Some(run) = i.execution.as_mut() { run.target_pending = false; }
                 let Some(current) = i.capture.as_mut() else { return };
-                if let (Some(identity), Some((selection_start, win32))) = (current.target.as_mut(), resolved) {
-                    identity.selection_start = Some(selection_start);
-                    identity.win32 = win32;
-                    current.public.can_replace = identity.win32.is_some();
+                if let (Some(identity), Some(resolved)) = (current.target.as_mut(), resolved) {
+                    *identity = resolved;
+                    current.public.can_replace = identity.editable && (identity.win32.is_some() || identity.document.is_some());
                 }
                 current.public.can_replace
             };
@@ -661,14 +663,18 @@ fn schedule_auto_delivery(app: &AppHandle, timeout_id: Option<String>) {
         }
         if !run.claim_delivery(&result.request_id) { return; }
         let target = i.capture.as_ref().filter(|c| c.public.id == result.capture_id && c.public.can_replace).and_then(|c| c.target.clone());
-        let applied = target.as_ref().is_some_and(|target| capture::replace_automatic(target, &result.translated_text).is_ok());
-        if applied {
-            if let Some(c) = i.capture.as_mut() { c.public.can_replace = false; c.target = None; }
+        let outcome = target.as_ref().ok_or_else(|| "La cible modifiable n’est plus valide.".to_string()).and_then(|target| capture::replace_automatic(target, &result.translated_text));
+        let applied = outcome.is_ok();
+        if target.is_some() {
+            if let Some(c) = i.capture.as_mut() {
+                c.public.can_replace = false; c.target = None;
+                let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id: c.public.id.clone(), can_replace: false });
+            }
         }
         let _ = app.emit_to("overlay", "result-delivery", serde_json::json!({
             "requestId": result.request_id,
             "status": if applied { "applied" } else { "fallback" },
-            "message": if applied { "La sélection a été remplacée." } else { "Remplacement automatique impossible. Le résultat reste dans la bulle ; utilisez Copier." }
+            "message": if applied { "La sélection a été remplacée." } else { outcome.as_ref().err().map(String::as_str).unwrap_or("Le résultat reste dans la bulle.") }
         }));
     });
 }
@@ -682,23 +688,27 @@ fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), Str
         .map_err(|_| "La copie est indisponible.".into())
 }
 #[tauri::command]
-async fn replace_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
     let r = result_for(&state, &request_id)?;
-    let target = {
-        let i = state.inner.lock().map_err(|_| lock_error())?;
-        let c = i
-            .capture
-            .as_ref()
-            .filter(|c| c.public.id == r.capture_id && c.public.can_replace)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.active.is_some() || i.pending_dismiss.is_some()
+            || i.completed.as_ref().is_none_or(|done| done.request_id != r.request_id) {
+            return Err("Ce résultat n’est plus actif.".into());
+        }
+        let fg = host::foreground();
+        let ours = ["overlay", "capsule"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
+        let c = i.capture.as_mut().filter(|c| c.public.id == r.capture_id && c.public.can_replace)
             .ok_or_else(|| "La cible modifiable n’est plus valide. Utilisez Copier.".to_string())?;
-        c.target
-            .clone()
-            .ok_or_else(|| "La cible modifiable n’est plus valide.".to_string())?
-    };
-    // UI Automation uses an MTA worker, never the WebView's STA UI thread.
-    tauri::async_runtime::spawn_blocking(move || capture::replace(&target, &r.translated_text))
-        .await.map_err(|_| "Le remplacement a été interrompu. Utilisez Copier.".to_string())?
+        let target = c.target.take().ok_or_else(|| "La cible modifiable n’est plus valide.".to_string())?;
+        c.public.can_replace = false;
+        let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id: c.public.id.clone(), can_replace: false });
+        if fg != target.native_window && !ours { return Err("La fenêtre source a changé; remplacement refusé.".into()); }
+        capture::replace(&target, &r.translated_text)
+    }).await.map_err(|_| "Le remplacement a été interrompu. Vérifiez le champ source avant de réessayer.".to_string())?
 }
+
 fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
     let handle = app.clone();
     app.run_on_main_thread(move || {
@@ -1255,7 +1265,7 @@ fn watch_context(app: AppHandle) {
                 continue;
             }
             let Some(captured) = snapshot.2 else { continue };
-            if captured.public.anchor.is_none() {
+            if captured.target.is_none() && captured.public.anchor.is_none() {
                 continue;
             }
             let moved = host::window_rect(snapshot.0) != snapshot.1;

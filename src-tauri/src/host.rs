@@ -627,7 +627,7 @@ pub fn suppress_clipboard_tracking(window: Duration) {
     CLIPBOARD_SEEN.store(clipboard_sequence(), Ordering::Release);
 }
 
-fn modifiers_down() -> bool {
+pub fn modifiers_down() -> bool {
     [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
         .iter()
         .any(|key| unsafe { GetAsyncKeyState(key.0 as i32) } < 0)
@@ -678,7 +678,25 @@ pub fn send_copy_chord() -> Result<(), String> {
     ];
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
+        if sent > 0 {
+            let release = [key_input(VK_INSERT, true, true), key_input(VK_CONTROL, false, true)];
+            unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        }
         return Err("La copie synthétique a été bloquée.".into());
+    }
+    Ok(())
+}
+
+/// One serial batch, no Ctrl+A and no Enter: the target editor handles paste/undo.
+pub fn send_paste_chord() -> Result<(), u32> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_V;
+    let inputs = [key_input(VK_CONTROL, false, false), key_input(VK_V, false, false),
+        key_input(VK_V, false, true), key_input(VK_CONTROL, false, true)];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        let release = [key_input(VK_V, false, true), key_input(VK_CONTROL, false, true)];
+        if sent > 0 { unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); } }
+        return Err(sent);
     }
     Ok(())
 }
