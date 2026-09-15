@@ -1,3 +1,18 @@
+# 0.1.8 — capture directe : plus de Ctrl+C, plus de boîte de dialogue
+
+Le raccourci suffit : sans sélection lisible par UI Automation (Teams, Discord, Word,
+VS Code…), FlowTranslate copie lui-même la sélection (Ctrl+Insert synthétique une fois
+le raccourci relâché, jamais SIGINT dans un terminal), la traduit et remet le
+presse-papiers tel qu’il était, sans alimenter Win+V. Une copie faite soi-même moins de
+trois secondes avant reste traduite. Un ancien contenu non texte du presse-papiers
+(image, fichiers) n’est pas restauré.
+
+La fenêtre s’ouvre dès que le texte est connu ; le contrôle natif est lu ensuite et
+« Remplacer » n’apparaît qu’une fois vérifié. Quand il n’y a rien à traduire, une petite
+pilule en bas de l’écran de la souris le dit et s’efface en quatre secondes : plus de
+boîte de dialogue à fermer. L’icône de notification propose « Revoir la dernière
+traduction » pendant dix minutes.
+
 # 0.1.7 — fluidité : plus de bandeau, fenêtre réservée, délai de grâce
 
 Plus de barre de titre « FlowTranslate » peinte sur la bulle quand une autre fenêtre

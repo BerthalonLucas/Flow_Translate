@@ -116,6 +116,51 @@ Le lot applique les six critères en une fois, sans matériau natif nouveau.
   Réglages ouverts et fermés sous le watcher, 47 captures à luminance constante, un seul
   rect). Le jugement à l’œil de Lucas reste la dernière étape.
 
+## Cinquième retour du 14 septembre 2026 (usage réel de la 0.1.7)
+
+Lucas juge la 0.1.7 « mieux au global » et relève ce qui reste faux dans la boucle
+*sélectionner → contrôler → lire → comprendre → laisser partir* : devoir faire Ctrl+C
+avant le raccourci, une bulle qui reste trop longtemps, « Agrandir » inutile (un long
+texte doit être grand d’office, en bande centrée en bas), un anneau trop petit pour la
+fenêtre (il veut des « pointillés qui sautent »), un texte qui manque de finesse, et la
+bande du bas qui doit suivre la souris d’un écran à l’autre. Conception UX faite par un
+agent puis relue par un second ; décisions par questions fermées : Ctrl+C simulé en
+repli, copie de moins de 3 s acceptée, lecteur à la moitié de la largeur de l’écran
+courant (aucune valeur d’écran en dur), toujours en bas, fixe ; disparition rapide
+(≈ 3–4 s) une fois la souris partie ; budget de lecture estimé puis fondu. Le travail se
+fait désormais sur `BerthalonLucas/Flow_Translate` (toutes les branches poussées le
+14/09, une pull request par lot).
+
+### Lot « capture directe » 0.1.8 (14 septembre 2026)
+
+- Le raccourci copie lui-même : sans sélection UIA, `capture::synthetic_copy` attend le
+  relâchement de la corde du raccourci, envoie Ctrl+Insert (`host::send_copy_chord`,
+  la corde de copie CUA, jamais SIGINT dans un terminal), attend le changement de
+  `GetClipboardSequenceNumber`, lit le texte et remet l’ancien contenu texte sans
+  alimenter Win+V ni les moniteurs du presse-papiers, seulement si personne n’a écrit
+  entre-temps. Une copie faite par Lucas moins de 3 s avant reste traduite
+  (`host::track_clipboard`, sondé par le surveillant, nos écritures exclues) ; sinon avis.
+  Un ancien contenu non texte (image, fichiers) n’est pas restauré : documenté.
+- Capture en deux temps : la fenêtre s’ouvre dès le texte et l’ancre ; les décalages du
+  document et le contrôle Win32 arrivent ensuite (`complete_target`, événement
+  `capture-target`) et décident de « Remplacer ».
+- Plus de MessageBox : `show_notice` place la bulle en pilule seule (420 × 64, bas centre
+  de l’écran du curseur, aucune surface cliquable, cachée après 4 s) ou, bulle ouverte,
+  affiche l’avis comme retour d’action. `host::monitor` prend désormais l’écran du
+  curseur pour toute capture sans ancre.
+- Tray « Revoir la dernière traduction » : le dernier résultat complet est gardé 10 min
+  après la fermeture et réaffiché sans inférence (`Capture.replay`).
+- Preuves : `cargo test` (`fresh`), Vitest (`TARGET`), Playwright (pont IPC :
+  `capture-target`, avis seul sans redimensionnement, avis dans le verre, rejeu sans
+  `translate` ; atelier : scénario `notice`, défaut UI-020), références visuelles
+  `notice-*`. Matrice réelle du 14/09 sur le build 0.1.8 (`scripts/capture-matrix.ps1`,
+  table dans `docs/UI-ISSUES.md`, UI-019) : Bloc-notes et Chrome par UIA (≈ 450 ms,
+  ancrés), VS Code par la copie synthétique (438 ms, presse-papiers restauré), copie de
+  moins de 3 s acceptée dans le Bloc-notes sans sélection et dans Windows Terminal, avis
+  au-delà. La matrice a révélé que l’Insert injecté devait être un scan code étendu
+  (`KEYEVENTF_EXTENDEDKEY`), sinon Chromium lit Ctrl+Pavé0. Word, Outlook, Teams, Discord
+  restent au jugement de Lucas.
+
 ## Correction de méthode après retour de Lucas
 
 L’entrée par défaut de `/lab.html` est désormais la liste des **défauts signalés**,

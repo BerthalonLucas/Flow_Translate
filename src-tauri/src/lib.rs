@@ -45,6 +45,11 @@ struct Inner {
     last_overlay: Option<(Rect, Vec<SurfaceRegion>)>,
     last_capsule: Option<Option<Rect>>,
     measured: bool,
+    /// Bumped by every notice: the timed hide only acts on its own generation.
+    notice_generation: u64,
+    /// The last complete result, kept ten minutes after its glass closed so the tray
+    /// can show it again (« Revoir la dernière traduction »).
+    last_result: Option<(CompletedResult, std::time::Instant)>,
 }
 // Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
 #[derive(Clone, Copy, Debug)]
@@ -82,6 +87,14 @@ impl Inner {
             last_overlay: None,
             last_capsule: None,
             measured: false,
+            notice_generation: 0,
+            last_result: None,
+        }
+    }
+    /// Sets the result aside for the tray before the glass state forgets it.
+    fn retire_result(&mut self) {
+        if let Some(result) = self.completed.take() {
+            self.last_result = Some((result, std::time::Instant::now()));
         }
     }
     fn cancel(&mut self, id: Option<&str>) {
@@ -209,11 +222,14 @@ fn store_capture(
     source: isize,
 ) -> Result<Capture, String> {
     let public = captured.public.clone();
-    let (work, scale) = host::monitor(public.anchor, source);
+    let deferred = captured.target.clone().filter(|_| !state.demo);
+    // An anchored capture opens on its selection's screen; the others on the cursor's.
+    let (work, scale) = host::monitor(public.anchor);
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         i.cancel(None);
-        i.completed = None;
+        i.retire_result();
+        i.notice_generation = i.notice_generation.wrapping_add(1);
         i.side = None;
         i.capture = Some(captured);
         i.visible = true;
@@ -254,7 +270,106 @@ fn store_capture(
         app.emit_to("overlay", "capture", &public)
             .map_err(|_| "Affichage de la capture indisponible.".to_string())?;
     }
+    // Second step, behind the shown window: document offsets and the Win32 control
+    // decide whether « Remplacer » is offered (reading a whole document can be slow).
+    if let Some(target) = deferred {
+        let app = app.clone();
+        let capture_id = public.id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let Some((selection_start, win32)) = capture::complete_target(&target) else { return };
+            let can_replace = win32.is_some();
+            let state = app.state::<AppState>();
+            {
+                let Ok(mut i) = state.inner.lock() else { return };
+                let Some(current) = i.capture.as_mut().filter(|c| c.public.id == capture_id) else { return };
+                let Some(identity) = current.target.as_mut() else { return };
+                identity.selection_start = Some(selection_start);
+                identity.win32 = win32;
+                current.public.can_replace = can_replace;
+            }
+            let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace });
+        });
+    }
     Ok(public)
+}
+
+/// The glass is transparent to the desktop: a notice is a pill alone at the bottom of
+/// the cursor's screen, hidden four seconds later, or a line in the open glass. No
+/// MessageBox any more (2026-09-14).
+const NOTICE_SIZE: (f64, f64) = (420., 64.);
+const NOTICE_MS: u64 = 4_000;
+fn show_notice(app: &AppHandle, message: &str) {
+    let state = app.state::<AppState>();
+    let generation = {
+        let Ok(mut i) = state.inner.lock() else { return };
+        i.notice_generation = i.notice_generation.wrapping_add(1);
+        if i.visible { None } else { Some(i.notice_generation) }
+    };
+    let notice = CaptureNotice { message: message.to_string() };
+    let Some(generation) = generation else {
+        let _ = app.emit_to("overlay", "capture-notice", notice);
+        return;
+    };
+    let (work, scale) = host::monitor(None);
+    let rect = placement::docked(work, NOTICE_SIZE.0 * scale, NOTICE_SIZE.1 * scale);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        if state.inner.lock().is_ok_and(|i| i.visible || i.notice_generation != generation) { return; }
+        let Some(window) = handle.get_webview_window("overlay") else { return };
+        // No surface: the pill is never clickable, the whole window lets the mouse through.
+        if host::place(&window, rect).is_ok() && host::set_regions(&window, &[], scale).is_ok() {
+            let _ = handle.emit_to("overlay", "capture-notice", notice);
+        }
+    });
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(NOTICE_MS + 300)).await;
+        let inner = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            let state = inner.state::<AppState>();
+            if state.inner.lock().is_ok_and(|i| !i.visible && i.notice_generation == generation) {
+                if let Some(window) = inner.get_webview_window("overlay") { let _ = host::hide(&window); }
+            }
+        });
+    });
+}
+
+/// Tray « Revoir la dernière traduction »: shows the last complete result again, as a
+/// capture that carries its translation, for ten minutes after its glass closed.
+const REPLAY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
+fn replay_last(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let last = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        i.completed.clone().filter(|r| r.complete && i.visible)
+            .or_else(|| i.last_result.clone().filter(|(_, at)| at.elapsed() <= REPLAY_WINDOW).map(|(r, _)| r))
+    };
+    let Some(result) = last else {
+        show_notice(app, "Aucune traduction récente.");
+        return Ok(());
+    };
+    let public = Capture {
+        id: Uuid::new_v4().to_string(),
+        text: result.source_text.clone(),
+        source: CaptureSource::Clipboard,
+        origin: CaptureOrigin::Replay,
+        can_replace: false,
+        anchor: None,
+        replay: Some(Replay {
+            request_id: result.request_id.clone(),
+            translated_text: result.translated_text.clone(),
+            mode: result.mode,
+            target_language: result.target_language,
+        }),
+    };
+    let capture_id = public.id.clone();
+    store_capture(app, &state, StoredCapture { public, target: None }, host::foreground())?;
+    let mut i = state.inner.lock().map_err(|_| lock_error())?;
+    if i.capture.as_ref().is_some_and(|c| c.public.id == capture_id) {
+        i.completed = Some(CompletedResult { capture_id, ..result });
+    }
+    Ok(())
 }
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
@@ -459,6 +574,8 @@ fn result_for(state: &AppState, id: &str) -> Result<CompletedResult, String> {
 #[tauri::command]
 fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
     let r = result_for(&state, &request_id)?;
+    // Our own write must not count as a fresh copy for the next shortcut.
+    host::suppress_clipboard_tracking(std::time::Duration::from_millis(1_500));
     Clipboard::new()
         .and_then(|mut c| c.set_text(r.translated_text))
         .map_err(|_| "La copie est indisponible.".into())
@@ -503,7 +620,7 @@ fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
         i.cancel(None);
         i.visible = false;
         i.pending_capture = None;
-        i.completed = None;
+        i.retire_result();
         i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
         capture_id.map(|capture_id| {
             let pending = (capture_id, i.dismiss_generation);
@@ -553,7 +670,7 @@ fn resize_settings(window: tauri::WebviewWindow, height: f64) -> Result<(), Stri
     if window.label() != "settings" { return Err("Fenêtre inattendue.".into()); }
     if !height.is_finite() || height < 120. || height > 2000. { return Err("Hauteur invalide.".into()); }
     let scale = window.scale_factor().map_err(|_| "Fenêtre indisponible.".to_string())?;
-    let (work, _) = host::monitor(host::window_rect(host::handle(&window)), 0);
+    let (work, _) = host::monitor(host::window_rect(host::handle(&window)));
     let logical_height = height.min((work.height / scale - 40.).max(120.)).round();
     window
         .set_size(tauri::LogicalSize::new(520., logical_height))
@@ -717,7 +834,7 @@ fn start_drag(
             }
             return;
         };
-        let (work, scale) = host::monitor(Some(rect), 0);
+        let (work, scale) = host::monitor(Some(rect));
         let size = {
             let Ok(mut i) = inner.lock() else { return };
             if !i.visible
@@ -930,7 +1047,7 @@ fn capture_error(app: &AppHandle, message: &str, notify: bool) {
         let _ = tray.set_tooltip(Some(format!("FlowTranslate — {message}")));
     }
     if notify {
-        host::show_capture_error(message);
+        show_notice(app, message);
     }
 }
 fn watch_context(app: AppHandle) {
@@ -940,6 +1057,8 @@ fn watch_context(app: AppHandle) {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(35));
             ticks = ticks.wrapping_add(1);
+            // Dates the user's own copies (the three-second freshness rule), visible or not.
+            host::track_clipboard();
             let state = app.state::<AppState>();
             if ticks % 102857 == 0 {
                 let _ = state.history.maintain();
@@ -1046,9 +1165,10 @@ pub fn run() {
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,
             };
+            let replay = MenuItem::with_id(app, "replay", "Revoir la dernière traduction", true, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "Réglages", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&settings_item, &quit])?;
+            let menu = Menu::with_items(app, &[&replay, &settings_item, &quit])?;
             let mut tray = TrayIconBuilder::with_id("flowtranslate")
                 .tooltip(if simulated {
                     "FlowTranslate — Démonstration simulée"
@@ -1057,6 +1177,14 @@ pub fn run() {
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "replay" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(message) = replay_last(&app) {
+                                capture_error(&app, &message, true);
+                            }
+                        });
+                    }
                     "settings" => {
                         let _ = open_settings(app.clone());
                     }

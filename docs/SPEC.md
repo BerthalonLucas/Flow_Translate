@@ -14,7 +14,7 @@ Use Motion/Radix/Lucide for accessible interactions and short paint animations. 
 
 ## Interaction
 
-Ctrl+Alt+T, configurable: read a selection via UI Automation; else explicitly preview clipboard text before sending it. Selection coordinates determine placement; clamp to monitor working area and flip above when needed. No reliable anchor means bottom capsule. Preserve foreground focus when showing an overlay. Repeated shortcut focuses it. Escape dismisses/cancels. Scroll/window/selection changes invalidate replacement and stale anchoring. Result actions become active only after a complete response. Never paste into an unverified or changed target. Clipboard restoration must not overwrite newer user content.
+Ctrl+Alt+T, configurable: read a selection via UI Automation; else copy it for the user (synthetic Ctrl+Insert once the chord is released, clipboard restored) ; else accept a copy the user made less than three seconds before; else a short notice, never a modal dialog. Selection coordinates determine placement; clamp to monitor working area and flip above when needed. No reliable anchor means bottom capsule. Preserve foreground focus when showing an overlay. Repeated shortcut focuses it. Escape dismisses/cancels. Scroll/window/selection changes invalidate replacement and stale anchoring. Result actions become active only after a complete response. Never paste into an unverified or changed target. Clipboard restoration must not overwrite newer user content.
 
 ## Client and server
 

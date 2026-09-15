@@ -114,7 +114,16 @@ function ReadingSurface({ children, streaming, onEnter }: {
 }
 
 export function GlassOverlay({ controller }: { controller: TranslationController }) {
-  return controller.state.capture ? <GlassSession key={controller.state.capture.id} controller={controller} /> : null;
+  if (controller.state.capture) return <GlassSession key={controller.state.capture.id} controller={controller} />;
+  return controller.notice ? <NoticePill key={controller.notice.id} message={controller.notice.message} /> : null;
+}
+
+// Nothing to translate: one pill, never clickable, in place of the old MessageBox. Rust
+// shows it alone at the bottom of the cursor's screen (420 × 64) and hides it four
+// seconds later; the browser preview lays it near the bottom of the page.
+function NoticePill({ message }: { message: string }) {
+  const fade = useFade('feedback');
+  return <div className="notice-root"><motion.p {...fade} className="notice-pill" role="status">{message}</motion.p></div>;
 }
 
 // What the session shows: the glass size, whether it lives on the bottom edge (docked)
@@ -132,7 +141,7 @@ function travel(node: Element | null) {
 }
 
 function GlassSession({ controller }: { controller: TranslationController }) {
-  const { state, dispatch, start, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
+  const { state, dispatch, start, cancelAndDismiss, completeDismiss, closingCaptureId, notice } = controller;
   const captureId = state.capture?.id;
   // Clipboard captures have no anchor: they open above the tab right away.
   const [dockState, setDock] = useState(() => ({ docked: state.capture?.source === 'clipboard', collapsed: false }));
@@ -185,6 +194,8 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     else if (reduced || layoutPhase !== 'idle') setFolded(true);
   }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setMenuOpen(false); setFeedback(null); setCopied(false); }, [captureId, state.requestId]);
+  // A notice while the glass is open (the shortcut found nothing new) reads as feedback.
+  useEffect(() => { if (notice) setFeedback(notice.message); }, [notice]);
   useEffect(() => {
     if (!feedback) return;
     const timer = window.setTimeout(() => setFeedback(null), 3000);
@@ -349,7 +360,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const changePresentation = () => { touch(); dispatch({ type: 'LAYOUT', captureId, layout: enlarged ? compactLayout : enlargedLayout }); };
   const expand = () => { if (layoutPhase === 'idle' && !closingCaptureId) setDock({ docked: true, collapsed: false }); };
   const visit = () => { visited.current = true; };
-  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed} data-folded={folded}
+  return <motion.div key={captureId} ref={root} className={`glass-overlay ${enlarged ? 'is-reader' : 'is-contextual'} ${docked ? 'is-docked' : ''}`} data-capture-id={captureId} data-origin={state.capture?.origin} data-closing={Boolean(closingCaptureId)} data-layout-phase={layoutPhase} data-dragging={dragging} data-docked={docked} data-collapsed={collapsed} data-folded={folded}
     onClickCapture={touch}
     onFocus={event => {
       // A keyboard focus holds the glass, unless it lands after the pointer already left

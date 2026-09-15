@@ -8,7 +8,7 @@ ouvre une capsule de 200 × 36 px et demande confirmation avant l’envoi. Au re
 seule l’icône de notification reste présente. Langue, profil Rapide/Qualité,
 raccourci et connexion se configurent dans les réglages.
 
-**État : version d’essai 0.1.7 (plus de bandeau au changement de focus, fenêtre réservée sans redimensionnement au repli, délai de grâce après une action, anneau à 1,4 s, coupures aux séparateurs) ; moteurs réels validés en 0.1.5.**
+**État : version d’essai 0.1.8 (le raccourci copie lui-même la sélection quand UI Automation ne la donne pas, presse-papiers restauré, avis discret à la place de la boîte de dialogue, « Revoir la dernière traduction » dans le tray) ; moteurs réels validés en 0.1.5.**
 Les 100 extraits synthétiques FR↔EN ont été exécutés pour chaque modèle à 1, 4
 et 10 requêtes simultanées. La revue humaine de qualité et la matrice native
 Office/multimoniteur restent à terminer. Voir [le guide d’essai sur un autre poste](docs/ESSAIS-0.1.6.md), [l’essai réel 0.1.5](docs/ESSAIS-0.1.5.md)

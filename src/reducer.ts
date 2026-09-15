@@ -26,6 +26,7 @@ export type Action =
   | { type: 'LAYOUT'; captureId: string; layout: TextLayout }
   | { type: 'START'; requestId: string; mode: Mode; targetLanguage: Language }
   | { type: 'STREAM'; event: StreamEvent }
+  | { type: 'TARGET'; captureId: string; canReplace: boolean }
   | { type: 'INVALIDATE'; message: string }
   | { type: 'CANCEL' }
   | { type: 'DISMISS' }
@@ -45,6 +46,11 @@ export function translationReducer(state: TranslationState, action: Action): Tra
       if (action.event.kind === 'delta') return { ...state, result: state.result + (action.event.text ?? '') };
       if (action.event.kind === 'done') return { ...state, phase: 'complete', replacementValid: !state.invalidated && (state.capture?.canReplace ?? false) };
       return { ...state, phase: 'error', error: action.event.message ?? 'La traduction n’a pas abouti.', replacementValid: false };
+    case 'TARGET':
+      // The native target arrives behind the shown window; a stale capture id is ignored.
+      if (action.captureId !== state.capture?.id) return state;
+      return { ...state, capture: { ...state.capture, canReplace: action.canReplace },
+        replacementValid: state.phase === 'complete' && !state.invalidated && action.canReplace };
     case 'INVALIDATE':
       return { ...state, replacementValid: false, invalidated: true, error: action.message };
     case 'DISMISS': return { ...initialTranslationState };

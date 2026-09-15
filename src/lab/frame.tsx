@@ -20,6 +20,13 @@ function OverlayFixture() {
     // Start only after the real hook has installed its listeners and loaded settings.
     if (!controller.settings || begun.current) return;
     begun.current = true;
+    if (scenario === 'notice') {
+      // What Rust emits when the shortcut finds nothing: repeated so the reference stays visible.
+      const show = () => bridge.demoNotice('Rien à traduire dans la fenêtre active.');
+      show();
+      const timer = window.setInterval(show, 3000);
+      return () => window.clearInterval(timer);
+    }
     const capture = { id: `lab-${scenario}`, text: scenario === 'long' ? 'Please review the updated proposal. '.repeat(20) : 'Could you send the updated proposal before Thursday?', source: 'selection' as const, canReplace: true, anchor: { x: 400, y: 300, width: 20, height: 16 } };
     bridge.setDemoCapture(capture, scenario === 'long' || scenario === 'error' || scenario === 'pending' || scenario === 'partial' ? scenario : 'normal');
     controller.receiveCapture(capture);

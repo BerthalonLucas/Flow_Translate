@@ -2,7 +2,7 @@
 
 Ce document remplace les choix contradictoires des maquettes précédentes.
 
-- Sélection → Ctrl+Alt+T → traduction immédiate vers la langue préconfigurée. Aucune copie manuelle, aucune confirmation supplémentaire. En absence de sélection, message discret ; aucun envoi automatique du presse-papiers.
+- Sélection → Ctrl+Alt+T → traduction immédiate vers la langue préconfigurée. Aucune copie manuelle, aucune confirmation supplémentaire. En absence de sélection accessible, la copie est faite par FlowTranslate lui-même (Ctrl+Insert synthétique, presse-papiers restauré) ; une copie faite soi-même moins de 3 s avant reste acceptée ; sinon message discret, jamais modal (décisions du 14 septembre 2026, qui remplacent « aucun envoi automatique du presse-papiers »).
 - Capsule minuscule au repos. Au survol : langue cible, traduction de la sélection à la souris, menu. Le raccourci reste indépendant de ces commandes.
 - Capsule déplaçable, aimantation aux bords, position mémorisée ; position initiale en bas au centre.
 - Traduction courte près de la sélection : texte seul, petite capsule d’actions satellite légèrement superposée. Le résultat reste visible jusqu’au clic extérieur ou Échap, même si la souris s’éloigne.

@@ -14,11 +14,11 @@ Revue bornée du 9 septembre 2026 sur la capture réelle Windows et le cycle de 
 ## Comportements conservés et vérifiés par lecture
 
 - Le mode installé normal utilise la capture et l’inférence réelles. Les réponses simulées nécessitent explicitement `--demo*` ou `--simulate-inference`.
-- Une absence de sélection UIA peut produire une capture de source `clipboard`, sans remplacement ni ancre. Le frontend doit toujours demander confirmation avant envoi.
+- Une absence de sélection UIA produit une capture de source `clipboard` (copie synthétique Ctrl+Insert, ou copie de l’utilisateur de moins de 3 s), sans remplacement ni ancre ; elle est traduite aussitôt (décision du 14/09/2026).
 - Une sélection UIA dépassant la limite est refusée avant tout accès au presse-papiers.
 - Une nouvelle capture annule la requête active, invalide la fermeture précédente par génération et empêche son accusé ou son délai de masquer la nouvelle capture.
 - Échap annule immédiatement la requête, marque la surface non visible et garde un délai natif de fermeture borné à 300 ms.
-- Le remplacement reste limité aux contrôles Win32 `Edit` et `RichEdit` dont le document, la sélection UTF-16, la fenêtre et l’identité UIA sont tous revalidés. Aucun collage ou `SendInput` n’est utilisé.
+- Le remplacement reste limité aux contrôles Win32 `Edit` et `RichEdit` dont le document, la sélection UTF-16, la fenêtre et l’identité UIA sont tous revalidés. Aucun collage n’est utilisé ; le seul `SendInput` du produit est la corde de copie de la capture (Ctrl+Insert), jamais une écriture.
 - Le surveillant invalide l’ancre et le remplacement après déplacement de la fenêtre source, changement de premier plan, changement de sélection ou changement de rectangle UIA.
 
 ## Validation exécutée

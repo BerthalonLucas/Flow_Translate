@@ -55,8 +55,40 @@ pub struct Capture {
     pub id: String,
     pub text: String,
     pub source: CaptureSource,
+    /// How the text was obtained; shown nowhere, read by the real capture matrix.
+    pub origin: CaptureOrigin,
     pub can_replace: bool,
     pub anchor: Option<Rect>,
+    /// A result shown again (tray « Revoir la dernière traduction »): the frontend
+    /// displays it as complete instead of asking for a translation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<Replay>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Replay {
+    pub request_id: String,
+    pub translated_text: String,
+    pub mode: Mode,
+    pub target_language: Language,
+}
+
+/// Second step of a capture: whether the selection can be replaced natively, once the
+/// document offsets and the Win32 control have been read behind the shown window.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureTarget {
+    pub capture_id: String,
+    pub can_replace: bool,
+}
+
+/// A short message in place of the old MessageBox: shown in the glass when one is open,
+/// otherwise as a pill alone at the bottom of the cursor's screen.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureNotice {
+    pub message: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -64,6 +96,18 @@ pub struct Capture {
 pub enum CaptureSource {
     Selection,
     Clipboard,
+}
+
+/// uia: the UI Automation selection; copy: the synthetic Ctrl+Insert; fresh: a copy the
+/// user made less than three seconds before; replay: the tray; demo: `--demo*`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureOrigin {
+    Uia,
+    Copy,
+    Fresh,
+    Replay,
+    Demo,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

@@ -36,3 +36,11 @@ test('native-only defects do not present a web simulation as a reproduction', as
   await expect(page.locator('iframe')).toHaveCount(0);
   await expect(page.getByText('Établie pour la fermeture', { exact: false })).toBeVisible();
 });
+
+test('the notice replaces the message box and is reproducible in the workbench', async ({ page }) => {
+  await page.goto('/lab.html?issue=notice');
+  await expect(page.getByText('capture_error appelait MessageBoxW', { exact: false })).toBeVisible();
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('.notice-pill')).toHaveText('Rien à traduire dans la fenêtre active.');
+  await expect(frame.locator('.glass-overlay')).toHaveCount(0);
+});
