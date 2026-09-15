@@ -25,6 +25,7 @@ const command = payload => new Promise((resolve, reject) => {
 });
 const keys = text => execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve('scripts/capture-matrix-helper.ps1'), '-Action', 'keys', '-Text', text], { stdio: 'pipe' });
 let passed = 0;
+const failures = [];
 try {
   for (let attempt = 0; attempt < 180; attempt++) {
     if (driver.exitCode !== null) throw Error('native driver exited before ready');
@@ -66,6 +67,7 @@ try {
     ['iframe', page.frameLocator('iframe').locator('#frame'), {}],
     ['shadow DOM', page.locator('#shadow-input'), {}],
   ]) {
+    try {
     await command({ op: 'clipboard-seed' });
     await prepare(locator, options);
     const before = await content(locator);
@@ -80,6 +82,7 @@ try {
     keys('^z');
     assert.equal(await content(locator), before, `${name}: native undo`);
     console.log(`PASS ${name}: ${captured.route}, Unicode, surrounding text, clipboard, undo`); passed++;
+    } catch (error) { failures.push(`${name}: ${error.message}`); console.error(`FAIL ${name}: ${error.message}`); }
   }
   const input = page.locator('#input');
   for (const reason of ['selection', 'document', 'focus']) {
@@ -110,6 +113,7 @@ try {
   assert.equal(await content(input), original, 'blocked paste: unchanged');
   assert.equal((await command({ op: 'replace', value: replacement })).ok, false, 'ambiguous attempt cannot paste twice');
   console.log('PASS editor blocks paste: no false success and no duplicate'); passed++;
+  assert.equal(failures.length, 0, failures.join("\n"));
   console.log(`Native replacement matrix: ${passed} cases passed (Edge desktop; Office/Teams not installed/tested).`);
 } finally {
   if (port) await command({ op: 'quit' }).catch(() => {});

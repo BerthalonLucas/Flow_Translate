@@ -405,13 +405,19 @@ fn replace_paste(target: &TargetIdentity, _element: &UIElement, value: &str) -> 
         let _ = previous.restore(sequence);
         return Err(error);
     }
-    if crate::host::clipboard_sequence() != sequence || crate::host::modifiers_down() {
+    if crate::host::clipboard_sequence() != sequence {
+        return Err("Le presse-papiers a changé; collage annulé et nouveau contenu conservé.".into());
+    }
+    if crate::host::modifiers_down() {
         let _ = previous.restore(sequence);
-        return Err("Le presse-papiers ou les touches actives ont changé; collage annulé.".into());
+        return Err("Les touches actives ont changé; collage annulé.".into());
     }
     // Never send a second paste, even after timeout/partial injection. Leave the
     // result on the clipboard until it was actually observed in the document.
-    crate::host::send_paste_chord()?;
+    if let Err(sent) = crate::host::send_paste_chord() {
+        if sent == 0 { let _ = previous.restore(sequence); }
+        return Err("Collage bloqué ou partiel (Windows ou application protégée). Vérifiez le champ avant de réessayer.".into());
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
         if let Ok(automation) = ui_automation() {

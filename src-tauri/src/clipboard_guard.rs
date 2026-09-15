@@ -100,20 +100,24 @@ impl Snapshot {
         write_formats(&self.formats, expected).map(|_| ())
     }
 }
-struct Owner(windows::Win32::Foundation::HWND);
-impl Drop for Owner {
-    fn drop(&mut self) { unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.0); } }
-}
-thread_local! { static OWNER: std::cell::OnceCell<Owner> = const { std::cell::OnceCell::new() }; }
+// Clipboard ownership needs a pumping window even while the MTA worker is inside
+// a slow UIA call. Otherwise another application's copy can block on WM_DESTROYCLIPBOARD.
+static OWNER: std::sync::OnceLock<Result<isize, String>> = std::sync::OnceLock::new();
 fn owner_window() -> Result<Handle, String> {
-    use windows::{core::w, Win32::UI::WindowsAndMessaging::{CreateWindowExW, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE}};
-    OWNER.with(|cell| {
-        if let Some(owner) = cell.get() { return Ok(owner.0.0); }
-        let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE::default(), w!("STATIC"), w!(""), WINDOW_STYLE::default(), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }
-            .map_err(|_| "Presse-papiers temporaire indisponible.".to_string())?;
-        let _ = cell.set(Owner(hwnd));
-        Ok(hwnd.0)
-    })
+    OWNER.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new().name("clipboard-owner".into()).spawn(move || {
+            use windows::{core::w, Win32::UI::WindowsAndMessaging::{CreateWindowExW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE}};
+            let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE::default(), w!("STATIC"), w!(""), WINDOW_STYLE::default(), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) };
+            let Ok(hwnd) = hwnd else { let _ = send.send(Err("Presse-papiers temporaire indisponible.".to_string())); return; };
+            if send.send(Ok(hwnd.0 as isize)).is_err() { return; }
+            let mut message = MSG::default();
+            while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
+                unsafe { DispatchMessageW(&message); }
+            }
+        }).map_err(|_| "Presse-papiers temporaire indisponible.".to_string())?;
+        receive.recv().map_err(|_| "Presse-papiers temporaire indisponible.".to_string())?
+    }).clone().map(|hwnd| hwnd as Handle)
 }
 fn write_formats(formats: &[(u32, Vec<u8>)], expected: u32) -> Result<u32, String> {
     // Allocate before EmptyClipboard so allocation failures leave the original intact.

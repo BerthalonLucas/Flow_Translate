@@ -688,7 +688,7 @@ pub fn send_copy_chord() -> Result<(), String> {
 }
 
 /// One serial batch, no Ctrl+A and no Enter: the target editor handles paste/undo.
-pub fn send_paste_chord() -> Result<(), String> {
+pub fn send_paste_chord() -> Result<(), u32> {
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_V;
     let inputs = [key_input(VK_CONTROL, false, false), key_input(VK_V, false, false),
         key_input(VK_V, false, true), key_input(VK_CONTROL, false, true)];
@@ -696,7 +696,7 @@ pub fn send_paste_chord() -> Result<(), String> {
     if sent as usize != inputs.len() {
         let release = [key_input(VK_V, false, true), key_input(VK_CONTROL, false, true)];
         if sent > 0 { unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); } }
-        return Err("Collage non confirmé (Windows ou application protégée). Vérifiez le champ avant de réessayer.".into());
+        return Err(sent);
     }
     Ok(())
 }
