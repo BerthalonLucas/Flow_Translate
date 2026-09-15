@@ -24,6 +24,31 @@ pub struct Rect {
     pub height: f64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Presentation {
+    Contextual,
+    Reader,
+    /// Bottom-centre window whose bottom edge carries the tab; the glass grows upward.
+    Docked,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceRegion {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub radius: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayDismissRequested {
+    pub capture_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Capture {
@@ -57,6 +82,8 @@ pub struct Settings {
     pub shortcut: String,
     pub history_enabled: bool,
     pub autostart: bool,
+    #[serde(default)]
+    pub connection_expanded: bool,
     pub profiles: HashMap<String, Profile>,
 }
 
@@ -85,6 +112,7 @@ impl Default for Settings {
             shortcut: "Ctrl+Alt+T".into(),
             history_enabled: false,
             autostart: false,
+            connection_expanded: false,
             profiles,
         }
     }

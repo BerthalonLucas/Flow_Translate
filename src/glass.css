@@ -1,0 +1,115 @@
+/* Design handoff « 1a » (2026-09-09): graphite glass holding only the text, opaque
+   action pill biting the upper-right edge, internal scrolling without a native bar.
+   2026-09-10: the glass paints its own material (no DWM backdrop), docks as a tab on
+   the bottom edge, waits behind a ring and reveals the whole result at once. The
+   packaged window has no Win32 region any more (a 1-bit mask DWM clipped without
+   anti-aliasing, dropping every shadow): Chromium paints the silhouette with alpha,
+   and the window is larger than the glass by a halo that holds the shadows.
+   2026-09-13: the window is reserved once (src/layout.ts) so a fold, an unfold or a
+   menu never resizes it; the body stays mounted and only fades. */
+.native-overlay { background: transparent; }
+.glass-overlay { position: relative; display: flex; flex-direction: column; align-items: stretch; width: 300px; flex: none; color: var(--text); pointer-events: none; }
+.glass-overlay.is-reader { width: 420px; }
+.glass-overlay > * { pointer-events: auto; }
+/* Halo: root padding sized to the shadows. Rust reads the tight regions for the hit-test,
+   so the halo never catches a click; the browser preview keeps none. */
+.glass-overlay { --halo-x: 0px; --halo-top: 0px; --halo-bottom: 0px; }
+.native-overlay .glass-overlay { --halo-x: 32px; --halo-top: 20px; --halo-bottom: 44px; box-sizing: content-box; padding: var(--halo-top) var(--halo-x) var(--halo-bottom); }
+/* The 14 px band above the glass belongs to the pill only; the rest is pass-through. */
+.glass-body { position: relative; padding-top: 14px; pointer-events: none; }
+.glass-body > * { pointer-events: auto; }
+/* Folded: the body fades 100 ms (paint only), takes no pointer, then leaves the accessibility tree. */
+.glass-overlay[data-collapsed="true"] .glass-body, .glass-overlay[data-collapsed="true"] .glass-body * { pointer-events: none; }
+.glass-overlay[data-folded="true"] .glass-body { visibility: hidden; }
+.glass-overlay[data-closing="true"], .glass-overlay[data-closing="true"] *, .glass-overlay:not([data-layout-phase="idle"]), .glass-overlay:not([data-layout-phase="idle"]) * { pointer-events: none; }
+/* Docked: the root sits centred on the window's bottom edge (484 px reserved), so the tab never moves while the glass above it fades. */
+.native-overlay .glass-overlay.is-docked { position: fixed; left: 0; right: 0; bottom: 0; margin-inline: auto; padding-bottom: 16px; }
+.translation-bubble { position: relative; display: flex; flex-direction: column; width: 100%; min-height: 51px; max-height: 220px; padding: 0; border: 1px solid var(--glass-border); border-radius: 28px; background: var(--glass-sheen), var(--glass-bg); box-shadow: var(--glass-shadow); cursor: default; }
+.glass-overlay[data-dragging="true"] .translation-bubble { cursor: grabbing; }
+.is-reader .translation-bubble { max-height: 440px; }
+/* Browser preview blurs its own backdrop; the packaged window paints only the DOM. */
+.standalone-demo .translation-bubble, .demo-desktop .translation-bubble { backdrop-filter: blur(32px) saturate(140%); -webkit-backdrop-filter: blur(32px) saturate(140%); }
+.reading-area { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 27px; }
+.translation-copy { flex: 1 1 auto; min-height: 0; height: 100%; padding: 16px 22px 13px; font-size: 16px; line-height: 21.6px; letter-spacing: -.02em; font-weight: 400; cursor: text; outline: none; overscroll-behavior: contain; }
+.is-reader .translation-copy { padding: 16px 24px 14px; line-height: 22.4px; }
+.translation-copy[data-scroll-edge="top"] { mask-image: linear-gradient(#000 calc(100% - 34px), transparent); -webkit-mask-image: linear-gradient(#000 calc(100% - 34px), transparent); }
+.translation-copy[data-scroll-edge="middle"] { mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); -webkit-mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); }
+.translation-copy[data-scroll-edge="bottom"] { mask-image: linear-gradient(transparent, #000 22px); -webkit-mask-image: linear-gradient(transparent, #000 22px); }
+/* Words break at spaces or at the <wbr> the frontend places after a long run's separators; a letter-level cut is the last resort. */
+.translation-text { white-space: pre-wrap; overflow-wrap: break-word; }
+.translation-text.is-placeholder { display: block; color: rgba(250,251,253,.6); }
+/* Waiting: a ring turning in 1.4 s on its own transform (composited, no layout work) while its arc breathes between a third and three quarters of the circle. */
+.loading-ring { display: flex; align-items: center; justify-content: center; height: 21.6px; }
+.loading-ring svg { width: 22px; height: 22px; animation: ring-spin 1400ms linear infinite; will-change: transform; }
+.loading-ring circle { fill: none; stroke: var(--accent-cursor); stroke-width: 2.25; stroke-linecap: round; stroke-dasharray: 32 57; animation: ring-breathe 1200ms ease-in-out infinite alternate; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@keyframes ring-breathe { from { stroke-dasharray: 20 57; } to { stroke-dasharray: 44 57; } }
+/* The result lands whole: the window is already at its final size, the glass opens from the
+   ring height and the text fades in. Paint only, so the ResizeObserver publishes once; the
+   clip reaches past the box to keep the shadow, and holds 65 ms while the native resize lands. */
+.translation-bubble[data-reveal="true"] { animation: glass-open 260ms cubic-bezier(.2,0,0,1) both; }
+@keyframes glass-open { 0%, 25% { clip-path: inset(-24px -36px calc(100% - 51px) -36px round 52px); } 100% { clip-path: inset(-24px -36px -48px -36px round 60px); } }
+.translation-bubble[data-reveal="true"] .reveal { display: inline-block; animation: text-in 180ms ease-out 80ms both; }
+@keyframes text-in { from { opacity: 0; } to { opacity: 1; } }
+.scroll-indicator { width: 3px !important; border-radius: 2px; background: rgba(255,255,255,.07); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
+.reading-area[data-indicator="true"] .scroll-indicator { opacity: 1; }
+.scroll-thumb { border-radius: 2px; background: rgba(255,255,255,.28); transition: background-color 140ms ease; }
+.scroll-indicator:hover .scroll-thumb { background: rgba(255,255,255,.34); }
+/* Opaque pill: the only element that never depends on the backdrop. */
+.action-pill { position: absolute; top: 0; right: 16px; z-index: 2; display: flex; align-items: center; gap: 0; height: 28px; padding: 0 2px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); }
+.icon-button { appearance: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 12px; color: var(--text-muted); background: transparent; transition: background-color 140ms ease, color 140ms ease; }
+.icon-button:hover:not(:disabled) { color: #fff; background: var(--hover); }
+.icon-button:active:not(:disabled), .icon-button[data-pressed], .icon-button[data-copied] { color: #fff; background: var(--pressed); }
+.icon-button:disabled { cursor: default; color: var(--text-disabled); }
+.icon-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.icon-button svg { width: 15px; height: 15px; }
+.action-glyph { display: grid; place-items: center; width: 15px; height: 15px; }
+.action-glyph > span { grid-area: 1 / 1; display: grid; place-items: center; }
+/* The tab on the bottom edge: a few dozen pixels, hover to bring the glass back. */
+.is-docked .glass-body { margin-bottom: 6px; }
+.dock-tab { align-self: center; display: flex; align-items: center; gap: 0; height: 20px; padding: 0 2px; border-radius: 10px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); transition: background-color 140ms ease; }
+.dock-tab:hover, .dock-tab[data-expanded="true"] { background: rgba(52,56,64,.98); }
+.dock-tab button { appearance: none; width: 20px; height: 16px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; transition: background-color 140ms ease, color 140ms ease; }
+.dock-tab button:hover { color: #fff; background: var(--hover); }
+.dock-tab button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.dock-tab svg { width: 12px; height: 12px; }
+.dock-close svg { width: 11px; height: 11px; }
+/* Popper geometry is replaced by an absolute anchor under the pill, no portal; the halo offsets it. Docked, it opens above the pill. */
+.glass-overlay [data-radix-popper-content-wrapper] { position: absolute !important; top: calc(34px + var(--halo-top)) !important; right: calc(16px + var(--halo-x)) !important; left: auto !important; transform: none !important; min-width: 0 !important; width: 196px !important; z-index: 3; }
+.glass-overlay.is-docked [data-radix-popper-content-wrapper] { top: auto !important; bottom: calc(100% + 6px - var(--halo-top)) !important; }
+/* The menu is the same graphite as the glass, a shade darker, with the glass sheen: no native blur exists behind a per-pixel window. Its tallest form fits the reserve (src/layout.ts). */
+.more-menu { width: 196px; padding: 4px; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; color: #f2f3f6; background: var(--glass-sheen), var(--menu-bg); box-shadow: 0 12px 32px rgba(0,0,0,.4); outline: none; }
+.menu-slot { display: contents; }
+.menu-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.3; outline: none; cursor: pointer; user-select: none; transition: background-color 120ms ease; }
+.menu-item[data-highlighted] { background: rgba(255,255,255,.08); }
+.menu-item:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.menu-item[data-disabled] { opacity: .38; cursor: default; }
+.menu-separator { display: block; height: 1px; margin: 3px 8px; background: rgba(255,255,255,.08); }
+.menu-close { color: rgba(242,243,246,.75); }
+.menu-close svg { width: 13px; height: 13px; }
+.compact-feedback { align-self: flex-end; z-index: 2; max-width: calc(100% - 32px); margin: 8px 16px 0 0; padding: 6px 10px; border: 1px solid var(--glass-border); border-radius: 12px; color: var(--error-text); font-size: 12px; line-height: 16px; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.glass-overlay:has(.more-menu) > .compact-feedback { visibility: hidden; }
+/* The original reads like the translation, one size down, on a lighter field (contrast above 4.5:1 on the glass). */
+.original-copy { margin: 0 0 12px; padding: 9px 11px; border-radius: 12px; color: rgba(250,251,253,.85); font-size: 14px; line-height: 1.45; letter-spacing: 0; background: rgba(255,255,255,.05); white-space: pre-wrap; overflow-wrap: break-word; }
+.original-copy > span { display: block; margin-bottom: 3px; color: rgba(250,251,253,.55); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.primary-action, .quiet-action { min-height: 30px; border: 0; border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 600; transition: background-color 140ms ease; }
+.primary-action { color: #102344; background: #d8e8ff; }
+.primary-action:hover { background: #edf5ff; }
+.quiet-action { color: #f2f3f5; background: rgba(255,255,255,.11); }
+.subtle-warning { margin: 12px 0 0; color: var(--warning-text); font-size: 12px; line-height: 18px; }
+.error-copy { color: var(--error-text); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; scroll-behavior: auto !important; } }
+
+/* Browser preview placement: the glass grows from its anchored top-left corner; docked, it rests on the preview's bottom edge. */
+.standalone-demo > .glass-overlay { position: absolute; left: calc(50% - 150px); top: calc(50% - 60px); }
+.standalone-demo > .glass-overlay.is-docked { top: auto; bottom: 24px; }
+.demo-desktop > .glass-overlay { z-index: 10; }
+.demo-desktop > .glass-overlay { left: clamp(170px, calc(100vw - 600px), calc(100vw - 332px)); }
+.demo-desktop > .glass-overlay.is-docked { top: auto; bottom: 16px; left: calc(50% - 150px); }
+.demo-desktop > .glass-overlay.is-docked.is-reader { left: calc(50% - 210px); }
+.demo-desktop .demo-selection { left: clamp(180px, calc(100vw - 740px), calc(100vw - 460px)); max-width: calc(100vw - 500px); }
+@media (max-width: 850px) {
+  .demo-desktop > .glass-overlay { left: clamp(88px, calc(100vw - 390px), calc(100vw - 320px)); top: calc(38% + 36px); }
+  .demo-desktop .demo-selection { top: 38%; left: 100px; max-width: calc(100vw - 140px); }
+}

@@ -36,6 +36,21 @@ struct Inner {
     work: Rect,
     scale: f64,
     size: (f64, f64),
+    manual: Option<ManualPlacement>,
+    dragging: bool,
+    presentation: Presentation,
+    regions: Vec<SurfaceRegion>,
+    pending_dismiss: Option<(String, u64)>,
+    dismiss_generation: u64,
+    last_overlay: Option<(Rect, Vec<SurfaceRegion>)>,
+    last_capsule: Option<Option<Rect>>,
+    measured: bool,
+}
+// Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
+#[derive(Clone, Copy, Debug)]
+struct ManualPlacement {
+    x: f64,
+    y: f64,
 }
 impl Inner {
     fn new(settings: Settings) -> Self {
@@ -58,6 +73,15 @@ impl Inner {
             },
             scale: 1.,
             size: (280., 90.),
+            manual: None,
+            dragging: false,
+            presentation: Presentation::Contextual,
+            regions: Vec::new(),
+            pending_dismiss: None,
+            dismiss_generation: 0,
+            last_overlay: None,
+            last_capsule: None,
+            measured: false,
         }
     }
     fn cancel(&mut self, id: Option<&str>) {
@@ -76,6 +100,16 @@ impl Inner {
             .as_ref()
             .is_some_and(|a| a.id == id && !a.cancel.is_cancelled())
     }
+    fn complete_pending_dismiss(&mut self, capture_id: &str, generation: u64) -> bool {
+        if self.pending_dismiss.as_ref().is_none_or(|pending| pending.0 != capture_id || pending.1 != generation) {
+            return false;
+        }
+        self.pending_dismiss = None;
+        self.capture = None;
+        self.last_overlay = None;
+        self.last_capsule = None;
+        true
+    }
 }
 struct AppState {
     inner: Arc<Mutex<Inner>>,
@@ -83,6 +117,7 @@ struct AppState {
     history: HistoryStore,
     demo: bool,
     demo_clipboard: bool,
+    demo_long: bool,
     simulated: bool,
 }
 fn lock_error() -> String {
@@ -105,11 +140,10 @@ fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<AppState>();
-                    let visible = state.inner.lock().map(|i| i.visible).unwrap_or(false);
-                    if visible {
-                        let _ = focus_overlay(app.clone());
-                    } else if let Err(message) = capture_text(app.clone(), state) {
-                        capture_error(&app, &message);
+                    // Every press translates the current selection (clipboard fallback
+                    // included); the docked tab brings the previous glass back on hover.
+                    if let Err(message) = capture_text(app.clone(), state) {
+                        capture_error(&app, &message, true);
                     }
                 });
             }
@@ -172,9 +206,9 @@ fn store_capture(
     app: &AppHandle,
     state: &AppState,
     captured: StoredCapture,
+    source: isize,
 ) -> Result<Capture, String> {
     let public = captured.public.clone();
-    let source = host::foreground();
     let (work, scale) = host::monitor(public.anchor, source);
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
@@ -188,12 +222,34 @@ fn store_capture(
         i.work = work;
         i.scale = scale;
         i.size = (280., 90.);
+        i.manual = None;
+        i.dragging = false;
+        i.presentation = Presentation::Contextual;
+        i.regions.clear();
+        i.pending_dismiss = None;
+        i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
+        i.last_overlay = None;
+        i.last_capsule = None;
+        i.measured = false;
         if !i.frontend_ready {
             i.pending_capture = Some(public.clone());
         }
         i.frontend_ready
     };
-    position(app, state, 280., 90.)?;
+    position(app, state, 280., 90., None)?;
+    let fallback_app = app.clone();
+    let fallback_id = public.id.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let state = fallback_app.state::<AppState>();
+        let size = {
+            let Ok(mut i) = state.inner.lock() else { return };
+            if !i.visible || i.measured || i.capture.as_ref().is_none_or(|capture| capture.public.id != fallback_id) { return; }
+            i.measured = true;
+            i.size
+        };
+        let _ = position(&fallback_app, &state, size.0, size.1, None);
+    });
     if ready {
         app.emit_to("overlay", "capture", &public)
             .map_err(|_| "Affichage de la capture indisponible.".to_string())?;
@@ -202,14 +258,22 @@ fn store_capture(
 }
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
-    let mut captured = capture::capture_current(state.demo)?;
+    let source = host::foreground();
+    let mut captured = capture::capture_current(state.demo, source)?;
+    if state.demo_long {
+        captured.public.text = "Bonjour, voici une démonstration longue destinée à vérifier le lecteur compact, son retour à la ligne, le menu placé au-dessus du verre et la stabilité du texte pendant les changements de présentation.".into();
+    }
     if state.demo_clipboard {
         captured.public.source = CaptureSource::Clipboard;
         captured.public.anchor = None;
         captured.public.can_replace = false;
         captured.target = None;
     }
-    store_capture(&app, &state, captured)
+    let result = store_capture(&app, &state, captured, source);
+    if result.is_ok() {
+        reset_tray_tooltip(&app, state.simulated);
+    }
+    result
 }
 #[tauri::command]
 fn frontend_ready(state: State<'_, AppState>) -> Result<Option<Capture>, String> {
@@ -227,7 +291,7 @@ fn translate(
     if request.text.is_empty() || request.text.chars().count() > 6000 {
         return Err("La traduction accepte de 1 à 6 000 caractères.".into());
     }
-    let (profile, cancel, inner, history, demo) = {
+    let (profile, cancel, inner, history, demo, demo_long) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         let captured = i
             .capture
@@ -253,15 +317,18 @@ fn translate(
             state.inner.clone(),
             state.history.clone(),
             state.simulated,
+            state.demo_long,
         )
     };
     tauri::async_runtime::spawn(async move {
         let id = request.id.clone();
         let result = if demo {
-            let output = match request.target_language {
+            let output = if demo_long {
+                "Voici une réponse synthétique suffisamment longue pour exercer le lecteur bas. Elle contient plusieurs phrases, des retours naturels et assez de texte pour vérifier que la surface principale reste stable lorsque la pilule et le menu se chevauchent visuellement. Aucun appel d’inférence réel n’est effectué dans ce mode de démonstration."
+            } else { match request.target_language {
                 Language::Fr => "Pourriez-vous envoyer la proposition mise à jour avant jeudi ?",
                 Language::En => "Could you send the updated proposal before Thursday?",
-            };
+            }};
             let mut out = String::new();
             for word in output.split_inclusive(' ') {
                 if cancel.is_cancelled() {
@@ -414,22 +481,57 @@ async fn replace_result(state: State<'_, AppState>, request_id: String) -> Resul
     tauri::async_runtime::spawn_blocking(move || capture::replace(&target, &r.translated_text))
         .await.map_err(|_| "Le remplacement a été interrompu. Utilisez Copier.".to_string())?
 }
+fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let should_hide = state.inner.lock().map(|mut i| i.complete_pending_dismiss(&capture_id, generation)).unwrap_or(false);
+        if should_hide {
+            for label in ["overlay", "capsule"] {
+                if let Some(window) = handle.get_webview_window(label) { let _ = host::hide(&window); }
+            }
+        }
+    }).map_err(|_| "Fermeture de la traduction indisponible.".to_string())
+}
+
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
     host::close_escape_scope();
-    {
+    let pending = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if i.pending_dismiss.is_some() { return Ok(()); }
+        let capture_id = i.capture.as_ref().map(|capture| capture.public.id.clone());
         i.cancel(None);
         i.visible = false;
         i.pending_capture = None;
         i.completed = None;
-        i.capture = None;
-    }
-    for l in ["overlay", "capsule"] {
-        if let Some(w) = app.get_webview_window(l) {
-            let _ = w.hide();
-        }
-    }
+        i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
+        capture_id.map(|capture_id| {
+            let pending = (capture_id, i.dismiss_generation);
+            i.pending_dismiss = Some(pending.clone());
+            pending
+        })
+    };
+    let Some((capture_id, generation)) = pending else { return Ok(()); };
+    let handle = app.clone();
+    let timeout_id = capture_id.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = schedule_finish_dismiss(handle, timeout_id, generation);
+    });
+    app.emit_to("overlay", "overlay-dismiss-requested", OverlayDismissRequested { capture_id })
+        .map_err(|_| "Fermeture de la traduction indisponible.".to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn complete_overlay_dismiss(app: AppHandle, state: State<'_, AppState>, capture_id: String) -> Result<(), String> {
+    let generation = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        let Some((pending_id, generation)) = i.pending_dismiss.as_ref() else { return Ok(()); };
+        if pending_id != &capture_id { return Ok(()); }
+        *generation
+    };
+    schedule_finish_dismiss(app, capture_id, generation)
 }
 #[tauri::command]
 fn dismiss_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
@@ -445,30 +547,199 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
         .map_err(|_| "Ouverture des réglages impossible.".into())
 }
 #[tauri::command]
+fn resize_settings(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
+    // The settings window has no system frame: its height follows the React content,
+    // capped to the work area so the document scrolls instead of leaving the screen.
+    if window.label() != "settings" { return Err("Fenêtre inattendue.".into()); }
+    if !height.is_finite() || height < 120. || height > 2000. { return Err("Hauteur invalide.".into()); }
+    let scale = window.scale_factor().map_err(|_| "Fenêtre indisponible.".to_string())?;
+    let (work, _) = host::monitor(host::window_rect(host::handle(&window)), 0);
+    let logical_height = height.min((work.height / scale - 40.).max(120.)).round();
+    window
+        .set_size(tauri::LogicalSize::new(520., logical_height))
+        .map_err(|_| "Redimensionnement indisponible.".to_string())
+}
+#[tauri::command]
+fn drag_settings(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "settings" { return Err("Fenêtre inattendue.".into()); }
+    window.start_dragging().map_err(|_| "Déplacement indisponible.".into())
+}
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+/// Probe only (see `host::override_cursor`): screen point the hit tester reads instead
+/// of the real cursor; both `None` restore the real cursor.
+#[tauri::command]
+fn override_cursor(x: Option<i32>, y: Option<i32>) -> Result<(), String> {
+    host::override_cursor(x.zip(y))
+}
+#[tauri::command]
 fn focus_overlay(app: AppHandle) -> Result<(), String> {
+    let capture_id = {
+        let state = app.state::<AppState>();
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.pending_dismiss.is_some() {
+            return Err("La capture n’est plus active.".into());
+        }
+        i.capture
+            .as_ref()
+            .map(|capture| capture.public.id.clone())
+            .ok_or_else(|| "La capture n’est plus active.".to_string())?
+    };
     let w = app
         .get_webview_window("overlay")
         .ok_or_else(|| "Traduction indisponible.".to_string())?;
-    w.show()
-        .and_then(|_| w.set_focus())
-        .map_err(|_| "Activation de la traduction impossible.".into())
+    host::activate(&w)?;
+    let (current, should_hide) = {
+        let state = app.state::<AppState>();
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        let current = i.visible
+            && i.pending_dismiss.is_none()
+            && i.capture
+                .as_ref()
+                .is_some_and(|capture| capture.public.id == capture_id);
+        let should_hide = !i.visible || i.pending_dismiss.is_some() || i.capture.is_none();
+        (current, should_hide)
+    };
+    if !current {
+        if should_hide {
+            let _ = host::hide(&w);
+        }
+        return Err("La capture n’est plus active.".into());
+    }
+    Ok(())
 }
 #[tauri::command]
-fn resize_overlay(
+async fn resize_overlay(
     app: AppHandle,
     state: State<'_, AppState>,
     width: f64,
     height: f64,
+    capture_id: Option<String>,
+    presentation: Option<Presentation>,
+    regions: Option<Vec<SurfaceRegion>>,
 ) -> Result<(), String> {
-    if !width.is_finite() || !height.is_finite() {
+    // The window reserves the menu and, docked, the enlarged glass: 484 × 758 at rest.
+    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. || width > 640. || height > 800. {
         return Err("Dimensions invalides.".into());
     }
-    position(
-        &app,
-        &state,
-        width.clamp(200., 420.),
-        height.clamp(36., 440.),
-    )
+    if let Some(items) = regions.as_ref() { validate_regions(items, width, height)?; }
+    {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if capture_id.as_ref().is_some_and(|id| i.capture.as_ref().is_none_or(|capture| &capture.public.id != id)) {
+            return Ok(());
+        }
+        if let Some(presentation) = presentation { i.presentation = presentation; }
+        if let Some(regions) = regions { i.regions = regions; i.measured = true; }
+    }
+    let (placed_tx, placed_rx) = tokio::sync::oneshot::channel();
+    position(&app, &state, width, height, Some(placed_tx))?;
+    placed_rx.await.map_err(|_| "Placement interrompu.".to_string())?
+}
+
+fn validate_regions(regions: &[SurfaceRegion], width: f64, height: f64) -> Result<(), String> {
+    if regions.is_empty() || regions.len() > 6 { return Err("Régions de surface invalides.".into()); }
+    for region in regions {
+        let values = [region.x, region.y, region.width, region.height, region.radius];
+        if values.iter().any(|value| !value.is_finite())
+            || region.x < 0. || region.y < 0. || region.width <= 0. || region.height <= 0.
+            || region.radius < 0. || region.radius * 2. > region.width.min(region.height)
+            || region.x + region.width > width + 0.01 || region.y + region.height > height + 0.01 {
+            return Err("Régions de surface invalides.".into());
+        }
+    }
+    Ok(())
+}
+#[tauri::command]
+fn start_drag(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    client_x: f64,
+    client_y: f64,
+) -> Result<(), String> {
+    if window.label() != "overlay" {
+        return Err("Cette fenêtre ne peut pas être déplacée.".into());
+    }
+    let capture_id = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible {
+            return Err("Aucune capture active.".into());
+        }
+        let capture_id = i.capture
+            .as_ref()
+            .ok_or_else(|| "Aucune capture active.".to_string())?
+            .public
+            .id
+            .clone();
+        i.dragging = true;
+        capture_id
+    };
+    let button_down = match host::compensate_pointer_drag(&window, client_x, client_y) {
+        Ok(button_down) => button_down,
+        Err(error) => {
+            if let Ok(mut i) = state.inner.lock() {
+                i.dragging = false;
+            }
+            return Err(error);
+        }
+    };
+    {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible
+            || i.capture
+                .as_ref()
+                .is_none_or(|capture| capture.public.id != capture_id)
+        {
+            i.dragging = false;
+            return Err("La capture n’est plus active.".into());
+        }
+    };
+    if button_down && window.start_dragging().is_err() {
+        state.inner.lock().map_err(|_| lock_error())?.dragging = false;
+        return Err("Déplacement indisponible.".into());
+    }
+    let inner = state.inner.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Tao posts WM_NCLBUTTONDOWN, so start_dragging returns before the native
+        // move loop finishes. Commit the manual position only after mouse-up.
+        while unsafe {
+            windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON.0 as i32,
+            ) < 0
+        } {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        let Some(rect) = host::window_rect(host::handle(&window)) else {
+            if let Ok(mut i) = inner.lock() {
+                i.dragging = false;
+            }
+            return;
+        };
+        let (work, scale) = host::monitor(Some(rect), 0);
+        let size = {
+            let Ok(mut i) = inner.lock() else { return };
+            if !i.visible
+                || i.capture
+                    .as_ref()
+                    .is_none_or(|capture| capture.public.id != capture_id)
+            {
+                return;
+            }
+            i.manual = Some(ManualPlacement {
+                x: rect.x + i.regions.first().map_or(0., |region| region.x * scale),
+                y: rect.y + i.regions.first().map_or(0., |region| region.y * scale),
+            });
+            i.work = work;
+            i.scale = scale;
+            i.dragging = false;
+            i.size
+        };
+        let state = app.state::<AppState>();
+        let _ = position(&app, &state, size.0, size.1, None);
+    });
+    Ok(())
 }
 #[tauri::command]
 async fn check_connection(
@@ -502,63 +773,164 @@ fn delete_history(state: State<'_, AppState>, id: Option<String>) -> Result<(), 
     state.history.delete(id.as_deref())
 }
 
-fn position(app: &AppHandle, state: &AppState, width: f64, height: f64) -> Result<(), String> {
-    let (rect, capsule, scale) = {
+fn position(
+    app: &AppHandle,
+    state: &AppState,
+    width: f64,
+    height: f64,
+    placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+) -> Result<(), String> {
+    let (capture_id, rect, capsule, scale, regions, apply_rect, apply_regions, apply_capsule) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible {
             return Ok(());
         }
+        if !i.measured { return Ok(()); }
         let cap = i
             .capture
             .as_ref()
             .ok_or_else(|| "Aucune capture active.".to_string())?
             .public
             .clone();
+        let capture_id = cap.id.clone();
         let s = i.scale;
         let work = i.work;
         let (w, h) = (width * s, height * s);
+        let regions = i.regions.clone();
+        let surface = regions.first().copied().unwrap_or(SurfaceRegion { x: 0., y: 0., width, height, radius: 28. });
+        let (glass_w, glass_h) = (surface.width * s, surface.height * s);
+        // The glass stays in the work area; the transparent reserve around it (halo, menu
+        // space) may leave it, over the taskbar or off-screen, so the window is never
+        // pushed over its anchor by the clamp.
+        let to_host = |glass: Rect| {
+            let glass = placement::clamp(work, glass.x, glass.y, glass_w, glass_h);
+            Rect { x: glass.x - surface.x * s, y: glass.y - surface.y * s, width: w, height: h }
+        };
         i.size = (width, height);
-        if let Some(anchor) = cap.anchor {
-            if i.side.is_none() {
-                i.side = Some(placement::overlay(anchor, work, w, 220. * s, None).1);
+        if i.dragging {
+            return Ok(());
+        }
+        // Docked glass and unanchored captures rest bottom-centre on the tab; the capsule
+        // window is no longer shown. Anchored glass keeps its drag position or its anchor.
+        // How far the window reaches below the glass top: the menu space reserved under
+        // the pill counts when the side is chosen (the glass would otherwise be pushed up
+        // over its anchor by the clamp near the bottom edge).
+        let extent = h - surface.y * s;
+        let mut regions = regions;
+        let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Docked || cap.anchor.is_none(), i.manual, cap.anchor) {
+            (true, _, _) | (_, _, None) => {
+                let rect = placement::docked(work, w, h);
+                // A work area shorter than the reserved window truncates it from the top
+                // while the frontend keeps its root on the window's bottom edge.
+                if rect.height < h {
+                    regions = shift_regions(&regions, (rect.height - h) / s);
+                }
+                (rect, None, s)
             }
-            let (rect, side) = placement::overlay(anchor, work, w, h, i.side);
-            i.side = Some(side);
-            (rect, None, s)
-        } else {
-            let capsule = placement::capsule(work, 200. * s, 36. * s);
-            (
-                Rect {
-                    x: work.x + (work.width - w) / 2.,
-                    y: (capsule.y - h - 8. * s).max(work.y),
-                    width: w,
-                    height: h,
-                },
-                Some(capsule),
-                s,
-            )
-        }
+            (false, Some(manual), _) => (to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }), None, s),
+            (false, None, Some(anchor)) => {
+                // Design « 1a »: compact and enlarged glass share the anchored top-left
+                // corner; a larger glass is shifted by the clamp, never recentred.
+                if i.side.is_none() {
+                    i.side = Some(placement::overlay(anchor, work, glass_w, 220. * s, extent, None).1);
+                }
+                let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, extent, i.side);
+                i.side = Some(side);
+                (to_host(glass), None, s)
+            }
+        };
+        let apply_rect = i.last_overlay.as_ref().is_none_or(|last| last.0 != result.0);
+        let apply_regions = i.last_overlay.as_ref().is_none_or(|last| last.1 != regions);
+        let apply_capsule = i.last_capsule.as_ref() != Some(&result.1);
+        (capture_id, result.0, result.1, result.2, regions, apply_rect, apply_regions, apply_capsule)
     };
-    if let Some(w) = app.get_webview_window("capsule") {
-        if let Some(r) = capsule {
-            host::show(&w, r, 19. * scale)?;
-        } else {
-            let _ = w.hide();
-        }
-    }
-    host::escape_scope(state.inner.lock().map_err(|_|lock_error())?.source_window,
-        app.get_webview_window("overlay").map(|w|host::handle(&w)).unwrap_or(0),
-        app.get_webview_window("capsule").map(|w|host::handle(&w)).unwrap_or(0));
-    host::show(
-        &app.get_webview_window("overlay")
-            .ok_or_else(|| "Traduction indisponible.".to_string())?,
-        rect,
-        26. * scale,
-    )
+    finish_position(app, capture_id, rect, capsule, scale, regions, apply_rect, apply_regions, apply_capsule, placed)
 }
-fn capture_error(app: &AppHandle, message: &str) {
+
+/// Moves regions by `dy` logical pixels, clipping whatever leaves the window through its top.
+fn shift_regions(regions: &[SurfaceRegion], dy: f64) -> Vec<SurfaceRegion> {
+    regions
+        .iter()
+        .filter_map(|region| {
+            let top = region.y + dy;
+            let clipped = (-top).max(0.);
+            let height = region.height - clipped;
+            (height > 0.).then(|| SurfaceRegion { x: region.x, y: top.max(0.), width: region.width, height, radius: region.radius.min(height / 2.) })
+        })
+        .collect()
+}
+
+fn finish_position(
+    app: &AppHandle,
+    capture_id: String,
+    rect: Rect,
+    capsule: Option<Rect>,
+    scale: f64,
+    regions: Vec<SurfaceRegion>,
+    apply_rect: bool,
+    apply_regions: bool,
+    apply_capsule: bool,
+    placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let source_window = {
+            let Ok(i) = state.inner.lock() else {
+                if let Some(placed) = placed { let _ = placed.send(Err(lock_error())); }
+                return;
+            };
+            if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
+                if let Some(placed) = placed { let _ = placed.send(Err("La capture n’est plus active.".into())); }
+                return;
+            }
+            i.source_window
+        };
+        let result = (|| -> Result<(), String> {
+          if apply_capsule {
+            if let Some(window) = handle.get_webview_window("capsule") {
+                if let Some(capsule) = capsule { host::show(&window, capsule, &[], scale)?; }
+                else { host::hide(&window)?; }
+            } else {
+                return Err("Capsule indisponible.".into());
+            }
+          }
+          host::escape_scope(source_window,
+            handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0),
+            handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
+          if apply_rect || apply_regions {
+            let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
+            // Folds, unfolds and menus only change the surfaces: no SetWindowPos.
+            if apply_rect { host::place(&window, rect)?; }
+            host::set_regions(&window, &regions, scale)?;
+          }
+          let mut i = state.inner.lock().map_err(|_| lock_error())?;
+          if !i.visible || i.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
+              return Err("La capture n’est plus active.".into());
+          }
+          if apply_rect || apply_regions { i.last_overlay = Some((rect, regions)); }
+          if apply_capsule { i.last_capsule = Some(capsule); }
+          Ok(())
+        })();
+        if let Some(placed) = placed { let _ = placed.send(result); }
+    }).map_err(|_| "Placement indisponible.".to_string())
+}
+fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
+    if let Some(tray) = app.tray_by_id("flowtranslate") {
+        let tooltip = if simulated {
+            "FlowTranslate — Démonstration simulée"
+        } else {
+            "FlowTranslate"
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+}
+fn capture_error(app: &AppHandle, message: &str, notify: bool) {
     if let Some(tray) = app.tray_by_id("flowtranslate") {
         let _ = tray.set_tooltip(Some(format!("FlowTranslate — {message}")));
+    }
+    if notify {
+        host::show_capture_error(message);
     }
 }
 fn watch_context(app: AppHandle) {
@@ -628,7 +1000,7 @@ fn watch_context(app: AppHandle) {
                         message: "La sélection a changé. Utilisez Copier.".into(),
                     },
                 );
-                let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1);
+                let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None);
             }
         }
     });
@@ -650,10 +1022,11 @@ pub fn run() {
             let demo = args.iter().any(|a| {
                 matches!(
                     a.as_str(),
-                    "--demo" | "--demo-selection" | "--demo-clipboard"
+                    "--demo" | "--demo-selection" | "--demo-clipboard" | "--demo-long"
                 )
             });
             let demo_clipboard = args.iter().any(|a| a == "--demo-clipboard");
+            let demo_long = args.iter().any(|a| a == "--demo-long");
             let shortcut = settings.shortcut.clone();
             let simulated = demo || args.iter().any(|a| a == "--simulate-inference");
             app.manage(AppState {
@@ -662,6 +1035,7 @@ pub fn run() {
                 history,
                 demo,
                 demo_clipboard,
+                demo_long,
                 simulated,
             });
             // Commands may arrive as soon as the WebView loads. State must exist first.
@@ -671,7 +1045,6 @@ pub fn run() {
             use tauri::{
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,
-                window::{Color, Effect, EffectsBuilder},
             };
             let settings_item = MenuItem::with_id(app, "settings", "Réglages", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
@@ -696,14 +1069,19 @@ pub fn run() {
             tray.build(app)?;
             for label in ["overlay", "capsule"] {
                 if let Some(w) = app.get_webview_window(label) {
-                    let _ = w.set_effects(
-                        EffectsBuilder::new()
-                            .effect(Effect::Acrylic)
-                            .color(Color(29, 31, 36, 30))
-                            .build(),
-                    );
+                    host::apply_glass(&w);
+                    host::silence_frame(&w)?;
+                    let native = host::handle(&w);
+                    w.on_window_event(move |event| {
+                        if matches!(event, tauri::WindowEvent::Focused(_)) {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                let _ = host::repair_handle(native);
+                            });
+                        }
+                    });
                 }
             }
+            host::start_hit_tester(app.handle().clone(), app.get_webview_window("overlay").map(|w| host::handle(&w)).unwrap_or(0));
             if let Some(w) = app.get_webview_window("settings") {
                 let window = w.clone();
                 w.on_window_event(move |event| {
@@ -714,7 +1092,7 @@ pub fn run() {
                 });
             }
             if let Err(message) = register_shortcut(app.handle(), &shortcut) {
-                capture_error(app.handle(), &message);
+                capture_error(app.handle(), &message, false);
                 let _ = open_settings(app.handle().clone());
             }
             host::install_escape_hook()?;
@@ -741,9 +1119,15 @@ pub fn run() {
             copy_result,
             replace_result,
             dismiss_overlay,
+            complete_overlay_dismiss,
             open_settings,
             focus_overlay,
+            override_cursor,
             resize_overlay,
+            resize_settings,
+            drag_settings,
+            quit_app,
+            start_drag,
             check_connection,
             get_history,
             delete_history
@@ -755,6 +1139,24 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {
+        let regions = [
+            SurfaceRegion { x: 92., y: 500., width: 300., height: 200., radius: 28. },
+            SurfaceRegion { x: 220., y: 722., width: 44., height: 20., radius: 10. },
+        ];
+        // 758 px reserved, 700 px available: everything moves 58 px up.
+        let shifted = shift_regions(&regions, -58.);
+        assert_eq!(shifted[0].y, 442.);
+        assert_eq!(shifted[1].y, 664.);
+        assert_eq!(shifted.len(), 2);
+        // A surface leaving through the top is clipped, its radius kept plausible; one
+        // entirely above the window disappears.
+        let clipped = shift_regions(&regions, -560.);
+        assert_eq!(clipped.len(), 2);
+        assert_eq!((clipped[0].y, clipped[0].height), (0., 140.));
+        assert_eq!(shift_regions(&regions, -730.).len(), 1);
+    }
     #[test]
     fn stale_cancel_preserves_current() {
         let mut i = Inner::new(Settings::default());
@@ -777,5 +1179,20 @@ mod tests {
         });
         c.cancel();
         assert!(!i.current("r"));
+    }
+    #[test]
+    fn stale_dismiss_ack_cannot_close_new_capture() {
+        let mut i = Inner::new(Settings::default());
+        i.pending_dismiss = Some(("new".into(), 8));
+        assert!(!i.complete_pending_dismiss("old", 7));
+        assert_eq!(i.pending_dismiss, Some(("new".into(), 8)));
+        assert!(i.complete_pending_dismiss("new", 8));
+    }
+    #[test]
+    fn regions_reject_nan_and_out_of_bounds() {
+        let valid = SurfaceRegion { x: 0., y: 14., width: 280., height: 100., radius: 26. };
+        assert!(validate_regions(&[valid], 280., 114.).is_ok());
+        assert!(validate_regions(&[SurfaceRegion { x: f64::NAN, ..valid }], 280., 114.).is_err());
+        assert!(validate_regions(&[SurfaceRegion { width: 281., ..valid }], 280., 114.).is_err());
     }
 }

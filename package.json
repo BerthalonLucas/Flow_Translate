@@ -1,9 +1,14 @@
 {
   "name": "flowtranslate-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.7",
   "type": "module",
   "scripts": {
+    "ui:lab": "vite --host 127.0.0.1 --port 5174 --strictPort --open /lab.html",
+    "ui:check": "playwright test --config playwright.visual.config.ts",
+    "ui:reference": "playwright test --config playwright.visual.config.ts --update-snapshots",
+    "ui:native": "powershell -NoProfile -File scripts/test-native-ui.ps1",
+    "ui:motion": "node scripts/capture-ui-preview.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "test": "vitest run",
@@ -11,9 +16,15 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@radix-ui/react-dropdown-menu": "2.1.24",
+    "@radix-ui/react-scroll-area": "1.2.18",
+    "@radix-ui/react-switch": "1.3.7",
+    "@radix-ui/react-toggle-group": "1.1.19",
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/cli": "2.11.4",
     "@vitejs/plugin-react": "6.1.1",
+    "lucide-react": "1.43.0",
+    "motion": "13.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "vite": "8.2.2"

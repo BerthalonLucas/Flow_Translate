@@ -1,0 +1,20 @@
+.bug-board a { color: #c4c9fa; font-size: 12px; }
+.bug-board .canvas { max-height: none; min-height: 0; padding: 12px; }
+.defect-heading { padding: 20px 24px 12px; }
+.defect-heading > span { color: #b4b1ca; font-size: 11px; }
+.defect-heading h2 { margin: 8px 0; font-size: 21px; font-weight: 600; }
+.defect-heading p, .repro-steps, .native-required { font-size: 13px; line-height: 1.65; color: #c0c0cc; }
+.reported { margin: 0 24px; border: 1px solid #42434e; border-radius: 8px; overflow: hidden; }
+.reported summary { cursor: pointer; padding: 12px; font-size: 12px; color: #c7c8d9; }
+.reported img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.repro-steps { padding: 18px 24px; }
+.repro-steps ol { padding-left: 20px; margin: 8px 0 12px; }
+.repro-steps p { margin-bottom: 0; }
+.native-required { margin: 0 24px 12px; padding: 16px; border-left: 3px solid #caa273; background: #2d2a28; }
+.bug-board footer { line-height: 1.6; font-size: 12px; color: #aaaaba; }
+.patch-evidence { margin: 0 24px 18px; font-size: 12px; }
+.patch-evidence > div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.patch-evidence figure { margin: 0; min-width: 0; }
+.patch-evidence figcaption { color: #b7b7c7; margin-bottom: 8px; }
+.patch-evidence img { width: 100%; border: 1px solid #444650; }
+.patch-evidence p { color: #aaaaba; line-height: 1.6; }

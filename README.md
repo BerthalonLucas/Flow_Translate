@@ -8,10 +8,11 @@ ouvre une capsule de 200 × 36 px et demande confirmation avant l’envoi. Au re
 seule l’icône de notification reste présente. Langue, profil Rapide/Qualité,
 raccourci et connexion se configurent dans les réglages.
 
-**État : prototype V1 intégré, avec recette encore en cours.** Les modèles,
-licences et révisions sont épinglés, mais les mesures GPU et la revue humaine
-des 100 traductions restent à exécuter. Voir les preuves et limites dans
-[VALIDATION.md](docs/VALIDATION.md), sans confondre démonstration et inférence.
+**État : version d’essai 0.1.7 (plus de bandeau au changement de focus, fenêtre réservée sans redimensionnement au repli, délai de grâce après une action, anneau à 1,4 s, coupures aux séparateurs) ; moteurs réels validés en 0.1.5.**
+Les 100 extraits synthétiques FR↔EN ont été exécutés pour chaque modèle à 1, 4
+et 10 requêtes simultanées. La revue humaine de qualité et la matrice native
+Office/multimoniteur restent à terminer. Voir [le guide d’essai sur un autre poste](docs/ESSAIS-0.1.6.md), [l’essai réel 0.1.5](docs/ESSAIS-0.1.5.md)
+et les preuves dans [VALIDATION.md](docs/VALIDATION.md).
 
 ## Essayer
 
@@ -29,6 +30,19 @@ Pour examiner le rendu natif sans GPU :
 ```powershell
 FlowTranslate.exe --demo-selection
 FlowTranslate.exe --demo-clipboard
+FlowTranslate.exe --demo-long
+```
+
+La bulle se déplace en faisant glisser ses marges. Le texte reste sélectionnable,
+les boutons cliquables et la molette fait défiler les textes longs sans barre
+visible. Les textes longs passent dans le lecteur bas, plus large. Un déplacement manuel
+reste valable pour le résultat courant ; la capture suivante retrouve son ancrage.
+
+Sur le poste de développement de Lucas, le lancement utilise un dossier explicite
+afin d’éviter la redirection de `%LOCALAPPDATA%` par le paquet Codex :
+
+```powershell
+& "C:\Users\Lucas\Apps\FlowTranslate\FlowTranslate.exe"
 ```
 
 Fermer l’instance précédente depuis son icône avant de changer de mode.

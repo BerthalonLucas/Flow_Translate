@@ -1,4 +1,5 @@
 import type { Capture, Language, Mode, StreamEvent } from './types';
+import { compactLayout, type TextLayout } from './layout';
 
 export type TranslationState = {
   capture: Capture | null;
@@ -6,33 +7,36 @@ export type TranslationState = {
   targetLanguage: Language;
   mode: Mode;
   result: string;
-  phase: 'idle' | 'confirming' | 'streaming' | 'complete' | 'error' | 'cancelled';
+  phase: 'idle' | 'streaming' | 'complete' | 'error' | 'cancelled';
   error: string | null;
   replacementValid: boolean;
   invalidated: boolean;
-  enlarged: boolean;
   comparing: boolean;
+  layout: TextLayout;
 };
 
 export const initialTranslationState: TranslationState = {
   capture: null, requestId: null, targetLanguage: 'fr', mode: 'quality', result: '',
-  phase: 'idle', error: null, replacementValid: false, invalidated: false, enlarged: false, comparing: false
+  phase: 'idle', error: null, replacementValid: false, invalidated: false, comparing: false,
+  layout: compactLayout,
 };
 
 export type Action =
-  | { type: 'CAPTURE'; capture: Capture }
+  | { type: 'CAPTURE'; capture: Capture; layout?: TextLayout }
+  | { type: 'LAYOUT'; captureId: string; layout: TextLayout }
   | { type: 'START'; requestId: string; mode: Mode; targetLanguage: Language }
   | { type: 'STREAM'; event: StreamEvent }
   | { type: 'INVALIDATE'; message: string }
   | { type: 'CANCEL' }
-  | { type: 'TOGGLE_ENLARGE' }
+  | { type: 'DISMISS' }
   | { type: 'TOGGLE_COMPARE' };
 
 export function translationReducer(state: TranslationState, action: Action): TranslationState {
   switch (action.type) {
     case 'CAPTURE':
-      return { ...state, capture: action.capture, requestId: null, result: '', error: null, enlarged: false, comparing: false,
-        replacementValid: false, invalidated: false, phase: action.capture.source === 'clipboard' ? 'confirming' : 'idle' };
+      return { ...state, capture: action.capture, requestId: null, result: '', error: null, comparing: false,
+        replacementValid: false, invalidated: false, layout: action.layout ?? initialTranslationState.layout, phase: 'idle' };
+    case 'LAYOUT': return action.captureId === state.capture?.id ? { ...state, layout: action.layout } : state;
     case 'START':
       return { ...state, requestId: action.requestId, mode: action.mode, targetLanguage: action.targetLanguage,
         result: '', error: null, phase: 'streaming', replacementValid: false };
@@ -43,9 +47,9 @@ export function translationReducer(state: TranslationState, action: Action): Tra
       return { ...state, phase: 'error', error: action.event.message ?? 'La traduction n’a pas abouti.', replacementValid: false };
     case 'INVALIDATE':
       return { ...state, replacementValid: false, invalidated: true, error: action.message };
+    case 'DISMISS': return { ...initialTranslationState };
     case 'CANCEL':
       return state.phase === 'streaming' ? { ...state, requestId: null, phase: 'cancelled', replacementValid: false } : state;
-    case 'TOGGLE_ENLARGE': return { ...state, enlarged: !state.enlarged };
     case 'TOGGLE_COMPARE': return { ...state, comparing: !state.comparing };
     default: return state;
   }

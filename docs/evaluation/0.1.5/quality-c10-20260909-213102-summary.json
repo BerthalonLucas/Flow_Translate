@@ -1,0 +1,46 @@
+{
+  "profile": "quality",
+  "model": "tencent/Hy-MT2-7B-FP8",
+  "revision": "883d09eb21d9be92058556cd0a4016d8a648c7db",
+  "image": "vllm/vllm-openai:v0.28.0@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+  "generation": {
+    "temperature": 0.7,
+    "top_p": 0.6,
+    "top_k": 20,
+    "repetition_penalty": 1.05,
+    "max_tokens": 4096,
+    "seed": 42
+  },
+  "concurrency": 10,
+  "cases": 100,
+  "successful": 100,
+  "failed": 0,
+  "wallSeconds": 4.356848000024911,
+  "requestsPerSecond": 22.9523729079895,
+  "latencyP50Seconds": 0.39049059999524616,
+  "latencyP95Seconds": 0.5942872000159696,
+  "ttftP50Seconds": 0.0827141999907326,
+  "ttftP95Seconds": 0.10875630000373349,
+  "preservationFailures": 2,
+  "humanQualityReview": "pending",
+  "localGpuMemory": {
+    "requested": true,
+    "available": true,
+    "samples": 5,
+    "intervalSeconds": 1,
+    "scope": "local-device-total-including-other-processes",
+    "devices": {
+      "0": {
+        "baselineMiB": 12730,
+        "peakMiB": 12792,
+        "totalMiB": 16303
+      },
+      "1": {
+        "baselineMiB": 6811,
+        "peakMiB": 6811,
+        "totalMiB": 16311
+      }
+    }
+  },
+  "corpusSha256": "ed9ebc76e42bdba2622b3895be12acbf692c68cf778399d918eb409ba8644d49"
+}

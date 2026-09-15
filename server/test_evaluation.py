@@ -1,9 +1,15 @@
 import json
+import os
+import shutil
+import subprocess
 import threading
+import tempfile
 import unittest
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from eval_corpus import cases
 from evaluate import percentile, prompt, translate, validate_endpoint
+from preflight import effective_settings
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -40,6 +46,81 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("into French", prompt("hello", "fr"))
         self.assertIsNone(percentile([], .95))
         self.assertEqual(percentile([3, 1, 2], .5), 2)
+
+    def test_preflight_honors_env_file_and_process_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("FAST_GPU=GPU-test\nFAST_PORT=9011\n", encoding="utf-8")
+            settings = effective_settings("fast", None, path)
+            self.assertEqual(settings["fast"]["gpu"], "GPU-test")
+            self.assertEqual(settings["fast"]["port"], 9011)
+            previous = os.environ.get("FAST_PORT")
+            os.environ["FAST_PORT"] = "9012"
+            try:
+                self.assertEqual(effective_settings("fast", None, path)["fast"]["port"], 9012)
+            finally:
+                if previous is None:
+                    os.environ.pop("FAST_PORT", None)
+                else:
+                    os.environ["FAST_PORT"] = previous
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "Windows PowerShell test")
+    def test_start_script_first_launch_and_stopped_service_are_selected_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            log = fixture / "calls.log"
+            docker = fixture / "docker.cmd"
+            docker.write_text(
+                "@echo off\n"
+                "echo docker %*>>\"%FLOWTRANSLATE_FAKE_LOG%\"\n"
+                "if \"%1\"==\"inspect\" (\n"
+                "  if \"%FLOWTRANSLATE_FAKE_EXISTING%\"==\"1\" if not exist \"%FLOWTRANSLATE_FAKE_MARKER%\" (\n"
+                "    echo seen>\"%FLOWTRANSLATE_FAKE_MARKER%\"\n"
+                "    echo exited^|unhealthy\n"
+                "    exit /b 0\n"
+                "  )\n"
+                "  echo running^|healthy\n"
+                "  exit /b 0\n"
+                ")\n"
+                "echo %*| findstr /c:\" ps \" >nul\n"
+                "if not errorlevel 1 (\n"
+                "  echo %*| findstr /c:\"--all\" >nul\n"
+                "  if not errorlevel 1 (\n"
+                "    if \"%FLOWTRANSLATE_FAKE_EXISTING%\"==\"1\" echo fake-container\n"
+                "    exit /b 0\n"
+                "  )\n"
+                "  echo fake-container\n"
+                ")\n"
+                "exit /b 0\n",
+                encoding="ascii",
+            )
+            (fixture / "python.cmd").write_text(
+                "@echo off\necho python %*>>\"%FLOWTRANSLATE_FAKE_LOG%\"\nexit /b 0\n",
+                encoding="ascii",
+            )
+            env = os.environ.copy()
+            env["PATH"] = str(fixture) + os.pathsep + env["PATH"]
+            env["FLOWTRANSLATE_FAKE_LOG"] = str(log)
+            command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                       str(Path(__file__).with_name("start.ps1")), "-Profile", "fast",
+                       "-HealthDeadlineSeconds", "30", "-EnvFile", str(fixture / "absent.env")]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=15, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("up -d fast", calls)
+            self.assertIn("python ", calls)
+            self.assertNotIn(" stop ", calls)
+
+            log.unlink()
+            env["FLOWTRANSLATE_FAKE_EXISTING"] = "1"
+            env["FLOWTRANSLATE_FAKE_MARKER"] = str(fixture / "inspect.marker")
+            # Also exercise the default .env path under Windows PowerShell 5.1.
+            result = subprocess.run(command[:-2], capture_output=True, text=True, timeout=15, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("up -d fast", calls)
+            self.assertIn("python ", calls)
+            self.assertNotIn(" stop ", calls)
 
     def test_stream_unicode_and_truncation(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

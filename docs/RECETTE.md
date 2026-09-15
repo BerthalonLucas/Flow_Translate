@@ -1,6 +1,6 @@
 # Recette Windows
 
-Record application version, Windows scaling, screen configuration and pass/fail evidence for each run. Use synthetic text only. Start with the approved short sentence, then a multiline paragraph and a message longer than the220px bubble viewport.
+Record application version, Windows scaling, screen configuration and pass/fail evidence for each run. Use synthetic text only. Start with the approved short sentence, then a multiline paragraph and a message longer than the bottom reader viewport. Current visual reference: design/glass-reader/c-overlapping-pill.png.
 
 | Scenario | Expected behavior | Status |
 |---|---|---|
@@ -29,3 +29,26 @@ Record application version, Windows scaling, screen configuration and pass/fail 
 | Installer then restart | App available, no autostart without opt-in | Not run |
 
 Acceptance is not based solely on a screenshot: verify selection identity, focus and actual clipboard contents before/after. Close only windows launched for this test, and never stop unrelated workloads.
+
+## Régression verre et lecteur bas — 0.1.3
+
+- Texte court : verre seul, pilule Copier/Plus chevauchant le bord supérieur droit, aucune première ligne masquée.
+- Texte long : lecteur centré en bas du bon moniteur, aucune barre visible ; molette et clavier permettent de lire la fin du texte et Copier conserve tout.
+- Ouvrir/fermer le menu du lecteur : le texte doit conserver ses coordonnées à l'écran, sauf si le moniteur est trop petit et impose un ajustement.
+- Tester les coins et l'espace transparent entre menu/pilule/verre : les clics hors surfaces passent à l'application source.
+- Streaming : pas d'aller-retour entre formats, pas de déplacement à chaque fragment, pas de texte étiré ni de flou animé.
+- Fermer pendant le flux : annulation immédiate, disparition courte, aucun fragment tardif ne réaffiche la bulle.
+- Nouvelle capture pendant la fermeture précédente : un ancien accusé de fermeture ou délai de secours ne doit jamais masquer la nouvelle capture.
+- Répéter les interactions avec mouvements réduits ; pas d'animation prolongée imposée.
+- Comparer un profil synthétique avant/après avec scripts/profile-ui.mjs. Les intervalles d'images de Chromium ne sont pas une mesure du compositeur Windows.
+
+Consigner les résultats réels dans VALIDATION.md. Les points ci-dessus sont une recette, pas une déclaration de tests réussis.
+
+# Régression 0.1.1 : cadre et déplacement
+
+- Dans la vraie fenêtre Tauri, vérifier l’absence de barre de titre au premier affichage, après focus et après Agrandir/Réduire.
+- Faire glisser le texte et le fond : la bulle suit la souris et reste à sa nouvelle position après ouverture du menu et pendant le streaming.
+- Vérifier que Copier et Plus d’options ne déclenchent pas un déplacement ; faire défiler un texte long avec la molette et la barre.
+- Fermer avec Échap pendant un déplacement ne doit pas réafficher la fenêtre au relâchement.
+- Capturer un nouveau texte doit rétablir l’ancrage contextuel ; changer de moniteur doit conserver une bulle visible à la bonne échelle.
+- Vérifier le lancement depuis le PowerShell de l’utilisateur avec le chemin réellement installé, hors redirection privée de Codex.

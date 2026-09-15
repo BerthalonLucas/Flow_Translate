@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-test('the enlarged native overlay measures 420px from a 280px host window', async ({ page }) => {
-  await page.setViewportSize({ width: 280, height: 220 });
+test('the enlarged native overlay measures 420px from a 300px host window', async ({ page }) => {
+  await page.setViewportSize({ width: 300, height: 234 });
   await page.goto('/?window=overlay&demo=1');
 
   await expect(page.getByRole('button', { name: 'Plus d’options' })).toBeEnabled();

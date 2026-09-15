@@ -102,7 +102,7 @@ where
     };
     let prompt = format!("Translate the following text into {target}. Note that you should only output the translated result without any additional explanation:\n{text}");
     let body = json!({"model":profile.model,"messages":[{"role":"user","content":prompt}],"stream":true,
-        "temperature":0.7,"top_p":0.8,"top_k":20,"repetition_penalty":1.05,"max_tokens":4096});
+        "temperature":0.7,"top_p":0.6,"top_k":20,"repetition_penalty":1.05,"max_tokens":4096});
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -116,7 +116,7 @@ where
     if cancel.is_cancelled() {
         return Err("Traduction annulée.".into());
     }
-    let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|format!("Connexion au serveur impossible: {e}"))?};
+    let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|unreachable_message(&profile.endpoint, &e))?};
     if !response.status().is_success() {
         return Err(format!(
             "Le serveur a répondu HTTP {}.",
@@ -163,6 +163,27 @@ where
     Ok(result)
 }
 
+/// The raw reqwest text names the full URL and the transport; the glass only
+/// needs the host and what to do about it.
+fn unreachable_message(endpoint: &str, error: &reqwest::Error) -> String {
+    let target = reqwest::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_string(),
+            })
+        })
+        .unwrap_or_else(|| "configuré".to_string());
+    if error.is_timeout() {
+        format!("Le serveur {target} ne répond pas.")
+    } else if error.is_connect() {
+        format!("Serveur {target} injoignable. Démarrez-le ou changez de profil dans les Réglages.")
+    } else {
+        format!("Connexion au serveur {target} impossible.")
+    }
+}
+
 pub async fn check(profile: &Profile) -> Result<(), String> {
     let endpoint = api_url(&profile.endpoint, "models")?;
     let client = reqwest::Client::builder()
@@ -177,7 +198,7 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
     let response = req
         .send()
         .await
-        .map_err(|_| "Serveur injoignable.".to_string())?;
+        .map_err(|e| unreachable_message(&profile.endpoint, &e))?;
     if !response.status().is_success() {
         return Err(format!(
             "Le serveur a répondu HTTP {}.",
@@ -207,6 +228,32 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "requires a running local FlowTranslate vLLM profile"]
+    async fn live_vllm_stream_and_cancel() {
+        let mode = std::env::var("FLOWTRANSLATE_TEST_PROFILE").unwrap_or_else(|_| "fast".into());
+        assert!(matches!(mode.as_str(), "fast" | "quality"));
+        let profile = Profile {
+            endpoint: format!("http://127.0.0.1:{}/v1", if mode == "fast" { 8001 } else { 8002 }),
+            model: format!("flowtranslate-{mode}"),
+            api_key: String::new(),
+        };
+        check(&profile).await.expect("live model discovery");
+        let mut deltas = String::new();
+        let result = stream(profile.clone(), "Please confirm the budget of 1250 EUR for project Orion.".into(), Language::Fr, CancellationToken::new(), |chunk| {
+            if let Some(text) = chunk.text { deltas.push_str(&text); }
+            Ok(())
+        }).await.expect("live native streaming translation");
+        assert_eq!(result, deltas);
+        assert!(result.contains("Orion") && result.contains("EUR"));
+        let cancel = CancellationToken::new();
+        let trigger = cancel.clone();
+        let cancelled = stream(profile, "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), Language::Fr, cancel, |chunk| {
+            if chunk.text.is_some() { trigger.cancel(); }
+            Ok(())
+        }).await;
+        assert_eq!(cancelled.unwrap_err(), "Traduction annulée.");
+    }
     #[test]
     fn fragmented_utf8_and_frames() {
         let mut d = SseDecoder::default();

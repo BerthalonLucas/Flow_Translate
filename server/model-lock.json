@@ -23,12 +23,11 @@
   },
   "generation": {
     "temperature": 0.7,
-    "top_p": 0.8,
+    "top_p": 0.6,
     "top_k": 20,
     "repetition_penalty": 1.05,
     "max_tokens": 4096,
     "seed": 42
   },
-  "validation": "metadata verified; GPU runtime and translation quality not yet measured"
+  "validation": "BF16 and FP8 runtime verified on 2026-09-09 with vLLM 0.28.0; 100 synthetic cases per profile at concurrency 1/4/10 completed; human quality review pending"
 }
-
