@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Icon, SettingSwitch } from './ui';
+import { Icon, SettingSwitch } from './settings/controls';
 import { defaultActions, newActionTemplate, promptError } from './actionDefaults';
 import type { Settings, ShortcutBinding } from './types';
 
@@ -52,7 +52,7 @@ export function ActionSettings({ settings, persist, record }: Props) {
         const error = promptError(action.promptTemplate);
         const used = settings.defaultActionId === action.id || settings.shortcutBindings.some(b => b.actionId === action.id);
         return <details className="action-card" key={action.id}>
-          <summary><span>{action.name || 'Action sans nom'}</span><small>{original ? 'Prédéfinie' : 'Personnalisée'}</small><Icon name="chevron" size={14} /></summary>
+          <summary><span>{action.name || 'Action sans nom'}</span><small>{original ? 'Prédéfinie' : 'Personnalisée'}</small><Icon name="chevron-down" size={14} /></summary>
           <div className="action-editor">
             <label>Nom de l’action<input value={action.name} maxLength={60} onChange={e => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...a, name: e.target.value } : a) }, false)} /></label>
             <label>Consigne<textarea aria-label={`Consigne ${action.name}`} rows={6} value={action.promptTemplate} spellCheck={false} aria-invalid={Boolean(error)} onChange={e => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...a, promptTemplate: e.target.value } : a) }, false)} /></label>
@@ -69,7 +69,7 @@ export function ActionSettings({ settings, persist, record }: Props) {
         <button className="text-button" disabled={settings.shortcutBindings.length >= 12 || busy} onClick={() => persist({ ...settings, shortcutBindings: [...settings.shortcutBindings, { id: crypto.randomUUID(), shortcut: '', actionId: settings.defaultActionId, outputMode: 'display', enabled: false }] }, true)}>Ajouter un raccourci</button></div>
       <fieldset className="shortcut-list" disabled={busy}>{settings.shortcutBindings.map(b => <article className="shortcut-card" key={b.id}>
         <div className="shortcut-card-heading"><SettingSwitch label="Activer ce raccourci" checked={b.enabled} onCheckedChange={enabled => binding(b.id, { enabled })} /><span>{b.enabled ? 'Actif' : 'Désactivé'}</span>
-          {settings.shortcutBindings.length > 1 && <button className="icon-button" aria-label="Supprimer ce raccourci" onClick={() => persist({ ...settings, shortcutBindings: settings.shortcutBindings.filter(v => v.id !== b.id) }, true)}><Icon name="close" size={13} /></button>}</div>
+          {settings.shortcutBindings.length > 1 && <button className="icon-button" aria-label="Supprimer ce raccourci" onClick={() => persist({ ...settings, shortcutBindings: settings.shortcutBindings.filter(v => v.id !== b.id) }, true)}><Icon name="x" size={13} /></button>}</div>
         <div className="shortcut-control">
           <span ref={capturing === b.id ? recorder : undefined} className="keycaps" data-capturing={capturing === b.id || undefined} role="textbox" aria-label="Raccourci" aria-readonly="true" tabIndex={capturing === b.id ? 0 : -1} onKeyDown={e => void captureKey(b.id, e)} onBlur={() => setCapturing(null)}>
             {capturing === b.id ? <em>Pressez la combinaison…</em> : b.shortcut ? b.shortcut.split('+').map((key, n) => <kbd key={n}>{key}</kbd>) : <em>À définir</em>}

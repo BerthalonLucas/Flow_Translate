@@ -1,3 +1,4 @@
+@import './tokens.css';
 :root { font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: #f7f8fc; font-synthesis: none; }
 /* Design handoff « 1a » tokens (2026-09-09). */
 :root {
@@ -12,15 +13,12 @@
   --text: #fafbfd;
   --text-muted: rgba(250,251,253,.8);
   --text-disabled: rgba(250,251,253,.35);
-  --focus: #7db6ff;
   --accent-cursor: #b9d2ff;
   --error-text: #ffd2cc;
   --warning-text: #ffd5a6;
   --settings-bg: #1f2126;
   --settings-field: #2a2d33;
   --settings-text: #eef0f4;
-  --switch-on: #91bff7;
-  --switch-thumb-on: #183956;
   --ok: #7fd3a3;
   --pending: #f0c27a;
   --fail: #ff9c8f;
@@ -76,7 +74,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .setting-switch { flex: none; width: 40px; height: 22px; padding: 2px; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; background: #505660; transition: background-color 140ms ease; }
 .setting-switch[data-state="checked"] { border-color: transparent; background: var(--switch-on); }
 .switch-thumb { display: block; width: 18px; height: 18px; border-radius: 50%; background: #f8faff; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
-.setting-switch[data-state="checked"] .switch-thumb { background: var(--switch-thumb-on); }
+.setting-switch[data-state="checked"] .switch-thumb { background: var(--switch-on-thumb); }
 .shortcut-control { display: flex; align-items: center; gap: 10px; flex: none; }
 .keycaps { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; border-radius: 6px; outline: none; }
 .keycaps kbd { display: inline-grid; place-items: center; min-width: 26px; height: 24px; padding: 0 7px; border-radius: 6px; font: inherit; font-size: 11.5px; font-weight: 600; background: rgba(255,255,255,.1); box-shadow: inset 0 -1px rgba(0,0,0,.35), inset 0 1px rgba(255,255,255,.08); }
@@ -122,9 +120,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .save-status .retry { height: 24px; padding: 0 4px; color: var(--error-text); }
 .settings-meta { display: inline-flex; align-items: center; gap: 4px; }
 .settings-meta .text-button { height: 24px; padding: 0 4px; }
-.primary-action, .quiet-action { min-height: 30px; border: 0; border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
-.primary-action { color: #102344; background: #d8e8ff; }
-.quiet-action { color: #f2f3f5; background: rgba(255,255,255,.11); }
+.settings-window :is(.primary-action, .quiet-action), .demo-desktop .primary-action, .initialization-error .quiet-action { min-height: 30px; border: 0; border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
+.settings-window .primary-action, .demo-desktop .primary-action { color: var(--on-signal); background: var(--signal); }
+.settings-window .quiet-action, .initialization-error .quiet-action { color: #f2f3f5; background: rgba(255,255,255,.11); }
+.settings-window .icon-button { appearance: none; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-md); color: var(--ink-muted); background: transparent; transition: background-color 120ms ease, color 120ms ease; }
+.settings-window .icon-button:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); }
+.settings-window .icon-button[data-variant="danger"]:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
+.settings-window .icon-button:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 .demo-desktop { position: relative; min-height: 100vh; display: grid; grid-template-columns: 142px 1fr 280px; overflow: hidden; color: #1c2430; background: linear-gradient(132deg, #dbeafe 0%, #fbfcfe 47%, #c9e0f6 100%); }.demo-sidebar { display: flex; flex-direction: column; gap: 18px; padding: 26px 18px; color: #52647b; font-size: 13px; background: rgba(245,249,253,.68); border-right: 1px solid rgba(119,151,185,.25); }.demo-logo { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 11px; color: white; font-weight: 800; background: #315d9c; }.demo-mail { margin: 48px 28px; min-width: 0; border: 1px solid rgba(170,188,207,.6); border-radius: 16px; overflow: hidden; background: rgba(255,255,255,.84); box-shadow: 0 20px 50px rgba(52,80,113,.13); }.demo-toolbar { display: flex; gap: 26px; align-items: center; height: 58px; padding: 0 24px; color: #526174; font-size: 13px; border-bottom: 1px solid #e1e8ef; }.demo-toolbar span:first-child { color: #194f97; font-weight: 650; }.demo-search { min-width: 160px; margin-left: auto; padding: 8px 12px; border-radius: 8px; color: #8290a2; background: #f1f5f9; }.demo-recipient { display: flex; gap: 24px; padding: 22px 28px; font-size: 13px; border-bottom: 1px solid #e5e9ef; }.demo-recipient span { color: #68778a; }.mail-copy { padding: 34px 28px; font-size: 15px; line-height: 1.6; }.mail-copy p { margin: 0 0 16px; }.demo-selection { position: absolute; top: 42.5%; left: calc(142px + 48%); padding: 1px 3px; color: #12355c; font-size: 15px; background: rgba(122,187,255,.45); }.demo-desktop > .glass-overlay { position: absolute; top: calc(42.5% + 30px); left: calc(142px + 48% + 16px); }.demo-panel { z-index: 1; align-self: center; margin: 24px; padding: 22px; border: 1px solid rgba(255,255,255,.75); border-radius: 18px; color: #253247; background: rgba(247,250,254,.84); box-shadow: 0 16px 40px rgba(55,85,116,.13); }.demo-badge { color: #53728e; font-size: 10px; font-weight: 750; letter-spacing: 0; }.demo-panel h1 { margin: 8px 0; font-size: 22px; letter-spacing: -.04em; }.demo-panel p { color: #5f6f81; font-size: 12px; line-height: 1.5; }.demo-panel fieldset { display: grid; gap: 9px; margin: 18px 0; padding: 12px; border: 1px solid #d9e1eb; border-radius: 10px; }.demo-panel legend { color: #5c6c7e; font-size: 11px; }.demo-panel label { color: #445367; font-size: 12px; }.demo-start { width: 100%; }.settings-link { display: block; margin: 9px auto 0; }
 @media (max-width: 850px) { .demo-desktop { grid-template-columns: 72px 1fr; }.demo-sidebar span:not(.demo-logo) { display: none; }.demo-panel { position: absolute; right: 8px; bottom: 8px; width: 230px; }.demo-selection { left: 22%; }.demo-desktop > .glass-overlay { left: 28%; }.demo-mail { margin: 34px 16px; } }

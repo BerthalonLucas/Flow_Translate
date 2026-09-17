@@ -3,7 +3,7 @@ import { ActionSettings } from './ActionSettings';
 import { promptError } from './actionDefaults';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { Icon, Segmented, SettingSwitch, useFade } from './ui';
+import { Icon, Segmented, SettingSwitch, useFade } from './settings/controls';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
 import { useTranslation } from './useTranslation';
@@ -25,8 +25,8 @@ export function Capsule() {
     return () => off?.();
   }, []);
   return <motion.div {...fade} className="capsule" onPointerDown={event => dragSurface(event)}>
-    <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard" /><span>{label}</span></button>
-    <span className="capsule-rule" aria-hidden="true" /><button className="icon-button capsule-settings" onClick={() => void bridge.openSettings()} aria-label="Ouvrir les réglages"><Icon name="more" /></button><button className="icon-button capsule-close" onClick={() => void bridge.dismiss()} aria-label="Fermer"><Icon name="close" /></button>
+    <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard-paste" /><span>{label}</span></button>
+    <span className="capsule-rule" aria-hidden="true" /><button className="icon-button capsule-settings" onClick={() => void bridge.openSettings()} aria-label="Ouvrir les réglages"><Icon name="ellipsis" /></button><button className="icon-button capsule-close" onClick={() => void bridge.dismiss()} aria-label="Fermer"><Icon name="x" /></button>
   </motion.div>;
 }
 
@@ -127,7 +127,7 @@ export function SettingsWindow() {
     <header className="settings-titlebar" onPointerDown={event => { if (bridge.native && event.button === 0 && !(event.target as HTMLElement).closest('button')) void bridge.dragSettings().catch(() => undefined); }}>
       <span className="settings-mark" aria-hidden="true"><svg viewBox="0 0 512 512" width="18" height="18"><rect width="512" height="512" rx="160" fill="#f2f5fa" /><path d="M140 182h208M140 254h144M140 326h84" fill="none" stroke="#1d1f24" strokeWidth="36" strokeLinecap="round" /><path d="m298 298 42 42 62-78" fill="none" stroke="#3b6fc4" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
       <span className="settings-brand">FlowTranslate</span><h1>Réglages</h1>
-      <button className="close-settings" onClick={() => void closeSettings()} aria-label="Fermer"><Icon name="close" /></button>
+      <button className="close-settings" onClick={() => void closeSettings()} aria-label="Fermer"><Icon name="x" /></button>
     </header>
     <ScrollArea.Root className="settings-scroll" type="always"><ScrollArea.Viewport className="settings-scroll-viewport"><div className="settings-body">
       <section>
@@ -145,14 +145,14 @@ export function SettingsWindow() {
         <div className="setting-row"><div className="setting-copy"><strong>Conserver l’historique chiffré</strong><small>7 jours, 100 entrées, protégé par Windows (DPAPI). Rien ne quitte l’appareil.</small></div>
           <SettingSwitch label="Conserver l’historique chiffré" checked={settings.historyEnabled} onCheckedChange={checked => update('historyEnabled', checked)} /></div>
         {settings.historyEnabled && <div className="history">
-          {history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.actionName} · {modeLabel(item.mode)} · {historyDate(item.createdAt)}</small></div><button className="icon-button history-remove" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" size={13} /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}
+          {history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.actionName} · {modeLabel(item.mode)} · {historyDate(item.createdAt)}</small></div><button className="icon-button history-remove" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="x" size={13} /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}
           <div className="history-foot"><small>{history.length} entrée{history.length > 1 ? 's' : ''}</small><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>Tout supprimer</button></div>
         </div>}
         <div className="setting-row"><div className="setting-copy"><strong>Lancer à l’ouverture de session</strong><small>Seule l’icône de notification est visible au repos.</small></div>
           <SettingSwitch label="Lancer à l’ouverture de session" checked={settings.autostart} onCheckedChange={checked => update('autostart', checked)} /></div>
       </section>
       <section className="connection">
-        <button className="section-toggle" onClick={() => update('connectionExpanded', !settings.connectionExpanded)} aria-expanded={settings.connectionExpanded}><h2>Connexion</h2><Icon name="chevron" size={14} /></button>
+        <button className="section-toggle" onClick={() => update('connectionExpanded', !settings.connectionExpanded)} aria-expanded={settings.connectionExpanded}><h2>Connexion</h2><Icon name="chevron-down" size={14} /></button>
         {settings.connectionExpanded && (['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}>
           <div className="profile-heading"><strong>{modeLabel(mode)}</strong><span className="connection-state" data-state={connections[mode].state} role="status"><i aria-hidden="true" />{statusLine(mode)}</span><button className="text-button" onClick={() => void check(mode)} disabled={connections[mode].state === 'checking'}>Vérifier</button></div>
           <div className="field-grid"><label>Adresse<input type="url" placeholder={mode === 'quality' ? 'http://127.0.0.1:8002/v1' : 'http://127.0.0.1:8001/v1'} value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>Modèle<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label></div>
