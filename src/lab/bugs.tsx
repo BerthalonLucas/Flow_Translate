@@ -9,7 +9,7 @@ const defects = [
     steps: ['Afficher les réglages en 960 × 450.', 'Observer les bords gauche et droit, puis passer à 620 × 640.', 'Le fond doit couvrir toute la fenêtre, sans modifier la largeur de lecture.'],
     cause: 'Le fond est défini sur .settings-window (620 px maximum). Le document autour reste transparent et laisse apparaître le fond blanc de la WebView.',
     boundary: 'Cette reproduction utilise les réglages réels, sans thème ni fond de démonstration. Elle ne valide pas la barre de titre Windows.',
-    scenario: 'settings',
+    scenario: 'actions',
   },
   {
     id: 'residual', title: 'Grand rectangle gris résiduel', code: 'UI-001', scope: 'Windows uniquement',
@@ -50,8 +50,8 @@ const defects = [
   {
     id: 'reader', title: '« Agrandir » ne sert à rien', code: 'UI-021', scope: 'Web + Windows',
     image: 'grace-reported.png',
-    observed: 'Un long texte arrivait dans une bulle de 300 px, trois ou quatre mots par ligne sur un 27", et il fallait ouvrir le menu pour l’agrandir.',
-    steps: ['Traduire un texte de plus de huit lignes.', 'Regarder le bas de l’écran : une bande centrée, moitié de la largeur de la zone de travail (480 px dans ce cadre de 960), texte à 22 px sur 33.', 'Ouvrir le menu ⋯ : ni « Agrandir » ni « Réduire » ; Copier, Épingler, ⋯ et Fermer dans la pilule.'],
+    observed: 'Un long résultat arrivait dans une bulle de 300 px, trois ou quatre mots par ligne sur un 27", et il fallait ouvrir le menu pour l’agrandir.',
+    steps: ['Produire un résultat de plus de huit lignes.', 'Regarder le bas de l’écran : une bande centrée, moitié de la largeur de la zone de travail (480 px dans ce cadre de 960), texte à 22 px sur 33.', 'Ouvrir le menu ⋯ : ni « Agrandir » ni « Réduire » ; « Copier le résultat », Épingler, ⋯ et Fermer dans la pilule.'],
     cause: 'La forme est décidée une fois, sur le vrai résultat mesuré hors écran à 380 px : huit lignes au plus, verre court près de la sélection ; au-delà, lecteur en bande (src/layout.ts : readerMetrics prend la moitié de la largeur et 45 % de la hauteur de l’écran fourni par Rust, jamais une valeur en dur).',
     boundary: 'Ce cadre tient lieu d’écran : la bande fait la moitié de sa largeur. L’écran réel, son échelle DPI et le suivi de la souris d’un écran à l’autre ne se vérifient que dans l’application.',
     scenario: 'long',
@@ -60,7 +60,7 @@ const defects = [
     id: 'duration', title: 'La bulle reste trop longtemps', code: 'UI-022', scope: 'Web + Windows',
     image: 'grace-reported.png',
     observed: 'Après lecture, le verre restait puis se repliait en onglet ; Lucas veut qu’il s’efface de lui-même, « juste assez longtemps pour être lisible ».',
-    steps: ['Lire la traduction courte en la survolant au moins une seconde, puis éloigner la souris.', 'Compter : le verre s’assombrit au plus quatre secondes après le départ, puis disparaît.', 'Revenir dessus pendant l’assombrissement : il revient à 100 % et accorde cinq secondes ; molette, clic ou touche remettent tout le budget.'],
+    steps: ['Lire le résultat court en le survolant au moins une seconde, puis éloigner la souris.', 'Compter : le verre s’assombrit au plus quatre secondes après le départ, puis disparaît.', 'Revenir dessus pendant l’assombrissement : il revient à 100 % et accorde cinq secondes ; molette, clic ou touche remettent tout le budget.'],
     cause: 'Budget de lecture estimé (1 s + 350 ms par mot, entre 5 s et 30 s pour le verre court, 90 s pour le lecteur, réglable ×0,7 · ×1 · ×1,5 · jamais), raccourci à 4 s après une visite et une sortie, jamais moins de 2,5 s ; sortie en deux temps (55 % en 600 ms, 1,4 s, fondu 300 ms). Plus d’onglet ni de repli.',
     boundary: 'Le budget et l’assombrissement se voient ici. La proximité mesurée nativement (glass-near) et la libération d’Échap pendant l’assombrissement (overlay_dimming) ne se vérifient que par le pont IPC et l’application.',
     scenario: 'short',
@@ -69,7 +69,7 @@ const defects = [
     id: 'loading', title: 'Chargement en anneau dans une grande fenêtre', code: 'UI-023', scope: 'Web + Windows',
     image: 'overlay-reported.png',
     observed: 'Pendant l’inférence, une bulle entière s’ouvrait pour un simple anneau ; Lucas veut « des pointillés qui sautent » dans un petit encart.',
-    steps: ['Lancer une traduction dont le moteur ne répond pas.', 'Une pilule seule de 60 × 28 avec le spinner de shadcn (LoaderCircle, un tour par seconde), là où la pilule d’actions se posera.', 'Après 1,5 s, un trait de progression balaie le bas de la pilule ; Échap annule.'],
+    steps: ['Lancer une action dont le moteur ne répond pas.', 'Une pilule seule de 60 × 28 avec le spinner de shadcn (LoaderCircle, un tour par seconde), là où la pilule d’actions se posera.', 'Après 1,5 s, un trait de progression balaie le bas de la pilule ; Échap annule.'],
     cause: 'Le verre n’existe plus avant le résultat : la pilule d’attente est publiée seule à Rust, qui ancre l’empreinte du futur verre (frame) et non la pilule ; le verre court s’ouvre depuis cette ligne (clip-path 260 ms), la bande monte de 8 px en fondu.',
     boundary: 'La pilule et ses points se voient ici. La réservation de la fenêtre native et l’ouverture sans second placement se vérifient par le pont IPC.',
     scenario: 'pending',
@@ -84,10 +84,10 @@ const defects = [
     scenario: null,
   },
   {
-    id: 'notice', title: 'Boîte de dialogue quand il n’y a rien à traduire', code: 'UI-020', scope: 'Web + Windows',
+    id: 'notice', title: 'Boîte de dialogue quand il n’y a rien à traiter', code: 'UI-020', scope: 'Web + Windows',
     image: 'overlay-reported.png',
     observed: 'Sans sélection ni copie récente, Ctrl+Alt+T ouvrait une boîte de dialogue Windows « FlowTranslate » modale, à fermer à la main.',
-    steps: ['Presser le raccourci sans rien sélectionner, dans une application où rien ne peut être copié.', 'Regarder le bas de l’écran de la souris : une pilule « Rien à traduire dans la fenêtre active » apparaît seule.', 'Ne rien faire : elle disparaît après quatre secondes ; un raccourci suivant la remplace.'],
+    steps: ['Presser le raccourci sans rien sélectionner, dans une application où rien ne peut être copié.', 'Regarder le bas de l’écran de la souris : une pilule « Rien à traiter dans la fenêtre active. » apparaît seule.', 'Ne rien faire : elle disparaît après quatre secondes ; un raccourci suivant la remplace.'],
     cause: 'capture_error appelait MessageBoxW. Correctif (0.1.8) : Rust place la fenêtre de la bulle en pilule seule (420 × 64, bas centre de l’écran du curseur, aucune surface cliquable) et émet capture-notice ; dans une bulle déjà ouverte, l’avis s’affiche comme retour d’action.',
     boundary: 'La pilule et sa disparition se voient ici. Le placement natif, la copie synthétique (Ctrl+Insert) et la règle des trois secondes ne se vérifient que dans l’application.',
     scenario: 'notice',
@@ -121,8 +121,8 @@ export function BugWorkbench() {
         <div className="repro-steps"><strong>Reproduction à effectuer</strong><ol>{defect.steps.map(step => <li key={step}>{step}</li>)}</ol><p><strong>Diagnostic : </strong>{defect.cause}</p></div>
         {defect.id === 'settings' && <section className="patch-evidence" aria-label="Preuves du correctif des marges"><strong>Correction frontend vérifiée — même fenêtre de 960 × 450</strong><div><figure><figcaption>Avant : défaut reproduit, test en échec</figcaption><img src="/release/ui-evidence/settings-before.png" alt="Avant correction, grandes marges blanches autour du panneau sombre"/></figure><figure><figcaption>Après : fond continu, test réussi</figcaption><img src="/release/ui-evidence/settings-after.png" alt="Après correction, le fond sombre couvre toute la fenêtre"/></figure></div><p>Capture du navigateur avec les composants de production. Installation Windows non mise à jour par cette comparaison.</p></section>}
         {defect.scenario ? <>
-          <div className="controls"><label>Taille du cas<select value={size} onChange={e => setSize(e.target.value)}><option value="960x450">960 × 450 — fenêtre élargie</option><option value="620x640">620 × 640</option><option value="480x640">480 × 640</option></select></label><button className="replay" onClick={() => setRun(run + 1)}>Rejouer le cas</button><a href={`/lab-frame.html?scenario=${defect.scenario}&surface=production`} target="_blank" rel="noreferrer">Ouvrir seul ↗</a></div>
-          <div className="canvas"><iframe key={`${defect.id}-${size}-${run}`} title="Reproduction du défaut" src={`/lab-frame.html?scenario=${defect.scenario}&surface=production`} width={width} height={height}/></div>
+          <div className="controls"><label>Taille du cas<select value={size} onChange={e => setSize(e.target.value)}><option value="960x450">960 × 450 — fenêtre élargie</option><option value="620x640">620 × 640</option><option value="480x640">480 × 640</option></select></label><button className="replay" onClick={() => setRun(run + 1)}>Rejouer le cas</button><a href={`/lab-frame.html?scenario=${defect.scenario}`} target="_blank" rel="noreferrer">Ouvrir seul ↗</a></div>
+          <div className="canvas"><iframe key={`${defect.id}-${size}-${run}`} title="Reproduction du défaut" src={`/lab-frame.html?scenario=${defect.scenario}`} width={width} height={height}/></div>
         </> : <div className="native-required"><strong>Pas de reproduction web pour ce défaut.</strong><p>Le test doit piloter la fenêtre Windows réelle. La commande <code>npm run ui:native</code> vérifie le cas de fermeture disponible ; elle ne couvre pas à elle seule tous les gestes ci-dessus.</p></div>}
         <footer>{defect.boundary}</footer>
       </section>
