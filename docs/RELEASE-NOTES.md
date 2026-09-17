@@ -1,3 +1,14 @@
+# FlowTranslate 0.4.0 — chaque action marche vraiment — 15 septembre 2026
+
+- **Remplacement partout.** « Remplacer la sélection » colle le résultat à la place du texte sélectionné dans n’importe quel champ (navigateurs, mails, Word, VS Code, Bloc-notes…) : le résultat passe par le presse-papiers, une seule corde Ctrl+V est envoyée dans la sélection d’origine, le presse-papiers est remis en place (jamais par-dessus une copie plus récente). La relecture du champ est une preuve en bonus, plus une condition. Refus seulement pour une console, un champ mot de passe, une copie faite soi-même (aucune sélection garantie) ou une fenêtre qui a changé ; le résultat reste alors dans la bulle avec Copier. Plus d’`EM_REPLACESEL`.
+- **Pilule seule en mode Remplacer.** Le verre ne s’ouvre plus : la pilule tourne, le résultat est collé, la pilule montre ✓ puis s’efface. Le verre n’apparaît qu’en cas d’échec du collage, avec la raison.
+- **Consignes pour petits modèles.** Le prompt est la consigne seule, envoyée en message `system`, le texte sélectionné en message `user` ; plus de `{{text}}` ni de `{{targetLanguage}}` (les anciennes consignes sont migrées). Quatre actions par défaut : Traduire en français, Traduire en anglais, Corriger, Professionnaliser, avec les mêmes règles de sortie. Réflexion coupée (`chat_template_kwargs.enable_thinking = false`, retiré si le serveur le refuse), bloc de pensée et bloc de code englobant retirés de la réponse, échantillonnage prudent (température 0,3, top_p 0,9).
+- **La langue vit dans la consigne.** Le réglage « Langue cible » disparaît ; l’historique et la capsule montrent le nom de l’action.
+- **Serveur : profil `general`.** Gemma 4 12B QAT (w4a16, Apache-2.0) avec décodage spéculatif MTP sur `http://127.0.0.1:8003/v1`, modèle `flowtranslate-general` : un modèle généraliste qui corrige, reformule et traduit, à mettre dans Rapide ou Qualité.
+- Correctif : la fenêtre Réglages cachée pouvait bloquer une capture au démarrage (« Fermez les réglages ») ; seule la fenêtre visible le fait.
+
+Validation : `cargo test` (collage, relecture, garde du presse-papiers, migration, historique), Vitest, Playwright (pilule seule → ✓ → fermeture, repli, garde-fou 3 s, Réglages sans langue), probe natif, matrice réelle consignée dans `docs/UI-ISSUES.md` (UI-026).
+
 # FlowTranslate 0.3.0 — Actions et raccourcis — 15 septembre 2026
 
 - Réglages redimensionnables (minimum 460 × 420), défilement dédié et prompts dans des volets dépliables.

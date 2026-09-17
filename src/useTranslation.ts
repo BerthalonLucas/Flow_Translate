@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
-import type { Capture, CaptureNotice, CaptureTarget, Language, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
+import type { Capture, CaptureNotice, CaptureTarget, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
+// A « replace » capture whose paste never reports back opens its glass after this.
+const DELIVERY_MS = 3000;
 export type Notice = { id: number; message: string };
 
 export function useTranslation(readyOnMount = false) {
@@ -44,14 +46,13 @@ export function useTranslation(readyOnMount = false) {
     noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
 
-  const start = useCallback((capture: Capture, forced?: { mode?: Mode; targetLanguage?: Language }) => {
+  const start = useCallback((capture: Capture, forced?: { mode?: Mode }) => {
     const mode = forced?.mode ?? capture.execution?.mode ?? settingsRef.current?.mode ?? 'quality';
-    const targetLanguage = forced?.targetLanguage ?? capture.execution?.targetLanguage ?? settingsRef.current?.targetLanguage ?? 'fr';
     const id = crypto.randomUUID();
     discardPending();
     requestRef.current = id;
-    dispatch({ type: 'START', requestId: id, mode, targetLanguage });
-    void bridge.translate({ id, captureId: capture.id, text: capture.text, targetLanguage, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate' }).catch((error: unknown) => {
+    dispatch({ type: 'START', requestId: id, mode });
+    void bridge.translate({ id, captureId: capture.id, text: capture.text, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate-fr' }).catch((error: unknown) => {
       if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : 'L’action n’a pas pu démarrer.' } });
     });
   }, [discardPending]);
@@ -71,9 +72,9 @@ export function useTranslation(readyOnMount = false) {
     dispatch({ type: 'CAPTURE', capture });
     if (capture.replay) {
       // A result shown again from the tray: complete at once, nothing to translate.
-      const { requestId, translatedText, mode, targetLanguage } = capture.replay;
+      const { requestId, translatedText, mode } = capture.replay;
       requestRef.current = requestId;
-      dispatch({ type: 'START', requestId, mode, targetLanguage });
+      dispatch({ type: 'START', requestId, mode });
       dispatch({ type: 'STREAM', event: { requestId, kind: 'delta', text: translatedText } });
       dispatch({ type: 'STREAM', event: { requestId, kind: 'done' } });
       return;
@@ -111,7 +112,8 @@ export function useTranslation(readyOnMount = false) {
       bridge.on<ResultDelivery>('result-delivery', event => {
         if (event.requestId !== requestRef.current || closingRef.current) return;
         dispatch({ type: 'DELIVERY', event });
-        showNotice(event.message);
+        // Pasted: the pill's check is the whole feedback; only a fallback needs its reason.
+        if (event.status === 'fallback') showNotice(event.message);
       }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
     ]).then(async listeners => {
@@ -129,6 +131,18 @@ export function useTranslation(readyOnMount = false) {
     }).catch(() => { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); });
     return () => { disposed = true; off.forEach(unlisten => unlisten()); };
   }, [discardPending, flush, readyOnMount, receiveCapture, showNotice]);
+
+  // Rust pastes as soon as the result is complete; if nothing reports back, the glass opens.
+  useEffect(() => {
+    if (state.phase !== 'complete' || state.delivery !== 'pending' || !state.requestId) return;
+    const requestId = state.requestId;
+    const timer = window.setTimeout(() => {
+      const message = 'Le remplacement n’a pas répondu; le résultat reste dans la bulle.';
+      dispatch({ type: 'DELIVERY', event: { requestId, status: 'fallback', confirmed: false, message } });
+      showNotice(message);
+    }, DELIVERY_MS);
+    return () => window.clearTimeout(timer);
+  }, [state.phase, state.delivery, state.requestId, showNotice]);
 
   const cancelAndDismiss = useCallback(() => { void bridge.dismiss().catch(() => setInitError('La fermeture a échoué. Réessayez.')); }, []);
   const completeDismiss = useCallback((captureId: string) => {

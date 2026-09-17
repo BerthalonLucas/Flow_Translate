@@ -1,21 +1,22 @@
-use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetIdentity, Win32Target};
+use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetIdentity};
 use arboard::Clipboard;
 use uiautomation::{patterns::UITextPattern, variants::SafeArray, UIAutomation, UIElement};
-use uiautomation::{
-    patterns::UIValuePattern,
-    types::{TextAttribute, TextPatternRangeEndpoint},
-};
+use uiautomation::{patterns::UIValuePattern, types::TextAttribute};
 use uuid::Uuid;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A copy the user made himself counts as fresh this long (Lucas, 2026-09-14).
 const FRESH_COPY_MS: u64 = 3_000;
-/// The shortcut chord must be released before the synthetic copy chord is sent.
+/// The shortcut chord must be released before a synthetic chord is sent.
 const CHORD_RELEASE: Duration = Duration::from_millis(600);
 /// How long the target may take to serve the synthetic copy.
 const COPY_SETTLE: Duration = Duration::from_millis(350);
 /// Our own clipboard traffic (copy, restoration) is invisible to the freshness watcher.
 const OWN_TRAFFIC: Duration = Duration::from_millis(1_500);
+/// After the paste chord: how long a readable field gets to show the result, and the
+/// least time the target keeps our clipboard when nothing can read it back.
+const PASTE_CONFIRM: Duration = Duration::from_millis(800);
+const PASTE_SETTLE: Duration = Duration::from_millis(300);
 
 thread_local! {
     // uiautomation::UIAutomation::new initializes COM every time without balancing
@@ -35,13 +36,8 @@ fn ui_automation() -> Result<UIAutomation, ()> {
     })
 }
 
-/// Text, last visible rectangle, document offset (only when `with_offset`: reading the
-/// whole document is the slow part, deferred behind the shown window), length and
-/// editability of the current UIA selection.
-fn selection(
-    element: &UIElement,
-    with_offset: bool,
-) -> Result<(String, Option<Rect>, Option<usize>, usize, bool), String> {
+/// Text, last visible rectangle, length and editability of the current UIA selection.
+fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool), String> {
     let pattern = element
         .get_pattern::<UITextPattern>()
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?;
@@ -60,16 +56,6 @@ fn selection(
     if text.encode_utf16().count() >= 6001 {
         return Err("La sélection dépasse 6 000 unités de texte et pourrait être tronquée.".into());
     }
-    let selection_start = with_offset.then(|| pattern.get_document_range().ok()).flatten().and_then(|document| {
-        document
-            .move_endpoint_by_range(
-                TextPatternRangeEndpoint::End,
-                &range,
-                TextPatternRangeEndpoint::Start,
-            )
-            .ok()?;
-        Some(document.get_text(-1).ok()?.chars().count())
-    });
     let selection_len = text.chars().count();
     let range_editable = range
         .get_attribute_value(TextAttribute::IsReadOnly)
@@ -87,7 +73,7 @@ fn selection(
                 height: last[3],
             }).filter(|r| r.x.is_finite() && r.y.is_finite() && r.width.is_finite() && r.height.is_finite() && r.width > 0.0 && r.height > 0.0)
         });
-    Ok((text, anchor, selection_start, selection_len, range_editable))
+    Ok((text, anchor, selection_len, range_editable))
 }
 
 fn ensure_source_unchanged(source_window: isize) -> Result<(), String> {
@@ -95,6 +81,19 @@ fn ensure_source_unchanged(source_window: isize) -> Result<(), String> {
         return Err("La fenêtre source a changé pendant la capture. Réessayez.".into());
     }
     Ok(())
+}
+
+/// Whether a paste can replace what was captured (0.4.0, decided at the capture): the
+/// selection UI Automation gave in an editable control, or the selection the synthetic
+/// copy proved (a copy needs one). A copy the user made himself guarantees no selection;
+/// a console never replaces its selection on Ctrl+V; a password field is never written.
+pub fn replaceable(origin: CaptureOrigin, editable: bool, window_class: &str, password: bool) -> bool {
+    if password || crate::host::is_console_class(window_class) { return false; }
+    match origin {
+        CaptureOrigin::Uia => editable,
+        CaptureOrigin::Copy => true,
+        CaptureOrigin::Fresh | CaptureOrigin::Replay | CaptureOrigin::Demo => false,
+    }
 }
 
 pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture, String> {
@@ -120,6 +119,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             target: None,
         });
     }
+    let source_class = crate::host::window_class(source_window);
     if let Ok(automation) = ui_automation() {
         if let Ok(element) = automation.get_focused_element() {
             match element.is_password() {
@@ -134,73 +134,49 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 }
                 Ok(false) => {}
             }
-            {
-                // The offsets and the Win32 control come later (`complete_target`): the
-                // window shows as soon as the text and its anchor are known.
-                match selection(&element, false) {
-                    Ok((text, anchor, _, selection_len, range_editable)) => {
-                        ensure_source_unchanged(source_window)?;
-                        let runtime_id = element.get_runtime_id().map_err(|_| {
-                            "Impossible d’identifier le contrôle source.".to_string()
-                        })?;
-                        let native_window = source_window;
-                        let value_editable = element
-                            .get_pattern::<UIValuePattern>()
-                            .ok()
-                            .and_then(|p| p.is_readonly().ok())
-                            .is_some_and(|v| !v);
-                        let editable = native_window != 0 && (value_editable || range_editable);
-                        let public = Capture {
-                            id: Uuid::new_v4().to_string(),
-                            text: text.clone(),
-                            source: CaptureSource::Selection,
-                            origin: CaptureOrigin::Uia,
-                            can_replace: false,
-                            anchor,
-                            screen: None,
-                            replay: None,
-            execution: None,
-                        };
-                        let target = Some(TargetIdentity {
-                            runtime_id,
-                            native_window,
-                            selected_text: text,
-                            anchor,
-                            selection_start: None,
-                            selection_len,
-                            editable,
-                            win32: None,
-                        });
-                        ensure_source_unchanged(source_window)?;
-                        return Ok(StoredCapture { public, target });
-                    }
-                    Err(message) if message.contains("6 000") => return Err(message),
-                    Err(_) => {}
+            match selection(&element) {
+                Ok((text, anchor, selection_len, range_editable)) => {
+                    ensure_source_unchanged(source_window)?;
+                    let runtime_id = element.get_runtime_id().map_err(|_| {
+                        "Impossible d’identifier le contrôle source.".to_string()
+                    })?;
+                    let value_editable = element
+                        .get_pattern::<UIValuePattern>()
+                        .ok()
+                        .and_then(|p| p.is_readonly().ok())
+                        .is_some_and(|v| !v);
+                    let editable = source_window != 0 && (value_editable || range_editable);
+                    let control = crate::host::focused_control(source_window).map_or(0, |(handle, _)| handle);
+                    let can_replace = replaceable(CaptureOrigin::Uia, editable, &source_class, false);
+                    let public = Capture {
+                        id: Uuid::new_v4().to_string(),
+                        text: text.clone(),
+                        source: CaptureSource::Selection,
+                        origin: CaptureOrigin::Uia,
+                        can_replace,
+                        anchor,
+                        screen: None,
+                        replay: None,
+                        execution: None,
+                    };
+                    let target = Some(TargetIdentity {
+                        runtime_id: Some(runtime_id),
+                        native_window: source_window,
+                        control,
+                        selected_text: text,
+                        anchor,
+                        selection_len,
+                        editable,
+                    });
+                    ensure_source_unchanged(source_window)?;
+                    return Ok(StoredCapture { public, target });
                 }
+                Err(message) if message.contains("6 000") => return Err(message),
+                Err(_) => {}
             }
         }
     }
-    clipboard_capture(source_window)
-}
-
-/// Second step of a selection capture, run behind the shown window: the document
-/// offset of the selection and, for an editable control, the Win32 target that makes
-/// a verifiable replacement possible. None when the focus or the selection moved.
-pub fn complete_target(target: &TargetIdentity) -> Option<(usize, Option<Win32Target>)> {
-    let automation = ui_automation().ok()?;
-    let element = automation.get_focused_element().ok()?;
-    if crate::host::foreground() != target.native_window
-        || element.get_runtime_id().ok()? != target.runtime_id
-    {
-        return None;
-    }
-    let (text, _, selection_start, selection_len, _) = selection(&element, true).ok()?;
-    if text != target.selected_text || selection_len != target.selection_len {
-        return None;
-    }
-    let selection_start = selection_start?;
-    let win32 = if target.editable { win32_target(target.native_window, &text) } else { None };
-    Some((selection_start, win32))
+    clipboard_capture(source_window, &source_class)
 }
 
 /// A copy made at `changed_at` is fresh at `now` when it is at most `limit` ms old.
@@ -212,23 +188,10 @@ fn read_clipboard() -> Option<String> {
     Clipboard::new().and_then(|mut c| c.get_text()).ok()
 }
 
-/// Puts the user's text back without feeding Win+V or clipboard monitors.
-fn restore_clipboard(text: &str) {
-    #[cfg(windows)]
-    {
-        use arboard::SetExtWindows;
-        let _ = Clipboard::new()
-            .and_then(|mut c| c.set().exclude_from_monitoring().exclude_from_history().text(text));
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = Clipboard::new().and_then(|mut c| c.set_text(text));
-    }
-}
-
 /// Without a UIA selection: copies for the user (synthetic Ctrl+Insert), else accepts a
-/// copy he made himself in the last three seconds, else nothing to translate.
-fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
+/// copy he made himself in the last three seconds, else nothing to translate. A copy
+/// that worked proves a selection: it can be pasted over (origin `copy`).
+fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredCapture, String> {
     let pressed_at = crate::host::now_ms();
     let changed_at = crate::host::clipboard_changed_at();
     let copied = synthetic_copy(source_window);
@@ -252,33 +215,39 @@ fn clipboard_capture(source_window: isize) -> Result<StoredCapture, String> {
         return Err("Sélection trop longue (6 000 caractères).".into());
     }
     ensure_source_unchanged(source_window)?;
+    let can_replace = replaceable(origin, true, source_class, false);
+    let target = can_replace.then(|| TargetIdentity {
+        runtime_id: ui_automation().ok().and_then(|a| a.get_focused_element().ok()).and_then(|e| e.get_runtime_id().ok()),
+        native_window: source_window,
+        control: crate::host::focused_control(source_window).map_or(0, |(handle, _)| handle),
+        selected_text: text.clone(),
+        anchor: None,
+        selection_len: text.chars().count(),
+        editable: true,
+    });
     let public = Capture {
         id: Uuid::new_v4().to_string(),
         text,
         source: CaptureSource::Clipboard,
         origin,
-        can_replace: false,
+        can_replace,
         anchor: None,
         screen: None,
         replay: None,
-            execution: None,
+        execution: None,
     };
-    Ok(StoredCapture {
-        public,
-        target: None,
-    })
+    Ok(StoredCapture { public, target })
 }
 
-/// Sends the copy chord to the source window and reads what it copied, then restores
-/// the previous text unless something else wrote the clipboard in between (SPEC:
-/// restoration never overwrites newer content). A previous non-text content (image,
-/// files) cannot be put back and stays replaced by the copy. The error names the step
-/// that gave up, for the capture matrix.
+/// Sends the copy chord to the source window and reads what it copied, then puts the
+/// previous clipboard back (every format when Windows lets us keep them, else the text)
+/// unless something else wrote the clipboard in between (SPEC: restoration never
+/// overwrites newer content). The error names the step that gave up, for the matrix.
 fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
     if source_window == 0 || crate::host::foreground() != source_window {
         return Err("source window lost");
     }
-    let previous = read_clipboard();
+    let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
     crate::host::suppress_clipboard_tracking(OWN_TRAFFIC);
     let before = crate::host::clipboard_sequence();
     if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
@@ -290,117 +259,141 @@ fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
     crate::host::send_copy_chord().map_err(|_| "SendInput refused")?;
     let after = crate::host::wait_clipboard_change(before, COPY_SETTLE).ok_or("no clipboard change")?;
     let copied = read_clipboard().filter(|text| !text.trim().is_empty());
-    if let Some(previous) = previous {
-        if crate::host::clipboard_sequence() == after {
-            restore_clipboard(&previous);
-        }
-    }
+    let _ = keeper.restore(after);
     copied.ok_or("copied nothing readable")
 }
 
-pub fn validate_target(target: &TargetIdentity) -> Result<UIElement, String> {
-    let automation =
-        ui_automation().map_err(|_| "UI Automation est indisponible.".to_string())?;
-    let element = automation
-        .get_focused_element()
-        .map_err(|_| "Le contrôle source n’est plus actif.".to_string())?;
-    #[cfg(windows)]
-    let hwnd = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize };
-    #[cfg(not(windows))]
-    let hwnd = 0isize;
-    if hwnd != target.native_window
-        || element
-            .get_runtime_id()
-            .map_err(|_| "Le contrôle source est introuvable.".to_string())?
-            != target.runtime_id
-    {
+/// The identity check before a paste and for the watcher: the source window is still in
+/// front, its focused control is the same and, when UI Automation gave the selection,
+/// the focused element and its selection are unchanged. A UIA that stopped answering is
+/// not a change (the paste goes to the same control).
+pub fn validate_target(target: &TargetIdentity) -> Result<(), String> {
+    if crate::host::foreground() != target.native_window {
+        return Err("La fenêtre source a changé; remplacement refusé.".into());
+    }
+    if target.control != 0 && crate::host::focused_control(target.native_window).is_some_and(|(handle, _)| handle != target.control) {
+        return Err("Le champ actif a changé; remplacement refusé.".into());
+    }
+    let Some(runtime_id) = &target.runtime_id else { return Ok(()) };
+    let Some(element) = ui_automation().ok().and_then(|a| a.get_focused_element().ok()) else { return Ok(()) };
+    if element.get_runtime_id().is_ok_and(|id| id != *runtime_id) {
         return Err("La cible a changé; remplacement refusé.".into());
     }
-    let (text, anchor, selection_start, selection_len, _) = selection(&element, true)?;
-    let range_changed = target
-        .selection_start
-        .is_some_and(|expected| selection_start != Some(expected));
-    if text != target.selected_text
-        || range_changed
-        || selection_len != target.selection_len
-        || target.anchor.is_some_and(|old| Some(old) != anchor)
-    {
-        return Err("La sélection a changé; remplacement refusé.".into());
-    }
-    Ok(element)
-}
-
-pub fn replace(target: &TargetIdentity, value: &str) -> Result<(), String> {
-    replace_checked(target, value, true)
-}
-
-pub fn replace_automatic(target: &TargetIdentity, value: &str) -> Result<(), String> {
-    if crate::host::foreground() != target.native_window { return Err("La fenêtre source a changé.".into()); }
-    replace_checked(target, value, false)
-}
-
-fn replace_checked(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<(), String> {
-    if value.contains('\0') { return Err("Le résultat contient un caractère nul; remplacement refusé.".into()); }
-    let expected = target.win32.as_ref().filter(|_| target.editable && target.selection_start.is_some()).ok_or_else(||
-        "Ce contrôle ne permet pas un remplacement natif vérifiable; utilisez Copier.".to_string())?;
-    #[cfg(windows)]
-    unsafe {
-        use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetForegroundWindow,SetForegroundWindow}};
-        if reactivate && GetForegroundWindow().0 as isize != target.native_window && !SetForegroundWindow(HWND(target.native_window as *mut _)).as_bool() {
-            return Err("Impossible de réactiver la fenêtre source.".into());
+    if target.anchor.is_none() { return Ok(()); }
+    if let Ok((text, anchor, selection_len, _)) = selection(&element) {
+        if text != target.selected_text || selection_len != target.selection_len || Some(target.anchor) != Some(anchor) {
+            return Err("La sélection a changé; remplacement refusé.".into());
         }
     }
-    let _element = validate_target(target)?;
-    #[cfg(windows)]
-    replace_win32(expected, value)?;
     Ok(())
 }
 
-#[cfg(windows)]
-fn message(hwnd: windows::Win32::Foundation::HWND, msg: u32, wparam: usize, lparam: isize) -> Result<usize,String> {
-    use windows::Win32::{Foundation::{LPARAM,WPARAM},UI::WindowsAndMessaging::{SendMessageTimeoutW,SMTO_ABORTIFHUNG,SMTO_BLOCK}};
-    let mut result=0usize;
-    let sent=unsafe{SendMessageTimeoutW(hwnd,msg,WPARAM(wparam),LPARAM(lparam),SMTO_ABORTIFHUNG|SMTO_BLOCK,250,Some(&mut result))};
-    if sent.0==0 {Err("Le contrôle source ne répond pas; remplacement refusé.".into())} else {Ok(result)}
+/// How a paste ended: the field read the result back (`confirmed`), or the chord went
+/// through and nothing could read the field (assumed, like Wispr Flow).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Delivery { pub confirmed: bool }
+
+/// Line endings and the non-breaking spaces Chromium makes of boundary spaces in a
+/// contenteditable: the readback proof only, never the identity checks.
+pub fn canonical(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n").replace('\u{a0}', " ")
+}
+
+/// Whether a field's readback shows the pasted value (None: nothing readable).
+pub fn readback_confirms(field_text: Option<&str>, value: &str) -> Option<bool> {
+    field_text.map(|text| canonical(text).contains(&canonical(value)))
+}
+
+/// Reads the focused field: UI Automation first (its value, else its document), then
+/// WM_GETTEXT on a Win32 Edit/RichEdit control. None when nothing can read it.
+fn field_text(target: &TargetIdentity) -> Option<String> {
+    if let Some(element) = ui_automation().ok().and_then(|a| a.get_focused_element().ok()) {
+        if let Ok(value) = element.get_pattern::<UIValuePattern>().and_then(|p| p.get_value()) {
+            return Some(value);
+        }
+        if let Ok(document) = element.get_pattern::<UITextPattern>().and_then(|p| p.get_document_range()).and_then(|r| r.get_text(200_000)) {
+            return Some(document);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let (control, class) = crate::host::focused_control(target.native_window)?;
+        let lower = class.to_ascii_lowercase();
+        if lower == "edit" || lower.starts_with("richedit") {
+            return control_text(control).ok();
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = target;
+    None
+}
+
+/// Pastes `value` over the captured selection (0.4.0, the Wispr Flow route): checks the
+/// identity, waits for the shortcut chord to be released, keeps the clipboard, writes
+/// the result, sends one Ctrl+V, then reads the field back when something can read it
+/// and puts the clipboard back while it still holds our write. `reactivate` (the menu
+/// of the glass) brings the source window back to the front first.
+pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<Delivery, String> {
+    if value.contains('\0') { return Err("Le résultat contient un caractère nul; remplacement refusé.".into()); }
+    if !target.editable { return Err("Ce champ n’est pas modifiable; utilisez Copier.".into()); }
+    #[cfg(windows)]
+    if reactivate && crate::host::foreground() != target.native_window {
+        use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::SetForegroundWindow};
+        if !unsafe { SetForegroundWindow(HWND(target.native_window as *mut _)) }.as_bool() {
+            return Err("Impossible de réactiver la fenêtre source; utilisez Copier.".into());
+        }
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    #[cfg(not(windows))]
+    let _ = reactivate;
+    validate_target(target)?;
+    if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
+        return Err("Relâchez les touches du raccourci, puis réessayez depuis la bulle.".into());
+    }
+    validate_target(target)?;
+    let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
+    crate::host::suppress_clipboard_tracking(Duration::from_secs(4));
+    let sequence = keeper.put_text(value)?;
+    if let Err(error) = validate_target(target) {
+        let _ = keeper.restore(sequence);
+        return Err(error);
+    }
+    if let Err(sent) = crate::host::send_paste_chord() {
+        if sent == 0 { let _ = keeper.restore(sequence); }
+        return Err("Le collage a été bloqué par Windows ou par l’application; utilisez Copier.".into());
+    }
+    let started = Instant::now();
+    let mut readable = true;
+    let confirmed = loop {
+        match readback_confirms(field_text(target).as_deref(), value) {
+            Some(true) => break true,
+            Some(false) => {}
+            None => readable = false,
+        }
+        let elapsed = started.elapsed();
+        if (!readable && elapsed >= PASTE_SETTLE) || elapsed >= PASTE_CONFIRM { break false; }
+        std::thread::sleep(Duration::from_millis(40));
+    };
+    if started.elapsed() < PASTE_SETTLE { std::thread::sleep(PASTE_SETTLE - started.elapsed()); }
+    let _ = keeper.restore(sequence);
+    Ok(Delivery { confirmed })
 }
 
 #[cfg(windows)]
-fn focused_control(source:isize)->Option<(isize,String)> {
-    use windows::Win32::{Foundation::HWND,UI::WindowsAndMessaging::{GetClassNameW,GetGUIThreadInfo,GetWindowThreadProcessId,GUITHREADINFO}};
-    let source=HWND(source as *mut _);let thread=unsafe{GetWindowThreadProcessId(source,None)};if thread==0{return None;}
-    let mut info=GUITHREADINFO{cbSize:std::mem::size_of::<GUITHREADINFO>() as u32,..Default::default()};unsafe{GetGUIThreadInfo(thread,&mut info).ok()?;}
-    if info.hwndFocus.0.is_null(){return None;}let mut class=[0u16;256];let len=unsafe{GetClassNameW(info.hwndFocus,&mut class)};if len<=0{return None;}
-    let name=String::from_utf16_lossy(&class[..len as usize]);
-    supported_class(&name).then_some((info.hwndFocus.0 as isize,name))
-}
-
-fn supported_class(name:&str)->bool{let lower=name.to_ascii_lowercase();lower=="edit"||lower.starts_with("richedit")}
-
-fn patched(document:&[u16],start:usize,end:usize,value:&str)->Option<Vec<u16>>{if start>end||end>document.len(){return None;}let mut wanted=document[..start].to_vec();wanted.extend(value.encode_utf16());wanted.extend_from_slice(&document[end..]);Some(wanted)}
-
-#[cfg(windows)]
-fn read_control(hwnd:isize)->Result<(Vec<u16>,u32,u32),String>{
-    use windows::Win32::{Foundation::HWND,UI::WindowsAndMessaging::{WM_GETTEXT,WM_GETTEXTLENGTH}};
-    const EM_GETSEL:u32=0x00B0;let hwnd=HWND(hwnd as *mut _);
-    let len=message(hwnd,WM_GETTEXTLENGTH,0,0)?;if len>1_000_000{return Err("Le document source est trop volumineux pour un remplacement vérifiable.".into());}
-    let mut text=vec![0u16;len+1];let copied=message(hwnd,WM_GETTEXT,text.len(),text.as_mut_ptr() as isize)?;text.truncate(copied.min(len));
-    let(mut start,mut end)=(0u32,0u32);message(hwnd,EM_GETSEL,&mut start as *mut u32 as usize,&mut end as *mut u32 as isize)?;
-    if start>end||end as usize>text.len(){return Err("La sélection native est invalide.".into());}Ok((text,start,end))
-}
-
-#[cfg(windows)]
-fn win32_target(source:isize,selected:&str)->Option<Win32Target>{let(control_window,class_name)=focused_control(source)?;let(document_utf16,selection_start,selection_end)=read_control(control_window).ok()?;let wanted=selected.encode_utf16().collect::<Vec<_>>();(document_utf16.get(selection_start as usize..selection_end as usize)==Some(wanted.as_slice())).then_some(Win32Target{control_window,class_name,selection_start,selection_end,document_utf16})}
-#[cfg(not(windows))] fn win32_target(_source:isize,_selected:&str)->Option<Win32Target>{None}
-
-#[cfg(windows)]
-fn replace_win32(expected:&Win32Target,value:&str)->Result<(),String>{
-    use windows::Win32::Foundation::HWND;const EM_REPLACESEL:u32=0x00C2;
-    let(control,class)=focused_control(crate::host::foreground()).ok_or_else(||"Le contrôle natif actif a changé.".to_string())?;
-    if control!=expected.control_window||class!=expected.class_name{return Err("Le contrôle natif actif a changé.".into());}
-    let(document,start,end)=read_control(control)?;if document!=expected.document_utf16||start!=expected.selection_start||end!=expected.selection_end{return Err("Le document ou sa sélection a changé; remplacement refusé.".into());}
-    let mut replacement=value.encode_utf16().chain(Some(0)).collect::<Vec<_>>();message(HWND(control as *mut _),EM_REPLACESEL,1,replacement.as_mut_ptr() as isize)?;
-    let(after,_,_)=read_control(control)?;let wanted=patched(&document,start as usize,end as usize,value).ok_or_else(||"La sélection native est invalide.".to_string())?;
-    if after!=wanted{return Err("Le contrôle n’a pas confirmé le remplacement complet.".into());}Ok(())
+fn control_text(hwnd: isize) -> Result<String, String> {
+    use windows::Win32::{Foundation::{HWND, LPARAM, WPARAM}, UI::WindowsAndMessaging::{SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK, WM_GETTEXT, WM_GETTEXTLENGTH}};
+    let hwnd = HWND(hwnd as *mut _);
+    let message = |msg: u32, wparam: usize, lparam: isize| -> Result<usize, String> {
+        let mut result = 0usize;
+        let sent = unsafe { SendMessageTimeoutW(hwnd, msg, WPARAM(wparam), LPARAM(lparam), SMTO_ABORTIFHUNG | SMTO_BLOCK, 250, Some(&mut result)) };
+        if sent.0 == 0 { Err("Le contrôle source ne répond pas.".into()) } else { Ok(result) }
+    };
+    let len = message(WM_GETTEXTLENGTH, 0, 0)?;
+    if len > 200_000 { return Err("Le document source est trop volumineux.".into()); }
+    let mut text = vec![0u16; len + 1];
+    let copied = message(WM_GETTEXT, text.len(), text.as_mut_ptr() as isize)?;
+    text.truncate(copied.min(len));
+    Ok(String::from_utf16_lossy(&text))
 }
 
 #[cfg(test)]
@@ -408,11 +401,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_known_edit_classes() {
-        assert!(supported_class("Edit"));
-        assert!(supported_class("RichEditD2DPT"));
-        assert!(supported_class("RICHEDIT50W"));
-        assert!(!supported_class("Chrome_RenderWidgetHostHWND"));
+    fn a_paste_replaces_a_uia_selection_or_a_proved_copy_but_never_a_console_or_a_password() {
+        assert!(replaceable(CaptureOrigin::Uia, true, "Chrome_WidgetWin_1", false));
+        assert!(!replaceable(CaptureOrigin::Uia, false, "Chrome_WidgetWin_1", false));
+        assert!(replaceable(CaptureOrigin::Copy, true, "Notepad", false));
+        assert!(!replaceable(CaptureOrigin::Copy, true, "CASCADIA_HOSTING_WINDOW_CLASS", false));
+        assert!(!replaceable(CaptureOrigin::Copy, true, "ConsoleWindowClass", false));
+        assert!(!replaceable(CaptureOrigin::Uia, true, "Edit", true));
+        for origin in [CaptureOrigin::Fresh, CaptureOrigin::Replay, CaptureOrigin::Demo] {
+            assert!(!replaceable(origin, true, "Notepad", false));
+        }
+    }
+
+    #[test]
+    fn the_readback_proof_tolerates_line_endings_and_editor_spaces_only() {
+        assert_eq!(readback_confirms(Some("Début\u{a0}équipe\r\nfin"), "Début équipe\nfin"), Some(true));
+        assert_eq!(readback_confirms(Some("avant équipe après"), "équipe"), Some(true));
+        assert_eq!(readback_confirms(Some("deux  espaces"), "deux espaces"), Some(false));
+        assert_eq!(readback_confirms(None, "x"), None);
     }
 
     #[test]
@@ -420,89 +426,7 @@ mod tests {
         assert!(fresh(Some(1_000), 3_500, 3_000));
         assert!(fresh(Some(1_000), 4_000, 3_000));
         assert!(!fresh(Some(1_000), 4_001, 3_000));
-        assert!(!fresh(None, 4_000, 3_000), "never copied");
-        assert!(!fresh(Some(5_000), 4_000, 3_000), "clock went backwards");
-    }
-
-    #[test]
-    fn utf16_patch_is_exact() {
-        let document = "Bonjour monde".encode_utf16().collect::<Vec<_>>();
-        assert_eq!(
-            String::from_utf16(&patched(&document, 8, 13, "équipe").unwrap()).unwrap(),
-            "Bonjour équipe"
-        );
-        assert!(patched(&document, 9, 2, "x").is_none());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn invisible_edit_replaces_unicode_selection_by_message() {
-        use windows::{
-            core::w,
-            Win32::{
-                Foundation::HWND,
-                UI::WindowsAndMessaging::{
-                    CreateWindowExW, DestroyWindow, ES_MULTILINE, WINDOW_EX_STYLE,
-                    IsWindowUnicode, WINDOW_STYLE, WM_SETTEXT, WS_OVERLAPPED,
-                },
-            },
-        };
-        const EM_SETSEL: u32 = 0x00B1;
-        const EM_REPLACESEL: u32 = 0x00C2;
-        const EM_SETLIMITTEXT: u32 = 0x00C5;
-
-        struct Window(HWND);
-        impl Drop for Window {
-            fn drop(&mut self) {
-                unsafe {
-                    let _ = DestroyWindow(self.0);
-                }
-            }
-        }
-
-        let edit = Window(unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
-                w!("EDIT"),
-                w!(""),
-                WS_OVERLAPPED | WINDOW_STYLE(ES_MULTILINE as u32),
-                0,
-                0,
-                640,
-                480,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap()
-        });
-        assert!(unsafe { IsWindowUnicode(edit.0).as_bool() });
-
-        let original = "Début\r\ncafé 😀 fin";
-        message(edit.0, EM_SETLIMITTEXT, 1_000_000, 0).unwrap();
-        let original_utf16 = original
-            .encode_utf16()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
-        message(edit.0, WM_SETTEXT, 0, original_utf16.as_ptr() as isize).unwrap();
-        let start = "Début\r\n".encode_utf16().count();
-        let end = start + "café 😀".encode_utf16().count();
-        message(edit.0, EM_SETSEL, start, end as isize).unwrap();
-
-        let (before, selected_start, selected_end) = read_control(edit.0.0 as isize).unwrap();
-        assert_eq!(selected_start as usize, start);
-        assert_eq!(selected_end as usize, end);
-        assert_eq!(
-            String::from_utf16(&before[start..end]).unwrap(),
-            "café 😀"
-        );
-
-        let replacement = "équipe 🚀";
-        let mut replacement_utf16 = replacement.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-        message(edit.0, EM_REPLACESEL, 1, replacement_utf16.as_mut_ptr() as isize).unwrap();
-        let (after, _, _) = read_control(edit.0.0 as isize).unwrap();
-        assert_eq!(String::from_utf16(&after).unwrap(), "Début\r\néquipe 🚀 fin");
+        assert!(!fresh(None, 4_000, 3_000));
+        assert!(!fresh(Some(5_000), 4_000, 3_000));
     }
 }
-

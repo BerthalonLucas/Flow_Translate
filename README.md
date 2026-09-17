@@ -1,21 +1,22 @@
-# Nouveautés 0.3.0
+# Nouveautés 0.4.0
 
-Dans **Réglages → Actions et prompts**, modifiez Traduire, Corriger ou Professionnaliser, ou ajoutez votre action. Utilisez `{{text}}` exactement une fois ; `{{targetLanguage}}` est facultatif. Les prompts sont enregistrés automatiquement lorsqu’ils sont valides.
+Sélectionnez un texte déjà écrit (`Ctrl+A`), pressez le raccourci de **Corriger** : le texte corrigé remplace la sélection sur place, dans un mail, la barre de recherche, un champ web, Word ou VS Code. Le résultat passe par le presse-papiers et une seule corde `Ctrl+V` ; le presse-papiers est remis en place. Pendant le travail, seule la pilule tourne ; elle montre ✓ puis s’efface. Si le collage est impossible (console, mot de passe, fenêtre changée), la bulle s’ouvre avec le résultat et Copier.
 
-Dans **Raccourcis**, ajoutez une combinaison, choisissez son action et son résultat : **Afficher dans la bulle** ou **Remplacer la sélection**. Cliquez sur Modifier puis pressez la combinaison (Ctrl ou Alt requis). Les conflits détectés par Windows et les combinaisons réservées sont indiqués immédiatement. La fenêtre de réglages s’agrandit depuis ses bords ou sa poignée inférieure droite.
+Dans **Réglages → Actions et consignes**, chaque action est une consigne seule, sans variable : le texte sélectionné est envoyé après elle. Quatre actions par défaut : Traduire en français, Traduire en anglais, Corriger, Professionnaliser ; ajoutez les vôtres. Le réglage « Langue cible » disparaît : la langue est dans la consigne. Les consignes sont écrites pour de petits modèles sans réflexion ; la réflexion est coupée quand le serveur le permet.
 
-Le remplacement automatique ne s’applique qu’à une sélection native encore identique dans un champ compatible. Si la cible a changé ou n’est pas prise en charge, le résultat reste dans la bulle. Pour corriger ou reformuler, sélectionnez dans Connexion un modèle généraliste qui suit ces instructions ; les profils Hy-MT restent spécialisés en traduction.
+Le serveur livré gagne un profil **général** : Gemma 4 12B QAT avec décodage spéculatif sur `http://127.0.0.1:8003/v1`, modèle `flowtranslate-general`, à mettre dans Rapide ou Qualité pour corriger et reformuler (les Hy-MT ne font que traduire).
 
-L’installateur se trouve dans les [releases](https://github.com/BerthalonLucas/Flow_Translate/releases/latest). Les anciens réglages et les clés sont conservés à la migration ; une ancienne combinaison désormais réservée doit être réenregistrée.
+L’installateur se trouve dans les [releases](https://github.com/BerthalonLucas/Flow_Translate/releases/latest). Les réglages, consignes et clés sont migrés.
 
 # FlowTranslate
 
-Traduction instantanée de n’importe quelle sélection sous Windows 11 : sélectionner,
-`Ctrl+Alt+T`, lire, laisser partir. Client **Tauri 2 + React + Rust** ; moteur de
+Traiter n’importe quelle sélection sous Windows 11 par un modèle de langue : sélectionner,
+un raccourci par action (traduire, corriger, professionnaliser, les vôtres), lire ou
+laisser remplacer sur place. Client **Tauri 2 + React + Rust** ; moteur de
 traduction **séparé**, au choix : le serveur vLLM livré dans `server/` (Hy-MT2), ou tout
 serveur compatible OpenAI, local ou distant.
 
-**État : version d’essai 0.2.1.** Capture directe (le raccourci copie lui-même la
+**État : version d’essai 0.4.0.** Capture directe (le raccourci copie lui-même la
 sélection quand UI Automation ne la donne pas), lecture calibrée (verre court près du
 texte ou bande de lecture à la moitié de l’écran, décidés sur le vrai texte), fermeture
 d’elle-même au temps de lecture, bande qui suit la souris d’un écran à l’autre. Moteurs
@@ -46,7 +47,9 @@ le poste (`127.0.0.1`) ; ailleurs, `https://` est obligatoire.
 
 - **Le serveur livré** (`server/`) : vLLM 0.28.0 épinglé, deux profils Docker Compose,
   Rapide `http://127.0.0.1:8001/v1` modèle `flowtranslate-fast` (Hy-MT2-1.8B), Qualité
-  `http://127.0.0.1:8002/v1` modèle `flowtranslate-quality` (Hy-MT2-7B-FP8). Procédure,
+  `http://127.0.0.1:8002/v1` modèle `flowtranslate-quality` (Hy-MT2-7B-FP8), Général
+  `http://127.0.0.1:8003/v1` modèle `flowtranslate-general` (Gemma 4 12B QAT, décodage
+  spéculatif ; le seul des trois qui corrige et reformule). Procédure,
   précontrôle GPU et évaluation dans [server/README.md](server/README.md) ; les poids
   sont téléchargés au premier lancement, jamais commités.
 - **Un autre serveur** (llama.cpp, LM Studio, Ollama, vLLM d’entreprise, service en
@@ -55,11 +58,15 @@ le poste (`127.0.0.1`) ; ailleurs, `https://` est obligatoire.
 
 ## Utiliser
 
-- `Ctrl+Alt+T` traduit la sélection courante vers la langue cible des Réglages
-  (français ou anglais, source détectée). Sans sélection lisible, FlowTranslate copie
-  lui-même (Ctrl+Insert synthétique, presse-papiers remis en place) ; une copie faite
-  soi-même moins de trois secondes avant est acceptée ; sinon un avis discret, jamais
-  de boîte de dialogue.
+- Un raccourci = une action sur la sélection courante (`Ctrl+Alt+T` : Traduire en
+  français au départ) et un résultat : **Afficher dans la bulle** ou **Remplacer la
+  sélection**. Sans sélection lisible, FlowTranslate copie lui-même (Ctrl+Insert
+  synthétique, presse-papiers remis en place) ; une copie faite soi-même moins de trois
+  secondes avant est acceptée ; sinon un avis discret, jamais de boîte de dialogue.
+- Remplacer la sélection : la pilule seule, puis le résultat est collé à la place du
+  texte (une corde `Ctrl+V`, presse-papiers remis en place), la pilule montre ✓ et
+  s’efface. Console, champ mot de passe ou copie faite soi-même : la bulle s’ouvre à la
+  place, avec Copier.
 - Un texte court s’ouvre près de la sélection ; un texte long s’ouvre en bande de
   lecture en bas de l’écran de la souris, large de la moitié de l’écran, et suit la
   souris d’un écran à l’autre. Molette pour défiler, épingle pour garder la bande.
@@ -68,9 +75,10 @@ le poste (`127.0.0.1`) ; ailleurs, `https://` est obligatoire.
 - Pilule : Copier, Épingler (bande), menu ⋯ (Original, Remplacer quand le contrôle le
   permet, Relancer avec l’autre profil, Réglages, Fermer). L’icône de notification
   propose « Revoir la dernière traduction » pendant dix minutes.
-- Réglages : langue cible, profil par défaut, raccourci, taille du texte, fermeture
-  automatique, historique chiffré (désactivé au départ : DPAPI, 7 jours, 100 entrées),
-  lancement à l’ouverture de session, connexions.
+- Réglages : profil par défaut, taille du texte, fermeture automatique, actions et
+  consignes (la consigne seule ; le texte est envoyé après elle), raccourcis, historique
+  chiffré (désactivé au départ : DPAPI, 7 jours, 100 entrées), lancement à l’ouverture
+  de session, connexions.
 
 Modes de démonstration, sans moteur ni historique :
 

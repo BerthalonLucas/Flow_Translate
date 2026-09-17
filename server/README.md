@@ -9,11 +9,15 @@ This server does not depend on the Windows UI. `model-lock.json` records public 
 3. Validate configuration: `docker compose -f server/compose.yaml --profile fast --profile quality config --quiet`.
 4. Start one profile first: `docker compose -f server/compose.yaml --profile fast up -d fast`. The first start downloads the pinned image plus about 4.08 GB of weights (engine image/cache overhead is additional). Quality downloads about 8.03 GB of weights. Do not launch while the selected GPU is occupied.
 5. Inspect health, then trial Quality separately. Run both only after verifying each budget. No CPU offload or tensor-parallel multi-GPU assumptions are made.
-6. Client profiles: `http://127.0.0.1:8001/v1`, model `flowtranslate-fast`; `http://127.0.0.1:8002/v1`, model `flowtranslate-quality`.
+6. Client profiles: `http://127.0.0.1:8001/v1`, model `flowtranslate-fast`; `http://127.0.0.1:8002/v1`, model `flowtranslate-quality`; `http://127.0.0.1:8003/v1`, model `flowtranslate-general` (profile `general`, below).
 
 On Windows, `powershell -NoProfile -ExecutionPolicy Bypass -File server/start.ps1 -Profile fast -HealthDeadlineSeconds 900` validates Compose and reuses an already healthy selected service. For a missing or stopped selected service it performs preflight, starts only that service, and waits for health. It fails immediately if the container exits during startup. On timeout or failure it leaves containers unchanged for inspection and never stops other workloads. Repeat with `quality` only after the Fast trial.
 
 Normal endpoint failure never falls back to a mock or a different model. The native app's explicit `--demo` option is separate and labelled.
+
+## General profile (0.4.0): Gemma 4 12B QAT with speculative decoding
+
+The Hy-MT2 checkpoints only translate. Since the client runs any instruction (correct, professionalize, custom actions), `compose.yaml` adds the `general` profile: `google/gemma-4-12B-it-qat-w4a16-ct` (revision `1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee`, Apache-2.0, not gated, about 10.3 GB, compressed-tensors W4A16 read natively by vLLM 0.28.0) with the matching QAT MTP draft `google/gemma-4-12B-it-qat-q4_0-unquantized-assistant` (revision `18934064dd4c5c6cc3621f6381e7d377fc8cb7bd`, about 0.9 GB) through `--speculative-config` (`num_speculative_tokens` 4; the vLLM log shows `Draft model Gemma4MTP` when it is active). Port 8003, GPU 0 by default (`GENERAL_GPU`), `--max-model-len 8192`, `--max-num-seqs 4`, `--kv-cache-dtype fp8`, images and audio disabled (`--limit-mm-per-prompt`), `--gpu-memory-utilization 0.85` (`GENERAL_GPU_MEMORY`). Start it alone with `docker compose -f server/compose.yaml --profile general up -d general` or `server/start.ps1 -Profile general`; `preflight.py` knows the profile (12.5 GiB free required). The client sends the action instruction as the system message, the text as the user message and `chat_template_kwargs: {"enable_thinking": false}` (Gemma 4 has thinking off by default; the switch is harmless). Verified on 2026-09-15: a streamed correction request returns the corrected text alone, no thinking block, 28 tokens. No quality benchmark is claimed for this profile.
 
 ## Parameters and verification
 

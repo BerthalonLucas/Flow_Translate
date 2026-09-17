@@ -2,13 +2,14 @@ import { defaultActions, defaultBindings } from '../src/actionDefaults';
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
-import type { Capture, Settings, TranslationRequest } from '../src/types';
+import type { Capture, ExecutionInfo, Settings, TranslationRequest } from '../src/types';
 
-let settings: Settings = { targetLanguage: 'fr', mode: 'quality', defaultActionId: 'translate', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
+let settings: Settings = { mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
-// Like Rust since 0.1.8: canReplace is false until the second capture step (`capture-target`).
+// canReplace is false here; a test raises it with `target` (Rust knows it at the capture since 0.4.0).
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.
-const capture = (id: string, text = 'Example selection'): Capture => ({ id, text, source: 'selection', canReplace: false, anchor: { x: 400, y: 300, width: 120, height: 18 }, screen: { width: 1920, height: 1040, scale: 1 } });
+const capture = (id: string, text = 'Example selection', execution?: ExecutionInfo): Capture => ({ id, text, source: 'selection', canReplace: false, anchor: { x: 400, y: 300, width: 120, height: 18 }, screen: { width: 1920, height: 1040, scale: 1 }, ...(execution ? { execution } : {}) });
+const replaceExecution: ExecutionInfo = { actionId: 'correct', actionName: 'Corriger', outputMode: 'replace', mode: 'quality' };
 const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
 let request: TranslationRequest;
 let currentCapture = capture('first');
@@ -16,6 +17,7 @@ let heldCopy = false;
 let failSettings = new URLSearchParams(location.search).has('settingsError');
 let connected = false;
 let refuseShortcut = false;
+let refuseReplace = false;
 let resolveCopy: (() => void) | undefined;
 mockIPC((command, args) => {
   calls.push({ command, args });
@@ -28,6 +30,7 @@ mockIPC((command, args) => {
   if (command === 'start_drag') return Promise.reject('Synthetic drag failure');
   if (command === 'dismiss_overlay') return emit('overlay-dismiss-requested', { captureId: currentCapture.id });
   if (command === 'copy_result' && heldCopy) return new Promise<void>(resolve => { resolveCopy = resolve; });
+  if (command === 'replace_result' && refuseReplace) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject('La fenêtre source a changé; remplacement refusé.'); }
 }, { shouldMockEvents: true });
 mockWindows('overlay');
 
@@ -36,10 +39,14 @@ Object.assign(window, { nativeFixture: {
   recoverSettings: () => { failSettings = false; },
   connect: () => { connected = true; },
   refuseShortcut: () => { refuseShortcut = true; },
+  refuseReplace: () => { refuseReplace = true; },
   error: () => emit('translation', { requestId: request.id, kind: 'error', message: 'Serveur indisponible.' }),
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },
+  // A « replace » capture: Rust will paste the first complete result and report `result-delivery`.
+  captureReplace: (id: string, text?: string) => { currentCapture = { ...capture(id, text, replaceExecution), canReplace: true }; return emit('capture', currentCapture); },
+  deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.') => { await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message }); },
   delta: (text: string, requestId = request.id) => emit('translation', { requestId, kind: 'delta', text }),
-  done: () => emit('translation', { requestId: request.id, kind: 'done' }),
+  done: (text?: string) => emit('translation', { requestId: request.id, kind: 'done', ...(text === undefined ? {} : { text }) }),
   dismissEvent: (captureId: string) => emit('overlay-dismiss-requested', { captureId }),
   requestId: () => request.id,
   holdCopy: () => { heldCopy = true; },
@@ -50,7 +57,7 @@ Object.assign(window, { nativeFixture: {
   workArea: (width: number, height: number, scale = 1) => emit('work-area', { width, height, scale }),
   settings: (next: Partial<Settings>) => { settings = { ...settings, ...next }; return emit('settings-changed', settings); },
   unanchored: (id: string) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null }; return emit('capture', currentCapture); },
-  replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, anchor: null, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality', targetLanguage: 'fr' } }; return emit('capture', currentCapture); },
+  replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, anchor: null, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality' } }; return emit('capture', currentCapture); },
 } });
 await import('../src/main');
 

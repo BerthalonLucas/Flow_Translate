@@ -1,14 +1,14 @@
-# React ↔ Rust bridge, version 2 (FlowTranslate 0.3.0)
+# React ↔ Rust bridge, version 2 (FlowTranslate 0.4.0)
 
-## Actions and shortcut migration (0.3.0)
+## Actions, instructions and the language in the prompt (0.3.0 → 0.4.0)
 
 The current `Settings` replaces the legacy `shortcut` field with `actions: ActionDefinition[]`, `shortcutBindings: ShortcutBinding[]`, and `defaultActionId: string`. `ActionDefinition` is `{id, name, promptTemplate}`; `ShortcutBinding` is `{id, shortcut, actionId, outputMode: 'display'|'replace', enabled}`. `src/types.ts` is authoritative for the current contract.
 
-Each native capture includes `execution: {actionId, actionName, outputMode, mode, targetLanguage}`. Rust snapshots the corresponding action, prompt and profiles at capture time; the frontend sends `actionId` in `TranslationRequest`, never a prompt. Initial mode, language and action must match the capture. A comparison/retry may change the profile, but cannot perform another automatic replacement.
+Each native capture includes `execution: {actionId, actionName, outputMode, mode}` (no `targetLanguage` since 0.4.0: the language lives in the instruction). Rust snapshots the corresponding action, prompt and profiles at capture time; the frontend sends `actionId` in `TranslationRequest`, never a prompt. Initial mode and action must match the capture. A comparison/retry may change the profile, but cannot perform another automatic replacement.
 
-`result-delivery` emits `{requestId, status: 'applied'|'fallback', message}`. Stale IDs and closed overlays ignore it. Rust waits for both a complete response and the target resolver (bounded to two seconds after inference); it claims delivery once, revalidates the native target and writes under the session lock. Cancelling even a completed request revokes a pending delivery. Failure leaves the result in the bubble. `capture-target` cannot reactivate replacement after a successful automatic write.
+`result-delivery` emits `{requestId, status: 'applied'|'fallback', confirmed: boolean, message}` (0.4.0). Stale IDs and closed overlays ignore it. As soon as a « replace » request completes, Rust claims delivery once, revalidates the native target and pastes under the session lock (`capture::paste`, Ctrl+V into the original selection, clipboard restored); `confirmed` says whether the field was read back with the result (bonus proof, never a condition). Before it, the frontend keeps the pill alone; on `applied` the pill shows a check for 900 ms then calls `dismiss_overlay`; on `fallback` the glass opens with the result, the message and Copier; without any report three seconds after `done` the frontend treats it as `fallback`. Cancelling even a completed request revokes a pending delivery. Failure leaves the result in the bubble. `capture-target` cannot reactivate replacement after a successful automatic write.
 
-Settings persist through a serialized save queue in React and a mutex in Rust. Registration and persistence errors roll back newly registered shortcuts. Existing API keys remain DPAPI-encrypted. Legacy settings retain their shortcut and profiles; newly reserved legacy shortcuts are disabled, not discarded. Prompts accept exactly one `{{text}}`, optional `{{targetLanguage}}`, no unknown variables, and at most 8,000 Unicode characters. Captured text is substituted last so its literal variables stay untouched.
+Settings persist through a serialized save queue in React and a mutex in Rust. Registration and persistence errors roll back newly registered shortcuts. Existing API keys remain DPAPI-encrypted. Legacy settings retain their shortcut and profiles; newly reserved legacy shortcuts are disabled, not discarded. Since 0.4.0 a prompt is the instruction alone (1 to 8,000 Unicode characters, no NUL, no variable): Rust sends it as the `system` message and the captured text as the `user` message, so the text is never substituted into the instruction. 0.3.0 templates are migrated on load: `{{targetLanguage}}` becomes `French`/`English` from the former « Langue cible » setting, `{{text}}` and its line are dropped; `defaultActionId` falls back to the first action when its id is gone (`translate` → `translate-fr`).
 
 The settings window is now user-resizable with a dedicated scroll viewport. `resize_settings` was removed; corner dragging calls Tauri `startResizeDragging('SouthEast')`, permitted only for the settings window. Native minimum dimensions are 460 × 420 logical pixels.
 
@@ -20,18 +20,19 @@ Rust structs serialize camelCase. Rust command names are snake_case; invoke argu
 type Mode = 'fast' | 'quality';
 type Language = 'fr' | 'en';
 type Rect = { x: number; y: number; width: number; height: number }; // physical screen pixels, final visible character (or final visible line if character unavailable), logical text order
-type Replay = { requestId: string; translatedText: string; mode: Mode; targetLanguage: Language }; // a result shown again from the tray: complete at once, no translation
+type Replay = { requestId: string; translatedText: string; mode: Mode }; // a result shown again from the tray: complete at once, no translation
 type Screen = { width: number; height: number; scale: number }; // logical work area of the screen the glass rests on, and its DPI scale (2026-09-14)
 type Capture = { id: string; text: string; source: 'selection'|'clipboard'; origin?: 'uia'|'copy'|'fresh'|'replay'|'demo'; canReplace: boolean; anchor: Rect|null; replay?: Replay; screen?: Screen; execution?: ExecutionInfo };
 // origin: how Rust obtained the text; shown nowhere, exposed as data-origin on .glass-overlay for the real capture matrix.
-type CaptureTarget = { captureId: string; canReplace: boolean }; // second capture step
+type CaptureTarget = { captureId: string; canReplace: boolean }; // 0.4.0: emitted with false once the target was consumed by a paste attempt
 type CaptureNotice = { message: string };
+type ResultDelivery = { requestId: string; status: 'applied'|'fallback'; confirmed: boolean; message: string }; // 0.4.0
 type Profile = { endpoint: string; model: string; apiKey: string }; // key decrypted only to settings; never browser mock persistence
 type TextSize = 'normal'|'large'|'xlarge'; // Réglages « Taille du texte »: short glass 16/24 · 18/27 · 20/30, reader 22/33 · 24/36 · 26/39 (font/line, px)
 type AutoClose = 'fast'|'normal'|'slow'|'never'; // Réglages « Fermeture automatique »: reading budget × 0.7 · × 1 · × 1.5 · none
-type Settings = { targetLanguage: Language; mode: Mode; actions: ActionDefinition[]; shortcutBindings: ShortcutBinding[]; defaultActionId: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; textSize: TextSize; autoClose: AutoClose; profiles: Record<Mode,Profile> }; // connectionExpanded: settings UI fold state, persisted like any other field; textSize/autoClose default to 'normal' when absent
+type Settings = { mode: Mode; actions: ActionDefinition[]; shortcutBindings: ShortcutBinding[]; defaultActionId: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; textSize: TextSize; autoClose: AutoClose; profiles: Record<Mode,Profile> }; // connectionExpanded: settings UI fold state, persisted like any other field; textSize/autoClose default to 'normal' when absent
 type StreamEvent = { requestId: string; kind: 'delta'|'done'|'error'; text?: string; message?: string };
-type HistoryEntry = { id: string; sourceText: string; translatedText: string; targetLanguage: Language; mode: Mode; createdAt: string };
+type HistoryEntry = { id: string; sourceText: string; translatedText: string; actionName: string; mode: Mode; createdAt: string }; // actionName: « Traduire » for rows written before 0.4.0
 type ConnectionStatus = { connected: boolean; message: string };
 type Presentation = 'anchored'|'bottom'; // 2026-09-14: the short glass beside its selection, or the band on the bottom of the cursor's screen
 type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:number };
@@ -42,11 +43,11 @@ type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:n
 - `get_settings() -> Settings`
 - `frontend_ready() -> Capture|null`: overlay-only handshake, called after event listeners register. Marks overlay ready and returns pending capture, if any. Frontend deduplicates capture IDs. Never recapture clipboard as a startup fallback.
 - `save_settings({settings}) -> void` (validate URL/model/shortcut before saving; DPAPI-protect credentials)
-- `capture_text() -> Capture` (also usable from preview/test controls). Since 2026-09-14 the capture has two steps: the UIA selection (text, anchor) opens the window at once with `canReplace: false`; the document offsets and the Win32 control are read afterwards and published by `capture-target`. Without a UIA selection Rust copies for the user (synthetic Ctrl+Insert after the shortcut chord is released, clipboard sequence watched ≤ 350 ms, previous text restored without feeding Win+V unless something else wrote in between), else accepts a copy the user made himself less than 3 s before (`host::track_clipboard`), else fails with « Rien à traduire dans la fenêtre active. » shown as a notice, never as a MessageBox.
-- `translate({request:{id,captureId,text,targetLanguage,mode,actionId}}) -> void`: starts background streaming and returns promptly. Emits `translation` StreamEvent. Register listeners before invoking. At most one active request; starting another cancels the prior one. Validate capture/text identity. Desktop demo may be explicitly started through CLI `--demo`, never silently substitute a mock for failed inference.
+- `capture_text() -> Capture` (also usable from preview/test controls). Since 0.4.0 `canReplace` is decided at capture (`capture::replaceable`): true for an editable UIA selection or a successful synthetic copy, false for the user's own fresh copy, a replay, a demo, a console window or a password field; no second step. Without a UIA selection Rust copies for the user (synthetic Ctrl+Insert after the shortcut chord is released, clipboard sequence watched ≤ 350 ms, previous text restored without feeding Win+V unless something else wrote in between), else accepts a copy the user made himself less than 3 s before (`host::track_clipboard`), else fails with « Rien à traduire dans la fenêtre active. » shown as a notice, never as a MessageBox.
+- `translate({request:{id,captureId,text,mode,actionId}}) -> void`: starts background streaming and returns promptly. Emits `translation` StreamEvent. Register listeners before invoking. At most one active request; starting another cancels the prior one. Validate capture/text identity. Desktop demo may be explicitly started through CLI `--demo`, never silently substitute a mock for failed inference.
 - `cancel_translation({requestId}) -> void`
 - `copy_result({requestId}) -> void`: Rust copies only a completed known translation, never arbitrary frontend-supplied replacement text.
-- `replace_result({requestId}) -> void`: revalidate stored source target and selection; otherwise refuse safely.
+- `replace_result({requestId}) -> void`: menu « Remplacer »; revalidates the stored target, reactivates the source window and pastes once (`capture::paste`); the target is consumed even on refusal, the error string is shown as feedback.
 - `dismiss_overlay() -> void`: cancel immediately and emit `overlay-dismiss-requested` with `{captureId}`. Native fallback hides after 300ms.
 - `complete_overlay_dismiss({captureId}) -> void`: acknowledge the closing animation; stale acknowledgements do nothing.
 - `open_settings() -> void`
@@ -63,7 +64,8 @@ type SurfaceRegion = { x:number; y:number; width:number; height:number; radius:n
 
 ## Events and windows
 
-- `capture-target` carries `{captureId, canReplace}`: the native target of a selection capture, read behind the shown window; a stale capture id is ignored; « Remplacer » is offered only after it arrives true.
+- `capture-target` carries `{captureId, canReplace}`: since 0.4.0 only `canReplace: false`, once a paste consumed the target (automatic or from the menu); a stale capture id is ignored.
+- `result-delivery` carries `ResultDelivery` after the automatic paste of a « replace » capture (see above).
 - `capture-notice` carries `{message}`: nothing to translate, protected field, oversized selection, source window changed. Without an open glass Rust first places the overlay window as a pill alone (420×64 logical, bottom centre of the cursor's screen, no surface: the mouse passes through) and hides it after 4 s; with an open glass the frontend shows the message as feedback. Replaces the MessageBox (2026-09-14).
 - A `capture` with `replay` (tray « Revoir la dernière traduction », kept 10 min after the glass closed) is shown complete by the frontend without invoking `translate`; `copy_result` accepts its request id.
 - `work-area` carries `Screen` (logical work area and scale) to the overlay when the cursor moved to another screen while a bottom form is visible: the hit tester reports `MonitorFromPoint(cursor)` on change, `screen_changed` moves the window to the new screen (`placement::docked` on its work area) and the frontend recomputes the band width and republishes its geometry. An anchored glass belongs to its selection and never follows. `capture.screen` carries the same values for the first computation. No cursor position is emitted.

@@ -20,7 +20,10 @@ pub struct SettingsStore {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedSettings {
-    target_language: crate::types::Language,
+    /// Until 0.3.0 the target language was a setting; since 0.4.0 it lives in the
+    /// instruction of each action. Read for the migration, never written again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_language: Option<crate::types::Language>,
     mode: crate::types::Mode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shortcut: Option<String>,
@@ -91,12 +94,22 @@ impl SettingsStore {
             bindings[0].enabled = actions::parse_shortcut(&bindings[0].shortcut).is_ok();
             bindings
         });
+        let language = raw.target_language.unwrap_or(crate::types::Language::Fr);
+        let mut migrated = raw.target_language.is_some();
+        let actions = raw.actions.map(|actions| actions.into_iter().map(|mut action| {
+            if action.prompt_template.contains("{{") {
+                action.prompt_template = actions::migrate_template(&action.prompt_template, language);
+                migrated = true;
+            }
+            action
+        }).collect::<Vec<_>>()).unwrap_or_else(actions::defaults);
+        let default_action_id = raw.default_action_id.filter(|id| actions.iter().any(|a| &a.id == id))
+            .unwrap_or_else(|| actions[0].id.clone());
         let settings = Settings {
-            target_language: raw.target_language,
             mode: raw.mode,
-            actions: raw.actions.unwrap_or_else(actions::defaults),
+            actions,
             shortcut_bindings: bindings,
-            default_action_id: raw.default_action_id.unwrap_or_else(|| "translate".into()),
+            default_action_id,
             history_enabled: raw.history_enabled,
             autostart: raw.autostart,
             connection_expanded: raw.connection_expanded,
@@ -105,6 +118,10 @@ impl SettingsStore {
             profiles,
         };
         validate(&settings)?;
+        if migrated {
+            // Rewrite the file once so the language setting and the variables are gone.
+            let _ = self.save(&settings);
+        }
         Ok(settings)
     }
 
@@ -127,7 +144,7 @@ impl SettingsStore {
             );
         }
         let raw = PersistedSettings {
-            target_language: settings.target_language,
+            target_language: None,
             mode: settings.mode,
             shortcut: None,
             actions: Some(settings.actions.clone()),
@@ -259,17 +276,45 @@ mod tests {
             let migrated = store.load().unwrap();
             assert_eq!(migrated.shortcut_bindings[0].shortcut, shortcut);
             assert_eq!(migrated.shortcut_bindings[0].enabled, shortcut == "Ctrl+Alt+Y");
-            assert_eq!(migrated.default_action_id, "translate");
-            assert_eq!(migrated.actions.len(), 3);
+            assert_eq!(migrated.default_action_id, "translate-fr");
+            assert_eq!(migrated.actions.len(), 4);
             assert_eq!(migrated.profiles["fast"].model, "custom-fast");
-            assert_eq!(migrated.target_language, crate::types::Language::En);
             assert!(migrated.history_enabled);
+            assert!(!fs::read_to_string(root.join("settings.json")).unwrap().contains("targetLanguage"));
             store.save(&migrated).unwrap();
             let restored = store.load().unwrap();
             assert_eq!(restored.actions, migrated.actions);
             assert_eq!(restored.shortcut_bindings, migrated.shortcut_bindings);
             fs::remove_dir_all(root).unwrap();
         }
+    }
+    #[test]
+    fn a_0_3_0_action_list_loses_its_variables_and_keeps_its_ids() {
+        let root = std::env::temp_dir().join(format!("flowtranslate-migration-actions-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let old = serde_json::json!({
+            "targetLanguage": "en", "mode": "fast", "historyEnabled": false, "autostart": false,
+            "actions": [
+                {"id": "translate", "name": "Traduire", "promptTemplate": "Translate the following text into {{targetLanguage}}. Output only the translated result without any additional explanation:\n{{text}}"},
+                {"id": "custom", "name": "Résumer", "promptTemplate": "Résume en une phrase : {{text}}"}
+            ],
+            "shortcutBindings": [{"id": "primary", "shortcut": "Ctrl+Alt+T", "actionId": "translate", "outputMode": "replace", "enabled": true}],
+            "defaultActionId": "translate",
+            "profiles": {
+                "fast": {"endpoint": "http://127.0.0.1:8001/v1", "model": "custom-fast", "apiKeyDpapi": ""},
+                "quality": {"endpoint": "https://example.test/v1", "model": "custom-quality", "apiKeyDpapi": ""}
+            }
+        });
+        fs::write(root.join("settings.json"), serde_json::to_vec(&old).unwrap()).unwrap();
+        let store = SettingsStore::new(&root);
+        let migrated = store.load().unwrap();
+        assert_eq!(migrated.default_action_id, "translate");
+        assert_eq!(migrated.actions[0].prompt_template, "Translate the following text into English. Output only the translated result without any additional explanation:");
+        assert_eq!(migrated.actions[1].prompt_template, "Résume en une phrase :");
+        assert_eq!(migrated.shortcut_bindings[0].action_id, "translate");
+        let written = fs::read_to_string(root.join("settings.json")).unwrap();
+        assert!(!written.contains("{{text}}") && !written.contains("targetLanguage"));
+        fs::remove_dir_all(root).unwrap();
     }
     #[cfg(windows)]
     #[test]

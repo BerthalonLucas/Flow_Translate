@@ -7,7 +7,7 @@ import { Icon, Segmented, SettingSwitch, useFade } from './ui';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
 import { useTranslation } from './useTranslation';
-import type { AutoClose, Capture, HistoryEntry, Language, Mode, Settings, TextSize } from './types';
+import type { AutoClose, Capture, HistoryEntry, Mode, Settings, TextSize } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Alex,\n\nThank you for your feedback. The updated proposal includes the delivery timeline, responsibilities, and payment terms. Could you confirm these details before Thursday?\n\nWe have kept the total budget unchanged and clarified the review process. Please check the dates and amounts before we share the final version with the team.\n\nBest regards,\nMarie' };
@@ -16,15 +16,16 @@ const uid = () => crypto.randomUUID?.() ?? `request-${Date.now()}`;
 
 export function Capsule() {
   const fade = useFade();
-  const [target, setTarget] = useState<Language>('fr');
+  const [label, setLabel] = useState('FlowTranslate');
+  const actionLabel = (settings: Settings) => settings.actions.find(action => action.id === settings.defaultActionId)?.name ?? 'FlowTranslate';
   useEffect(() => {
     let off: (() => void) | undefined;
-    void bridge.getSettings().then(settings => setTarget(settings.targetLanguage)).catch(() => undefined);
-    void bridge.on<Settings>('settings-changed', settings => setTarget(settings.targetLanguage)).then(listener => off = listener);
+    void bridge.getSettings().then(settings => setLabel(actionLabel(settings))).catch(() => undefined);
+    void bridge.on<Settings>('settings-changed', settings => setLabel(actionLabel(settings))).then(listener => off = listener);
     return () => off?.();
   }, []);
   return <motion.div {...fade} className="capsule" onPointerDown={event => dragSurface(event)}>
-    <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard" /><span>{target === 'fr' ? 'Français' : 'English'}</span></button>
+    <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label="Afficher la traduction"><Icon name="clipboard" /><span>{label}</span></button>
     <span className="capsule-rule" aria-hidden="true" /><button className="icon-button capsule-settings" onClick={() => void bridge.openSettings()} aria-label="Ouvrir les réglages"><Icon name="more" /></button><button className="icon-button capsule-close" onClick={() => void bridge.dismiss()} aria-label="Fermer"><Icon name="close" /></button>
   </motion.div>;
 }
@@ -131,8 +132,6 @@ export function SettingsWindow() {
     <ScrollArea.Root className="settings-scroll" type="always"><ScrollArea.Viewport className="settings-scroll-viewport"><div className="settings-body">
       <section>
         <h2>Traduction</h2>
-        <div className="setting-row"><div className="setting-copy"><strong>Langue cible</strong><small>La source est détectée automatiquement.</small></div>
-          <Segmented<Language> label="Langue cible" value={settings.targetLanguage} options={[{ value: 'fr', label: 'Français' }, { value: 'en', label: 'English' }]} onChange={value => update('targetLanguage', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>Profil par défaut</strong><small>Qualité : plus lent, meilleures tournures. Changeable depuis le menu de la bulle.</small></div>
           <Segmented<Mode> label="Profil par défaut" value={settings.mode} options={[{ value: 'quality', label: 'Qualité' }, { value: 'fast', label: 'Rapide' }]} onChange={value => update('mode', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>Taille du texte</strong><small>Verre court 16, 18 ou 20 px ; lecteur 22, 24 ou 26 px. Le lecteur occupe la moitié de l’écran.</small></div>
@@ -146,7 +145,7 @@ export function SettingsWindow() {
         <div className="setting-row"><div className="setting-copy"><strong>Conserver l’historique chiffré</strong><small>7 jours, 100 entrées, protégé par Windows (DPAPI). Rien ne quitte l’appareil.</small></div>
           <SettingSwitch label="Conserver l’historique chiffré" checked={settings.historyEnabled} onCheckedChange={checked => update('historyEnabled', checked)} /></div>
         {settings.historyEnabled && <div className="history">
-          {history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{modeLabel(item.mode)} · {historyDate(item.createdAt)}</small></div><button className="icon-button history-remove" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" size={13} /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}
+          {history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.actionName} · {modeLabel(item.mode)} · {historyDate(item.createdAt)}</small></div><button className="icon-button history-remove" onClick={() => void removeHistory(item.id)} aria-label="Supprimer cette entrée"><Icon name="close" size={13} /></button></article>) : <p className="empty-history">Aucune traduction enregistrée.</p>}
           <div className="history-foot"><small>{history.length} entrée{history.length > 1 ? 's' : ''}</small><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>Tout supprimer</button></div>
         </div>}
         <div className="setting-row"><div className="setting-copy"><strong>Lancer à l’ouverture de session</strong><small>Seule l’icône de notification est visible au repos.</small></div>

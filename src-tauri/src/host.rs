@@ -16,11 +16,12 @@ use windows::Win32::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
             KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
-            VK_INSERT, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+            VK_INSERT, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
         },
         Shell::{DefSubclassProc, SetWindowSubclass},
         WindowsAndMessaging::{
-            GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
+            GetClassNameW, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongPtrW, GetWindowRect,
+            GetWindowThreadProcessId, IsWindowVisible, GUITHREADINFO,
             SetForegroundWindow, SetWindowLongPtrW, ShowWindow, SW_HIDE,
             SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
             SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_NCACTIVATE, WM_NCPAINT,
@@ -116,6 +117,27 @@ pub fn apply_glass(window: &WebviewWindow) {
 
 pub fn foreground() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
+}
+/// The class name of a window (empty when it is gone).
+pub fn window_class(handle: isize) -> String {
+    let mut class = [0u16; 256];
+    let len = unsafe { GetClassNameW(HWND(handle as *mut _), &mut class) };
+    if len <= 0 { return String::new(); }
+    String::from_utf16_lossy(&class[..len as usize])
+}
+/// Windows consoles: Ctrl+Insert copies a selection there but Ctrl+V never replaces one.
+pub fn is_console_class(class: &str) -> bool {
+    matches!(class, "ConsoleWindowClass" | "CASCADIA_HOSTING_WINDOW_CLASS")
+}
+/// The control that has the keyboard focus in the thread of `source`, with its class.
+pub fn focused_control(source: isize) -> Option<(isize, String)> {
+    let thread = unsafe { GetWindowThreadProcessId(HWND(source as *mut _), None) };
+    if thread == 0 { return None; }
+    let mut info = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+    unsafe { GetGUIThreadInfo(thread, &mut info).ok()?; }
+    if info.hwndFocus.0.is_null() { return None; }
+    let handle = info.hwndFocus.0 as isize;
+    Some((handle, window_class(handle)))
 }
 pub fn window_rect(handle: isize) -> Option<Rect> {
     let mut r = RECT::default();
@@ -627,7 +649,7 @@ pub fn suppress_clipboard_tracking(window: Duration) {
     CLIPBOARD_SEEN.store(clipboard_sequence(), Ordering::Release);
 }
 
-fn modifiers_down() -> bool {
+pub fn modifiers_down() -> bool {
     [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
         .iter()
         .any(|key| unsafe { GetAsyncKeyState(key.0 as i32) } < 0)
@@ -679,6 +701,27 @@ pub fn send_copy_chord() -> Result<(), String> {
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
         return Err("La copie synthétique a été bloquée.".into());
+    }
+    Ok(())
+}
+
+/// Sends Ctrl+V to the foreground window: one chord, never Ctrl+A, never Enter; the
+/// target editor handles its own paste and its undo. On a partial injection the keys
+/// already pressed are released and the count sent is returned.
+pub fn send_paste_chord() -> Result<(), u32> {
+    let inputs = [
+        key_input(VK_CONTROL, false, false),
+        key_input(VK_V, false, false),
+        key_input(VK_V, false, true),
+        key_input(VK_CONTROL, false, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        if sent > 0 {
+            let release = [key_input(VK_V, false, true), key_input(VK_CONTROL, false, true)];
+            unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        }
+        return Err(sent);
     }
     Ok(())
 }

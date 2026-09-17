@@ -8,7 +8,7 @@ type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invali
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  targetLanguage: 'fr', mode: 'quality', defaultActionId: 'translate', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
+  mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -19,11 +19,12 @@ let demoScenario: DemoScenario = 'normal';
 let demoSettings = structuredClone(defaultSettings);
 let activeTimer: number | undefined;
 let activeDemoRequest: string | undefined;
-let demoHistory: HistoryEntry[] = [{ id: 'demo-history', sourceText: 'Could you send the updated proposal?', translatedText: 'Pourriez-vous envoyer la proposition mise à jour ?', targetLanguage: 'fr', mode: 'quality', createdAt: '2026-09-08T10:24:00Z' }];
+let demoHistory: HistoryEntry[] = [{ id: 'demo-history', sourceText: 'Could you send the updated proposal?', translatedText: 'Pourriez-vous envoyer la proposition mise à jour ?', actionName: 'Traduire en français', mode: 'quality', createdAt: '2026-09-08T10:24:00Z' }];
 const demoListeners = new Map<EventName, Set<(payload: never) => void>>();
 
 function emit<T>(name: EventName, payload: T) { demoListeners.get(name)?.forEach(handler => handler(payload as never)); }
-function demoTranslation(text: string, language: 'fr' | 'en') {
+function demoTranslation(text: string, actionId: string) {
+  const language = actionId.endsWith('-en') ? 'en' : 'fr';
   if (demoScenario === 'error') return null;
   if (demoScenario === 'long' || demoScenario === 'very-long') return ( 'Bonjour Alex,\n\nMerci pour votre retour sur la proposition. La nouvelle version reprend les points discutés lors de notre réunion : le calendrier de livraison, la répartition des responsabilités et les conditions de validation.\n\nPourriez-vous vérifier les montants et les dates avant jeudi ? Nous pourrons ensuite transmettre la version définitive à l’équipe. Le budget de 12 500 € reste inchangé et la première livraison est prévue le 15 octobre.\n\nVous trouverez également une synthèse des modifications et la liste des questions encore ouvertes. Je reste disponible pour en discuter demain matin.\n\nBonne journée,\nMarie').repeat(demoScenario === 'very-long' ? 8 : 1);
   if (text.includes('updated proposal')) return language === 'fr' ? 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?' : 'Could you send the updated proposal before Thursday?';
@@ -53,7 +54,7 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
       }, 120);
       return undefined as T;
     }
-    const translated = demoTranslation(request.text, request.targetLanguage);
+    const translated = demoTranslation(request.text, request.actionId);
     if (!translated) { activeTimer = window.setTimeout(() => emit<StreamEvent>('translation', { requestId: request.id, kind: 'error', message: 'Démo : le serveur est indisponible.' }), 260); return undefined as T; }
     let i = 0;
     const tick = () => {

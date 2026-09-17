@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon, SettingSwitch } from './ui';
-import { defaultActions, promptError } from './actionDefaults';
+import { defaultActions, newActionTemplate, promptError } from './actionDefaults';
 import type { Settings, ShortcutBinding } from './types';
 
 type Props = {
@@ -44,8 +44,8 @@ export function ActionSettings({ settings, persist, record }: Props) {
   };
   return <>
     <section className="actions-settings">
-      <div className="section-heading"><div><h2>Actions et prompts</h2><p>Choisissez l’instruction envoyée au modèle.</p></div>
-        <button className="text-button" disabled={settings.actions.length >= 24} onClick={() => persist({ ...settings, actions: [...settings.actions, { id: crypto.randomUUID(), name: 'Nouvelle action', promptTemplate: 'Transform the text as requested. Output only the result:\n{{text}}' }] }, true)}>Ajouter une action</button></div>
+      <div className="section-heading"><div><h2>Actions et consignes</h2><p>La consigne seule ; le texte sélectionné est envoyé après elle.</p></div>
+        <button className="text-button" disabled={settings.actions.length >= 24} onClick={() => persist({ ...settings, actions: [...settings.actions, { id: crypto.randomUUID(), name: 'Nouvelle action', promptTemplate: newActionTemplate }] }, true)}>Ajouter une action</button></div>
       <label className="default-action">Action par défaut<select value={settings.defaultActionId} onChange={e => persist({ ...settings, defaultActionId: e.target.value }, true)}>{settings.actions.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
       <div className="action-list">{settings.actions.map(action => {
         const original = defaultActions.find(a => a.id === action.id);
@@ -55,14 +55,14 @@ export function ActionSettings({ settings, persist, record }: Props) {
           <summary><span>{action.name || 'Action sans nom'}</span><small>{original ? 'Prédéfinie' : 'Personnalisée'}</small><Icon name="chevron" size={14} /></summary>
           <div className="action-editor">
             <label>Nom de l’action<input value={action.name} maxLength={60} onChange={e => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...a, name: e.target.value } : a) }, false)} /></label>
-            <label>Prompt<textarea aria-label={`Prompt ${action.name}`} rows={5} value={action.promptTemplate} spellCheck={false} aria-invalid={Boolean(error)} onChange={e => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...a, promptTemplate: e.target.value } : a) }, false)} /></label>
-            <small>Insérez <code>{'{{text}}'}</code> une fois. <code>{'{{targetLanguage}}'}</code> est facultatif.</small>
+            <label>Consigne<textarea aria-label={`Consigne ${action.name}`} rows={6} value={action.promptTemplate} spellCheck={false} aria-invalid={Boolean(error)} onChange={e => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...a, promptTemplate: e.target.value } : a) }, false)} /></label>
+            <small>Écrivez la langue voulue dans la consigne. Les règles de sortie à la fin gardent les petits modèles au texte seul.</small>
             {error && <p className="row-warning" role="alert">{error}</p>}
-            {original ? <button className="text-button" onClick={() => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...original } : a) }, true)}>Rétablir le prompt</button> : <button className="text-button" disabled={used} title={used ? 'Changez d’abord les raccourcis et l’action par défaut qui l’utilisent.' : undefined} onClick={() => persist({ ...settings, actions: settings.actions.filter(a => a.id !== action.id) }, true)}>Supprimer l’action{used ? ' · utilisée' : ''}</button>}
+            {original ? <button className="text-button" onClick={() => persist({ ...settings, actions: settings.actions.map(a => a.id === action.id ? { ...original } : a) }, true)}>Rétablir la consigne</button> : <button className="text-button" disabled={used} title={used ? 'Changez d’abord les raccourcis et l’action par défaut qui l’utilisent.' : undefined} onClick={() => persist({ ...settings, actions: settings.actions.filter(a => a.id !== action.id) }, true)}>Supprimer l’action{used ? ' · utilisée' : ''}</button>}
           </div>
         </details>;
       })}</div>
-      <p className="settings-help">Les modèles Hy-MT sont spécialisés en traduction. Pour corriger ou reformuler, choisissez un modèle qui suit ces instructions dans Connexion.</p>
+      <p className="settings-help">Les modèles Hy-MT ne savent que traduire. Pour corriger ou reformuler, pointez un profil de Connexion vers un modèle généraliste (le profil « general » du serveur livré, ou tout serveur compatible OpenAI).</p>
     </section>
     <section className="shortcuts-settings">
       <div className="section-heading"><div><h2>Raccourcis</h2><p>Une combinaison, une action, une destination.</p></div>
@@ -79,7 +79,7 @@ export function ActionSettings({ settings, persist, record }: Props) {
           <label>Résultat<select value={b.outputMode} onChange={e => binding(b.id, { outputMode: e.target.value as 'display' | 'replace' })}><option value="display">Afficher dans la bulle</option><option value="replace">Remplacer la sélection</option></select></label></div>
       </article>)}</fieldset>
       {notice && <p className="row-warning" role={notice === 'Raccourci enregistré.' ? 'status' : 'alert'}>{notice}</p>}
-      <p className="settings-help">Ctrl ou Alt requis. Windows, F12 et les combinaisons système sont refusés. Une nouvelle combinaison valide est activée dès son enregistrement. Le résultat reste dans la bulle si le champ ne permet pas un remplacement vérifiable.</p>
+      <p className="settings-help">Ctrl ou Alt requis. Windows, F12 et les combinaisons système sont refusés. Une nouvelle combinaison valide est activée dès son enregistrement. « Remplacer la sélection » colle le résultat à la place du texte sélectionné, dans n’importe quel champ ; si le collage échoue, le résultat reste dans la bulle.</p>
     </section>
   </>;
 }
