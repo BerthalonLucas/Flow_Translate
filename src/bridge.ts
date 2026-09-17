@@ -1,25 +1,30 @@
 import { defaultActions, defaultBindings } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, SettingsTarget, StreamEvent, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'settings-target';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
   mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
-  profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
+  profiles: { fast: { endpoint: 'http://127.0.0.1:8001/v1', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: 'http://127.0.0.1:8002/v1', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
 const native = '__TAURI_INTERNALS__' in window;
 let demoCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 830, y: 410, width: 360, height: 24 } };
 type DemoScenario = 'normal' | 'error' | 'long' | 'very-long' | 'pending' | 'partial';
 let demoScenario: DemoScenario = 'normal';
+// Browser preview only: ?notice=1 replays the « settings were unreadable » startup notice.
+const demoStartupNotice = new URLSearchParams(location.search).has('notice') ? 'Vos réglages étaient illisibles\u00A0: la dernière sauvegarde est chargée.' : null;
 let demoSettings = structuredClone(defaultSettings);
 let activeTimer: number | undefined;
 let activeDemoRequest: string | undefined;
-let demoHistory: HistoryEntry[] = [{ id: 'demo-history', sourceText: 'Could you send the updated proposal?', translatedText: 'Pourriez-vous envoyer la proposition mise à jour ?', actionName: 'Traduire en français', mode: 'quality', createdAt: '2026-09-08T10:24:00Z' }];
+let demoHistory: HistoryEntry[] = [
+  { id: 'demo-history', sourceText: 'Could you send the updated proposal?', translatedText: 'Pourriez-vous envoyer la proposition mise à jour ?', actionName: 'Traduire en français', mode: 'quality', createdAt: '2026-09-08T10:24:00Z' },
+  { id: 'demo-history-2', sourceText: 'je vous envoie le devis corrigé demain matin', translatedText: 'Je vous envoie le devis corrigé demain matin.', actionName: 'Corriger', mode: 'fast', createdAt: '2026-09-08T08:12:00Z' },
+];
 const demoListeners = new Map<EventName, Set<(payload: never) => void>>();
 
 function emit<T>(name: EventName, payload: T) { demoListeners.get(name)?.forEach(handler => handler(payload as never)); }
@@ -32,8 +37,25 @@ function demoTranslation(text: string, actionId: string) {
   return language === 'fr' ? 'Voici une traduction de démonstration, prête à être relue.' : 'Here is a demo translation, ready for review.';
 }
 
+// Mirrors `settings::validate_endpoint`: the browser preview must refuse exactly what Rust refuses.
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i;
+export function endpointError(value: string): string | null {
+  let url: URL;
+  try { url = new URL(value); } catch { return 'L’adresse du serveur est invalide.'; }
+  if (url.username || url.password || url.search || url.hash) return 'L’adresse du serveur ne doit contenir ni identifiants, ni requête, ni fragment.';
+  if (!url.hostname) return 'L’adresse du serveur doit contenir un hôte.';
+  const loopback = LOOPBACK.test(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return 'Un serveur distant doit utiliser HTTPS\u00A0; HTTP est réservé au bouclage local.';
+  if (!['', '/', '/v1', '/v1/'].includes(url.pathname)) return 'L’adresse doit viser la racine du serveur ou son chemin /v1.';
+  return null;
+}
+
 async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (native) return tauriInvoke<T>(name, args);
+  if (name === 'validate_endpoint') { const error = endpointError(args?.endpoint as string); if (error) return Promise.reject(error); return undefined as T; }
+  if (name === 'take_settings_target') return null as T;
+  if (name === 'take_startup_notice') return demoStartupNotice as T;
+  if (name === 'copy_history') { if (!demoHistory.some(item => item.id === args?.id)) return Promise.reject('Copie indisponible. Réessayez.'); return undefined as T; }
   if (name === 'get_settings') return structuredClone(demoSettings) as T;
   if (name === 'save_settings') { demoSettings = structuredClone(args?.settings as Settings); emit('settings-changed', demoSettings); return undefined as T; }
   if (name === 'capture_text') return structuredClone(demoCapture) as T;
@@ -97,10 +119,23 @@ export const bridge = {
   replace: (requestId: string) => command<void>('replace_result', { requestId }),
   dismiss: () => command<void>('dismiss_overlay'),
   completeDismiss: (captureId: string) => command<void>('complete_overlay_dismiss', { captureId }),
-  openSettings: async () => {
-    if (native) return command<void>('open_settings');
-    location.assign('?window=settings&demo=1');
+  // Rust remembers the target, emits `settings-target` to the hidden window, then shows it.
+  openSettings: async (target?: SettingsTarget) => {
+    if (native) return command<void>('open_settings', target ? { target } : undefined);
+    const params = new URLSearchParams({ window: 'settings', demo: '1' });
+    if (target) {
+      params.set('page', target.page);
+      if (target.actionId) params.set('actionId', target.actionId);
+      if (target.engine) params.set('engine', target.engine);
+    }
+    location.assign(`?${params}`);
   },
+  takeSettingsTarget: () => command<SettingsTarget | null>('take_settings_target'),
+  takeStartupNotice: () => command<string | null>('take_startup_notice'),
+  // Rust decrypts the row and copies the result alone; the frontend never carries the text.
+  copyHistory: (id: string) => command<void>('copy_history', { id }),
+  // Pure, no network: the address is checked when the field loses focus, before any save.
+  validateEndpoint: (endpoint: string) => command<void>('validate_endpoint', { endpoint }),
   focusOverlay: () => command<void>('focus_overlay'),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
   resize: (width: number, height: number, geometry: OverlayGeometry) => command<void>('resize_overlay', { width, height, ...geometry }),

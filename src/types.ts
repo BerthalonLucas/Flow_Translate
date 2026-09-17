@@ -38,3 +38,8 @@ export type ShortcutBinding = { id: string; shortcut: string; actionId: string; 
 export type ExecutionInfo = { actionId: string; actionName: string; outputMode: OutputMode; mode: Mode };
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
 export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string };
+
+// Which settings page opens, and what the window must point at once there. `schemaVersion` lives
+// only in the Rust struct written to disk: it never crosses the IPC and is absent from Settings.
+export type SettingsPage = 'actions' | 'reading' | 'engines' | 'privacy';
+export type SettingsTarget = { page: SettingsPage; actionId?: string; engine?: Mode; reason?: string };

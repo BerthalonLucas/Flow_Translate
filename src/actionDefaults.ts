@@ -16,6 +16,6 @@ export const defaultActions: ActionDefinition[] = [
 export const newActionTemplate = instruction('Transform the text as follows: describe the change you want here.');
 export const defaultBindings: ShortcutBinding[] = [{ id: 'primary', shortcut: 'Ctrl+Alt+T', actionId: 'translate-fr', outputMode: 'display', enabled: true }];
 export function promptError(template: string): string | null {
-  if (!template.trim() || [...template].length > 8000 || template.includes('\0')) return 'La consigne doit contenir de 1 à 8 000 caractères, sans caractère nul.';
+  if (!template.trim() || [...template].length > 8000 || template.includes('\0')) return 'La consigne doit contenir de 1 à 8\u00A0000 caractères, sans caractère nul.';
   return null;
 }
