@@ -1,0 +1,15 @@
+<!-- @dsCard group="Réglages · statut" height=170 subtitle="Note de page, message d’erreur de réglage" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Callout — aperçu</title>
+<style> .col { display: grid; gap: 12px; padding: 20px 24px; max-width: 640px; } </style></head>
+<body>
+<div class="col" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(F.Callout, null, 'Les modèles Hy-MT ne savent que traduire. Pour corriger ou reformuler, choisissez un moteur généraliste dans ', h('strong', null, 'Moteurs'), '.'),
+    h(F.Callout, { tone: 'danger' }, 'Aucune réponse de 127.0.0.1:8001. Démarrez le serveur, puis vérifiez.')));
+</script>
+</body>
+</html>

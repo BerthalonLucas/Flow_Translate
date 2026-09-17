@@ -1,0 +1,19 @@
+<!-- @dsCard group="Réglages · contrôles" height=100 subtitle="Activé, désactivé, indisponible" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Switch — aperçu</title>
+<style> .row { display: flex; align-items: center; gap: 28px; padding: 24px; } .item { display: flex; align-items: center; gap: 10px; color: var(--ink-muted); font: 400 12px/16px var(--font-small); } </style></head>
+<body>
+<div class="row" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Item(label, props) { return h('span', { className: 'item' }, h(F.Switch, Object.assign({ label: label }, props)), label); }
+  function Demo() {
+    var a = useState(true), on = a[0], setOn = a[1];
+    var b = useState(false), off = b[0], setOff = b[1];
+    return h(React.Fragment, null, Item('Activé', { checked: on, onChange: setOn }), Item('Désactivé', { checked: off, onChange: setOff }), Item('Indisponible', { checked: true, disabled: true }));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

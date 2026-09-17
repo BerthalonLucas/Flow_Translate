@@ -1,0 +1,30 @@
+<!-- @dsCard group="Overlay" height=176 subtitle="Étiquette d’action, Copier, Épingler, ⋯, Fermer" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>ActionPill — aperçu</title>
+<style>
+  body { background: var(--surface); }
+  .row { display: flex; flex-wrap: wrap; gap: 20px 28px; padding: 24px; align-items: flex-start; }
+  .item { display: grid; gap: 8px; justify-items: start; }
+  .label { color: var(--ink-muted); font: 400 12px/16px var(--font-small); }
+</style></head>
+<body>
+<div class="row" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  function Item(label, props) { return h('div', { className: 'item' }, h(F.ActionPill, Object.assign({ static: true }, props)), h('span', { className: 'label' }, label)); }
+  function Demo() {
+    var c = React.useState(false), copied = c[0], setCopied = c[1];
+    var p = React.useState(true), pinned = p[0], setPinned = p[1];
+    React.useEffect(function () { if (!copied) return; var t = setTimeout(function () { setCopied(false); }, 1600); return function () { clearTimeout(t); }; }, [copied]);
+    return h(React.Fragment, null,
+      Item('Verre court (cliquez Copier)', { tag: 'Traduire en français', copied: copied, onCopy: function () { setCopied(true); } }),
+      Item('Copié, 1,6 s', { tag: 'Traduire en anglais', copied: true }),
+      Item('Bande de lecture épinglée', { tag: 'Professionnaliser', pinnable: true, pinned: pinned, onPin: function () { setPinned(!pinned); } }),
+      Item('Menu ouvert', { tag: 'Corriger', menuOpen: true }),
+      Item('Sans étiquette (aucune action connue)', {}));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

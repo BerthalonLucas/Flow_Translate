@@ -1,0 +1,20 @@
+<!-- @dsCard group="Marque" height=250 width=960 subtitle="Lucide 1.43, trait 1,75, 13 à 18 px, couleur héritée" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Icon — aperçu</title>
+<style>
+  body { background: var(--surface); }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; padding: 16px 20px; }
+  .cell { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; border-radius: 8px; color: var(--ink); }
+  .cell:hover { background: var(--surface-hover); }
+  .cell span { color: var(--ink-muted); font: 400 12px/16px var(--font-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style></head>
+<body>
+<div class="grid" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    F.icons.map(function (name) { return h('div', { key: name, className: 'cell', title: name }, h(F.Icon, { name: name, size: 16 }), h('span', null, name)); })));
+</script>
+</body>
+</html>

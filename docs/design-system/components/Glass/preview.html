@@ -1,0 +1,28 @@
+<!-- @dsCard group="Overlay" height=556 width=960 subtitle="Résultat, original, erreur, relance, résultat partiel, bande de lecture" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Glass — aperçu</title>
+<style>
+  body { background: var(--surface); }
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 28px 36px; padding: 24px 28px; align-items: start; }
+  .col { display: grid; gap: 22px; }
+  .label { margin: 0 0 8px; color: var(--ink-muted); font: 400 12px/16px var(--font-small); }
+</style></head>
+<body>
+<div class="grid" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  function Block(label, node) { return h('div', null, h('p', { className: 'label' }, label), node); }
+  var reader = 'Merci pour votre retour sur la proposition. La nouvelle version reprend les points discutés lors de notre réunion : le calendrier de livraison, la répartition des responsabilités et les conditions de validation.\n\nPourriez-vous vérifier les montants et les dates avant jeudi ? Le budget de 12 500 € reste inchangé.';
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h('div', { className: 'col' },
+      Block('Original affiché', h(F.Glass, { original: 'Could you send the updated proposal before Thursday?' }, 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?')),
+      Block('Erreur : actions en ligne, plus de détour par le menu', h(F.Glass, null, h(F.GlassError, { title: 'Le moteur Qualité ne répond pas.', detail: 'Vérifiez qu’il est démarré sur 127.0.0.1:8002.', onRetry: function () {}, onSettings: function () {} }))),
+      Block('Résultat partiel', h(F.Glass, null, 'Pourriez-vous envoyer la proposition mise à jour', h('br'), h(F.PartialNote, null, 'Réponse interrompue : le résultat est incomplet.')))),
+    h('div', { className: 'col' },
+      Block('Bande de lecture (22/33, moitié de l’écran, défilement en cours)', h(F.Glass, { form: 'reader', edge: 'top', maxHeight: 284, indicator: { top: 0, height: 62 } }, reader)),
+      Block('Relance (Relancer en Rapide) : la forme reste, la roue prend la première ligne', h('div', { style: { width: 380 } }, h(F.Glass, { busy: true }))))
+  ));
+</script>
+</body>
+</html>

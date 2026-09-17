@@ -1,0 +1,45 @@
+<!-- @dsCard group="Overlay" height=412 width=960 subtitle="Verre court près de la sélection, pilule mordante, menu ouvert" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Overlay — aperçu</title>
+<style>
+  body { background: var(--surface); }
+  .desk { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+  .app { position: relative; height: 348px; border-radius: 12px; overflow: hidden; padding: 28px 28px 0; font: 15px/24px var(--font-sans); }
+  .app.light { background: #ffffff; color: #1f2328; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+  .app.dark { background: #1f2023; color: #d9dce1; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+  .app p { margin: 0 0 10px; }
+  .sel { background: rgba(0,120,212,.32); border-radius: 2px; }
+  .place { position: absolute; left: 44px; top: 106px; }
+  .caption { position: absolute; left: 28px; bottom: 14px; font: 400 12px/16px var(--font-small); opacity: .6; }
+  .app.light .caption { opacity: 1; color: #585c64; }
+</style></head>
+<body>
+<div class="desk" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  var menu = [
+    { icon: 'eye', label: 'Afficher l’original' },
+    { icon: 'clipboard-paste', label: 'Remplacer', highlighted: true },
+    { icon: 'refresh-cw', label: 'Relancer en Qualité' },
+    { icon: 'settings-2', label: 'Réglages' },
+    { icon: 'x', label: 'Fermer', hint: 'Échap', separatorBefore: true }
+  ];
+  function Demo() {
+    var s = React.useState(false), copied = s[0], setCopied = s[1];
+    var m = React.useState(true), open = m[0], setOpen = m[1];
+    React.useEffect(function () { if (!copied) return; var t = setTimeout(function () { setCopied(false); }, 1600); return function () { clearTimeout(t); }; }, [copied]);
+    return h(React.Fragment, null,
+      h('div', { className: 'app light' },
+        h('p', null, 'Hi Alex,'), h('p', null, h('span', { className: 'sel' }, 'Could you send the updated proposal before Thursday?')),
+        h('div', { className: 'place' }, h(F.Overlay, { tag: 'Traduire en français', tagTitle: 'Traduire en français · Qualité', copied: copied, onCopy: function () { setCopied(true); } }, 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?')),
+        h('span', { className: 'caption' }, 'Résultat court · page claire')),
+      h('div', { className: 'app dark' },
+        h('p', null, 'Bonjour,'), h('p', null, h('span', { className: 'sel' }, 'je vous envoi le devis corigé demain matin.')),
+        h('div', { className: 'place' }, h(F.Overlay, { tag: 'Corriger', tagTitle: 'Corriger · Rapide', menuItems: open ? menu : null, onMenu: function () { setOpen(!open); } }, 'Je vous envoie le devis corrigé demain matin.')),
+        h('span', { className: 'caption' }, 'Menu ⋯ ouvert · page sombre')));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!-- @dsCard group="Réglages · blocs" height=790 subtitle="Une action, ses raccourcis et sa consigne, dépliée sur place" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>ActionRow — aperçu</title>
+<style> .pad { display: grid; gap: 8px; padding: 20px 24px; max-width: 660px; } </style></head>
+<body>
+<div class="pad" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Demo() {
+    var o = useState('correct'), open = o[0], setOpen = o[1];
+    var r = useState(null), rec = r[0], setRec = r[1];
+    var b = useState([{ id: 'b2', shortcut: 'Ctrl+Alt+C', output: 'replace', enabled: true }, { id: 'b3', shortcut: 'Ctrl+Alt+Shift+C', output: 'display', enabled: false }]), bindings = b[0], setBindings = b[1];
+    var t = useState('You are a careful proofreader. Fix spelling, grammar, punctuation and accents in the text. Keep its language, meaning, tone and length.'), text = t[0], setText = t[1];
+    var set = function (id, change) { setBindings(bindings.map(function (x) { return x.id === id ? Object.assign({}, x, change) : x; })); };
+    return h(React.Fragment, null,
+      h(F.ActionRow, { action: { name: 'Traduire en français', glyph: 'languages', builtIn: true, isDefault: true }, bindings: [{ shortcut: 'Ctrl+Alt+T', output: 'display', enabled: true }], open: open === 'fr', onToggle: function () { setOpen(open === 'fr' ? null : 'fr'); } }, h(F.Callout, null, 'Dépliez « Corriger » pour voir l’éditeur complet.')),
+      h(F.ActionRow, { action: { name: 'Corriger', glyph: 'spell-check', builtIn: true }, bindings: bindings, open: open === 'correct', onToggle: function () { setOpen(open === 'correct' ? null : 'correct'); } },
+        h(F.TextField, { label: 'Nom', value: 'Corriger', onChange: function () {} }),
+        h('div', { className: 'ft-field' }, h('span', { className: 'ft-field-label' }, 'Raccourcis'),
+          h('div', { className: 'ft-bindings' }, bindings.map(function (x) {
+            return h(F.ShortcutBinding, { key: x.id, binding: x, recording: rec === x.id, onRecord: function () { setRec(rec === x.id ? null : x.id); }, onToggle: function (v) { set(x.id, { enabled: v }); }, onOutput: function (v) { set(x.id, { output: v }); }, onRemove: function () { setBindings(bindings.filter(function (y) { return y.id !== x.id; })); } });
+          }), h('div', null, h(F.Button, { variant: 'ghost', size: 'sm', icon: 'plus' }, 'Ajouter un raccourci')))),
+        h(F.TextArea, { label: 'Consigne', value: text, onChange: setText, rows: 4, hint: 'Écrivez la langue voulue dans la consigne ; le texte sélectionné suit.' }),
+        h('div', { className: 'ft-action-foot' }, h(F.Button, { variant: 'ghost', size: 'sm', icon: 'rotate-ccw' }, 'Rétablir la consigne'), h(F.Button, { variant: 'ghost', size: 'sm' }, 'Définir par défaut'), h(F.Button, { variant: 'danger', size: 'sm', icon: 'trash-2', disabled: true }, 'Supprimer l’action'))),
+      h(F.ActionRow, { action: { name: 'Résumer en trois points', glyph: 'wand', builtIn: false }, bindings: [], open: false, onToggle: function () {} }));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

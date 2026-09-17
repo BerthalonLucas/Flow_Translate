@@ -1,0 +1,14 @@
+<!-- @dsCard group="Réglages · statut" height=90 subtitle="Enregistrement automatique, dans la barre de titre" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>SaveStatus — aperçu</title>
+<style> .row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 32px; padding: 24px; } </style></head>
+<body>
+<div class="row" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(F.SaveStatus, { status: 'saved' }), h(F.SaveStatus, { status: 'saving' }), h(F.SaveStatus, { status: 'just-saved' }), h(F.SaveStatus, { status: 'error', onRetry: function () {} })));
+</script>
+</body>
+</html>

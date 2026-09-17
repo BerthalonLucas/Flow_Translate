@@ -1,0 +1,24 @@
+<!-- @dsCard group="Overlay" height=216 subtitle="Avis seul en bas d’écran, retour d’action sous le verre" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Notice — aperçu</title>
+<style>
+  body { background: var(--surface); }
+  .col { display: grid; gap: 12px; justify-items: start; padding: 20px 24px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+</style></head>
+<body>
+<div class="col" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(F.Notice, null, 'Rien à traiter dans la fenêtre active.'),
+    h(F.Notice, { tone: 'warning' }, 'La sélection dépasse 6 000 caractères et serait tronquée. Sélectionnez un passage plus court, puis relancez.'),
+    h('div', { className: 'row' },
+      h(F.Notice, { size: 'sm', tone: 'success' }, 'Résultat collé dans la sélection.'),
+      h(F.Notice, { size: 'sm', tone: 'danger' }, 'Collage impossible ici. Copiez le résultat.'),
+      h(F.Notice, { size: 'sm' }, 'Épinglé : la bande reste ouverte.'))
+  ));
+</script>
+</body>
+</html>

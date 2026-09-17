@@ -1,0 +1,100 @@
+<!-- @dsCard group="Écrans" height=680 width=960 page subtitle="La fenêtre Réglages entière : navigation, quatre pages, enregistrement automatique" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Réglages — écran</title>
+<style>
+  html, body { height: 100%; }
+  body { background: var(--surface-sunken); }
+  .frame { box-sizing: border-box; height: 100%; padding: 16px; }
+  .win { height: 100%; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--line-strong), 0 16px 40px rgba(0,0,0,.28); }
+  .preview { position: relative; display: grid; place-items: center; height: 148px; border-radius: 12px; background: #eef0f3; overflow: hidden; }
+  [data-theme="dark"] .preview { background: #2a2c31; }
+  .preview .ft-overlay { transform: translateY(4px); }
+</style></head>
+<body>
+<div class="frame"><div class="win" id="root"></div></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  var INSTRUCTION = 'You are a careful proofreader. Fix spelling, grammar, punctuation and accents in the text. Keep its language, meaning, tone and length; do not rephrase what is already correct. If nothing needs fixing, return the text unchanged.\n\nOutput only the resulting text: no preamble, no explanation, no quotes around it, no code fences.';
+  var START = [
+    { id: 'translate-fr', name: 'Traduire en français', glyph: 'languages', builtIn: true, isDefault: true, instruction: INSTRUCTION, bindings: [{ id: 'b1', shortcut: 'Ctrl+Alt+T', output: 'display', enabled: true }] },
+    { id: 'correct', name: 'Corriger', glyph: 'spell-check', builtIn: true, instruction: INSTRUCTION, bindings: [{ id: 'b2', shortcut: 'Ctrl+Alt+C', output: 'replace', enabled: true }, { id: 'b3', shortcut: 'Ctrl+Alt+Shift+C', output: 'display', enabled: false }] },
+    { id: 'translate-en', name: 'Traduire en anglais', glyph: 'languages', builtIn: true, instruction: INSTRUCTION, bindings: [{ id: 'b4', shortcut: 'Ctrl+Alt+E', output: 'display', enabled: true }] },
+    { id: 'pro', name: 'Professionnaliser', glyph: 'briefcase-business', builtIn: true, instruction: INSTRUCTION, bindings: [] },
+    { id: 'summary', name: 'Résumer en trois points', glyph: 'wand', builtIn: false, instruction: 'Summarize the text in three short bullet points, in its language.', bindings: [{ id: 'b5', shortcut: 'Ctrl+Alt+R', output: 'display', enabled: true }] }
+  ];
+  function useSaving() {
+    var s = useState('saved'), status = s[0], set = s[1];
+    var touch = function () { set('saving'); setTimeout(function () { set('just-saved'); setTimeout(function () { set('saved'); }, 2200); }, 450); };
+    return [status, touch];
+  }
+  function ActionsPage(p) {
+    var a = useState(START), actions = a[0], setActions = a[1];
+    var o = useState('correct'), open = o[0], setOpen = o[1];
+    var r = useState(null), recording = r[0], setRecording = r[1];
+    var patch = function (id, fn) { setActions(actions.map(function (x) { return x.id === id ? fn(x) : x; })); p.touch(); };
+    var patchBinding = function (id, bid, change) { patch(id, function (x) { return Object.assign({}, x, { bindings: x.bindings.map(function (b) { return b.id === bid ? Object.assign({}, b, change) : b; }) }); }); };
+    return h(React.Fragment, null,
+      h(F.PageHeader, { title: 'Actions', description: 'Un raccourci lance une action sur le texte sélectionné.', action: h(F.Button, { variant: 'primary', icon: 'plus' }, 'Nouvelle action') }),
+      h('div', { className: 'ft-stack' }, actions.map(function (x) {
+        return h(F.ActionRow, { key: x.id, action: x, bindings: x.bindings, open: open === x.id, onToggle: function () { setOpen(open === x.id ? null : x.id); } },
+          h(F.TextField, { label: 'Nom', value: x.name, maxLength: 60, onChange: function (v) { patch(x.id, function (y) { return Object.assign({}, y, { name: v }); }); } }),
+          h('div', { className: 'ft-field' }, h('span', { className: 'ft-field-label' }, 'Raccourcis'),
+            h('div', { className: 'ft-bindings' }, x.bindings.map(function (b) {
+              return h(F.ShortcutBinding, { key: b.id, binding: b, recording: recording === b.id, onRecord: function () { setRecording(recording === b.id ? null : b.id); }, onToggle: function (v) { patchBinding(x.id, b.id, { enabled: v }); }, onOutput: function (v) { patchBinding(x.id, b.id, { output: v }); }, onRemove: function () { patch(x.id, function (y) { return Object.assign({}, y, { bindings: y.bindings.filter(function (c) { return c.id !== b.id; }) }); }); } });
+            }), h('div', null, h(F.Button, { variant: 'ghost', size: 'sm', icon: 'plus' }, 'Ajouter un raccourci')))),
+          h(F.TextArea, { label: 'Consigne', value: x.instruction, hint: 'Écrivez la langue voulue dans la consigne ; le texte sélectionné suit.', onChange: function (v) { patch(x.id, function (y) { return Object.assign({}, y, { instruction: v }); }); } }),
+          h('div', { className: 'ft-action-foot' },
+            x.builtIn ? h(F.Button, { variant: 'ghost', size: 'sm', icon: 'rotate-ccw' }, 'Rétablir la consigne') : null,
+            x.isDefault ? null : h(F.Button, { variant: 'ghost', size: 'sm' }, 'Définir par défaut'),
+            h(F.Button, { variant: 'danger', size: 'sm', icon: 'trash-2', disabled: x.builtIn }, 'Supprimer l’action')));
+      })),
+      h('div', { style: { marginTop: 16 } }, h(F.Callout, null, 'Les modèles Hy-MT ne savent que traduire. Pour corriger ou reformuler, choisissez un moteur généraliste dans ', h('strong', null, 'Moteurs'), '.')));
+  }
+  function ReadingPage(p) {
+    var s = useState('normal'), size = s[0], setSize = s[1];
+    var c = useState('normal'), close = c[0], setClose = c[1];
+    var px = { normal: '16 px · bande 22 px', large: '18 px · bande 24 px', xlarge: '20 px · bande 26 px' };
+    return h(React.Fragment, null,
+      h(F.PageHeader, { title: 'Lecture', description: 'Comment le résultat s’affiche, et quand il s’efface.' }),
+      h('section', { className: 'ft-group' }, h('h2', { className: 'ft-group-title' }, 'Aperçu'),
+        h('div', { className: 'preview' }, h(F.Overlay, { tag: 'Traduire en français', size: size }, 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?'))),
+      h(F.SettingGroup, { title: 'Affichage' },
+        h(F.SettingRow, { label: 'Taille du texte', description: 'Verre court ' + px[size] + '.' }, h(F.Segmented, { label: 'Taille du texte', value: size, onChange: function (v) { setSize(v); p.touch(); }, options: [{ value: 'normal', label: 'Normale' }, { value: 'large', label: 'Grande' }, { value: 'xlarge', label: 'Très grande' }] })),
+        h(F.SettingRow, { label: 'Fermeture automatique', description: 'Le temps de lecture estimé, puis un fondu. Survoler ou épingler la retient.' }, h(F.Segmented, { label: 'Fermeture automatique', value: close, onChange: function (v) { setClose(v); p.touch(); }, options: [{ value: 'fast', label: 'Rapide' }, { value: 'normal', label: 'Normale' }, { value: 'slow', label: 'Lente' }, { value: 'never', label: 'Jamais' }] }))));
+  }
+  function EnginesPage(p) {
+    var m = useState('quality'), mode = m[0], setMode = m[1];
+    var q = useState('ok'), quality = q[0], setQuality = q[1];
+    var check = function () { setQuality('checking'); setTimeout(function () { setQuality('ok'); }, 900); };
+    return h(React.Fragment, null,
+      h(F.PageHeader, { title: 'Moteurs', description: 'Tout serveur compatible OpenAI, local de préférence.' }),
+      h(F.SettingGroup, null, h(F.SettingRow, { label: 'Moteur par défaut', description: 'Qualité : plus lent, meilleures tournures. Changeable depuis le menu ⋯ du résultat.' }, h(F.Segmented, { label: 'Moteur par défaut', value: mode, onChange: function (v) { setMode(v); p.touch(); }, options: [{ value: 'quality', label: 'Qualité' }, { value: 'fast', label: 'Rapide' }] }))),
+      h('div', { className: 'ft-group' }, h(F.EngineCard, { name: 'Qualité', isDefault: mode === 'quality', status: quality, latency: 38, endpoint: 'http://127.0.0.1:8002/v1', model: 'flowtranslate-quality', apiKey: '', onCheck: check })),
+      h('div', { className: 'ft-group', style: { marginTop: 12 } }, h(F.EngineCard, { name: 'Rapide', isDefault: mode === 'fast', status: 'error', endpoint: 'http://127.0.0.1:8001/v1', model: 'flowtranslate-fast', apiKey: '', message: 'Aucune réponse de 127.0.0.1:8001. Démarrez le serveur, puis vérifiez.' })));
+  }
+  function PrivacyPage(p) {
+    var hs = useState(true), history = hs[0], setHistory = hs[1];
+    var au = useState(true), auto = au[0], setAuto = au[1];
+    var e = useState([
+      { id: '1', text: 'Je vous envoie le devis corrigé demain matin.', meta: 'Corriger · Rapide · 17 sept. 09:12' },
+      { id: '2', text: 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?', meta: 'Traduire en français · Qualité · 16 sept. 18:40' },
+      { id: '3', text: 'Thank you for your patience while we review the contract.', meta: 'Traduire en anglais · Qualité · 16 sept. 11:05' }
+    ]), entries = e[0], setEntries = e[1];
+    return h(React.Fragment, null,
+      h(F.PageHeader, { title: 'Confidentialité', description: 'Rien ne quitte l’appareil, hors le moteur distant que vous auriez choisi.' }),
+      h(F.SettingGroup, null,
+        h(F.SettingRow, { label: 'Conserver l’historique chiffré', description: '7 jours, 100 entrées, protégé par Windows (DPAPI).' }, h(F.Switch, { label: 'Conserver l’historique chiffré', checked: history, onChange: function (v) { setHistory(v); p.touch(); } })),
+        h(F.SettingRow, { label: 'Lancer à l’ouverture de session', description: 'Seule l’icône de la zone de notification reste visible.' }, h(F.Switch, { label: 'Lancer à l’ouverture de session', checked: auto, onChange: function (v) { setAuto(v); p.touch(); } }))),
+      history ? h('section', { className: 'ft-group' }, h('h2', { className: 'ft-group-title' }, 'Historique'), h(F.HistoryList, { entries: entries, onRemove: function (id) { setEntries(entries.filter(function (x) { return x.id !== id; })); }, onClear: function () { setEntries([]); } })) : null);
+  }
+  function Screen() {
+    var pg = useState('actions'), page = pg[0], setPage = pg[1];
+    var sv = useSaving(), status = sv[0], touch = sv[1];
+    var pages = { actions: ActionsPage, reading: ReadingPage, engines: EnginesPage, privacy: PrivacyPage };
+    return h(F.SettingsWindow, { page: page, onNavigate: setPage, saveStatus: status, version: '1.0.0' }, h(pages[page], { touch: touch }));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Screen));
+</script>
+</body>
+</html>

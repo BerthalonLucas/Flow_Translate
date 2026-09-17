@@ -1,0 +1,19 @@
+<!-- @dsCard group="Réglages · statut" height=110 subtitle="Point et mot pour la connexion ; badges" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>StatusBadge — aperçu</title>
+<style> .row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 24px; } </style></head>
+<body>
+<div class="row" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h(F.StatusBadge, { tone: 'success' }, 'Connecté · 38 ms'),
+    h(F.StatusBadge, { tone: 'checking' }, 'Vérification…'),
+    h(F.StatusBadge, { tone: 'danger' }, 'Échec de connexion'),
+    h(F.StatusBadge, null, 'Non vérifié'),
+    h(F.Badge, { tone: 'signal' }, 'Par défaut'),
+    h(F.Badge, null, 'Prédéfinie')));
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!-- @dsCard group="Marque" height=300 width=960 subtitle="Icône d’application, glyphe, icônes de zone de notification" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Mark — aperçu</title>
+<style>
+  body { background: var(--surface); }
+  .stage { display: grid; grid-template-columns: auto auto 1fr; gap: 40px; align-items: end; padding: 28px 32px; }
+  .sizes { display: flex; align-items: flex-end; gap: 20px; padding: 16px 20px; border-radius: 12px; background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+  .sizes .label { color: #5c6068; }
+  .stage > .item { padding-bottom: 16px; }
+  .item { display: grid; justify-items: center; gap: 10px; }
+  .label { color: var(--ink-muted); font: 400 12px/16px var(--font-small); white-space: nowrap; }
+  .glyphs { display: flex; gap: 12px; }
+  .chip { display: grid; place-items: center; width: 96px; height: 96px; border-radius: 12px; }
+  .chip.paper { background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); color: #16171b; }
+  .chip.night { background: #202125; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); color: #eceef1; }
+  .bars { display: grid; gap: 10px; }
+  .bar { display: flex; align-items: center; gap: 18px; height: 40px; padding: 0 16px; border-radius: 8px; }
+  .bar.win-dark { background: #202020; color: #ffffff; }
+  .bar.win-light { background: #eeeeee; color: #1b1b1b; }
+  .bar span { font: 400 12px/16px var(--font-small); opacity: .75; margin-left: auto; }
+  .tray { display: flex; align-items: center; gap: 4px; }
+</style></head>
+<body>
+<div class="stage" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  function Tray(state) {
+    var parts = [h('rect', { key: 'a', x: 2, y: 2, width: state === 'alert' ? 7 : 11, height: 2, rx: 1, fill: 'currentColor' })];
+    if (state === 'busy') { parts.push(h('path', { key: 'b', d: 'M2 6H8V10H1Z', fill: 'currentColor' }), h('path', { key: 'c', d: 'M8 6H15L14 10H8Z', fill: 'currentColor', fillOpacity: .35 })); }
+    else parts.push(h('path', { key: 'b', d: 'M2 6H15L14 10H1Z', fill: 'currentColor' }));
+    parts.push(h('rect', { key: 'd', x: 2, y: 12, width: 7, height: 2, rx: 1, fill: 'currentColor' }));
+    if (state === 'alert') parts.push(h('circle', { key: 'e', cx: 13, cy: 3, r: 3, fill: '#e5534b' }));
+    return h('svg', { key: state, width: 16, height: 16, viewBox: '0 0 16 16', 'aria-label': 'FlowTranslate ' + state, role: 'img' }, parts);
+  }
+  function TrayRow(cls, label) { return h('div', { className: 'bar ' + cls }, h('div', { className: 'tray' }, Tray('idle')), h('div', { className: 'tray' }, Tray('busy')), h('div', { className: 'tray' }, Tray('alert')), h('span', null, label)); }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h('div', { className: 'sizes' },
+      [128, 64, 32, 16].map(function (s) { return h('div', { key: s, className: 'item' }, h(F.Mark, { size: s, title: 'FlowTranslate' }), h('span', { className: 'label' }, s + ' px')); })),
+    h('div', { className: 'item' }, h('div', { className: 'glyphs' }, h('div', { className: 'chip paper' }, h(F.Mark, { size: 56, variant: 'glyph' })), h('div', { className: 'chip night' }, h(F.Mark, { size: 56, variant: 'glyph' }))), h('span', { className: 'label' }, 'Glyphe sans tuile')),
+    h('div', { className: 'item', style: { justifyItems: 'stretch' } }, h('div', { className: 'bars' }, TrayRow('win-dark', 'repos · travail · alerte'), TrayRow('win-light', 'barre des tâches claire')), h('span', { className: 'label' }, 'Zone de notification, 16 px monochrome'))
+  ));
+</script>
+</body>
+</html>

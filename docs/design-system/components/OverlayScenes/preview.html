@@ -1,0 +1,85 @@
+<!-- @dsCard group="Écrans" height=1060 width=960 page subtitle="Les parcours de l’overlay, image par image : Afficher, Remplacer, lecture longue, avis, placement bas" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Overlay — parcours</title>
+<style>
+  body { background: var(--surface); }
+  .page { display: grid; gap: 18px; padding: 20px 24px 24px; }
+  .flow { display: grid; gap: 8px; }
+  .flow > h2 { margin: 0; font: 600 14px/20px var(--font-sans); color: var(--ink); }
+  .flow > p { margin: 0; color: var(--ink-muted); font: 400 12px/16px var(--font-small); }
+  .frames { display: grid; gap: 10px; }
+  .frames.four { grid-template-columns: repeat(4, 1fr); }
+  .frame { position: relative; height: 150px; border-radius: 10px; overflow: hidden; background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); font: 13px/20px var(--font-sans); color: #1f2328; }
+  .frame.dark { background: #1f2023; color: #d9dce1; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+  .frame .doc { position: absolute; left: 14px; top: 14px; right: 14px; }
+  .sel { background: rgba(0,120,212,.32); }
+  .step { position: absolute; left: 10px; bottom: 8px; font: 600 12px/16px var(--font-small); opacity: .55; }
+  .frame:not(.dark) .step { opacity: 1; color: #585c64; }
+  .anchor { position: absolute; left: 14px; top: 44px; transform: scale(.52); transform-origin: top left; }
+  .anchor.pill { left: 14px; top: 48px; transform: none; }
+  .screens { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+  .screen { position: relative; height: 196px; border-radius: 10px; overflow: hidden; background: linear-gradient(#26282d, #1c1d21); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+  .screen .band { position: absolute; left: 50%; bottom: 8px; width: 1216px; transform: translateX(-50%) scale(.5); transform-origin: bottom center; }
+  .screen .band-inner { width: 608px; margin: 0 auto; }
+  .screen .notice { width: max-content; position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%) scale(.75); transform-origin: bottom center; }
+  .screen .label { position: absolute; left: 14px; top: 12px; font: 600 12px/16px var(--font-small); color: #d9dce1; opacity: .6; }
+  .screen.tall { height: 236px; }
+  .screen .low { position: absolute; left: 50%; bottom: 10px; width: 380px; transform: translateX(-50%) scale(.68); transform-origin: bottom center; }
+  .dim { opacity: var(--opacity-dimmed); }
+  .screens.two { grid-template-columns: 1fr 1fr; }
+</style></head>
+<body>
+<div class="page" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement;
+  var text = 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?';
+  function Frame(step, dark, content, doc) {
+    return h('div', { className: 'frame' + (dark ? ' dark' : '') },
+      h('div', { className: 'doc' }, doc || h('span', { className: 'sel' }, dark ? 'je vous envoi le devis corigé' : 'Could you send the updated proposal?')), content, h('span', { className: 'step' }, step));
+  }
+  function Pending(props) { return h('div', { className: 'anchor' }, h('div', { style: { position: 'relative', left: 304, top: 0 } }, h(F.WaitPill, props))); }
+  var menu = [
+    { icon: 'eye', label: 'Afficher l’original' },
+    { icon: 'refresh-cw', label: 'Relancer en Qualité' },
+    { icon: 'settings-2', label: 'Réglages' },
+    { icon: 'x', label: 'Fermer', hint: 'Échap', separatorBefore: true }
+  ];
+  var reader = 'Merci pour votre retour sur la proposition. La nouvelle version reprend le calendrier de livraison, la répartition des responsabilités et les conditions de validation. Pourriez-vous vérifier les montants et les dates avant jeudi ?';
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h('section', { className: 'flow' },
+      h('h2', null, 'Afficher · Ctrl+Alt+T sur une sélection courte'),
+      h('p', null, 'La pilule d’attente se pose là où la pilule d’actions se tiendra ; le verre s’ouvre depuis sa ligne d’un seul bloc ; il s’estompe à la fin du temps de lecture.'),
+      h('div', { className: 'frames four' },
+        Frame('1 · 0 ms, attente', false, h(Pending, {})),
+        Frame('2 · +1,5 s, balayage', false, h(Pending, { slow: true })),
+        Frame('3 · résultat, 260 ms', false, h('div', { className: 'anchor' }, h(F.Overlay, { tag: 'Traduire en français' }, text))),
+        Frame('4 · fin de lecture, 55 %', false, h('div', { className: 'anchor dim' }, h(F.Overlay, { tag: 'Traduire en français' }, text))))),
+    h('section', { className: 'flow' },
+      h('h2', null, 'Remplacer · Ctrl+Alt+C, la sélection est réécrite sur place'),
+      h('p', null, 'Rien d’autre que la pilule pendant le travail ; la coche jaune 900 ms, puis plus rien. Le verre ne s’ouvre que si le collage échoue.'),
+      h('div', { className: 'frames four' },
+        Frame('1 · attente', true, h(Pending, {})),
+        Frame('2 · collé, coche', true, h(Pending, { done: true })),
+        Frame('3 · +900 ms, disparu', true, null, h('span', null, 'je vous envoie le devis corrigé')),
+        Frame('repli · collage refusé', true, h('div', { className: 'anchor' }, h(F.Overlay, { tag: 'Corriger', feedback: h(F.Notice, { size: 'sm', tone: 'danger' }, 'Collage impossible ici. Copiez le résultat.') }, 'Je vous envoie le devis corrigé.'))))),
+    h('section', { className: 'flow' },
+      h('h2', null, 'Lecture longue et avis'),
+      h('p', null, 'Plus de huit lignes : la bande naît en bas, au centre de l’écran de la souris, large de la moitié de sa zone de travail. Sans rien à traiter : un avis seul, jamais cliquable, 4 s.'),
+      h('div', { className: 'screens' },
+        h('div', { className: 'screen' }, h('span', { className: 'label' }, 'Écran de la souris · bande de lecture épinglée'),
+          h('div', { className: 'band' }, h('div', { className: 'band-inner' }, h(F.Overlay, { form: 'reader', tag: 'Traduire en français', pinned: true, edge: 'top', maxHeight: 300, indicator: { top: 0, height: 70 } }, reader)))),
+        h('div', { className: 'screen' }, h('span', { className: 'label' }, 'Rien à traiter · 4 s'),
+          h('div', { className: 'notice' }, h(F.Notice, null, 'Rien à traiter dans la fenêtre active.'))))),
+    h('section', { className: 'flow' },
+      h('h2', null, 'Sans ancre · le verre court se pose aussi en bas'),
+      h('p', null, 'Copie faite par FlowTranslate sans rectangle de sélection, « Revoir le dernier résultat » ou source longue au résultat court : même verre, placé en bas au centre. Le menu s’ouvre alors au-dessus de la pilule et le retour se tient au-dessus du verre.'),
+      h('div', { className: 'screens two' },
+        h('div', { className: 'screen tall' }, h('span', { className: 'label' }, 'Placement bas · menu ⋯ ouvert au-dessus'),
+          h('div', { className: 'low' }, h(F.Overlay, { placement: 'bottom', tag: 'Traduire en anglais', menuItems: menu }, 'Could you send the updated proposal before Thursday?'))),
+        h('div', { className: 'screen tall' }, h('span', { className: 'label' }, 'Placement bas · retour au-dessus du verre'),
+          h('div', { className: 'low' }, h(F.Overlay, { placement: 'bottom', tag: 'Traduire en anglais', feedback: h(F.Notice, { size: 'sm', tone: 'danger' }, 'La copie a été refusée.') }, 'Could you send the updated proposal before Thursday?')))))
+  ));
+</script>
+</body>
+</html>

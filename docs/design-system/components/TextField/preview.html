@@ -1,0 +1,24 @@
+<!-- @dsCard group="Réglages · contrôles" height=250 subtitle="Champ, liste, secret, erreur" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>TextField — aperçu</title>
+<style> .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; padding: 20px 24px; max-width: 640px; } </style></head>
+<body>
+<div class="grid" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Demo() {
+    var a = useState('http://127.0.0.1:8002/v1'), url = a[0], setUrl = a[1];
+    var b = useState('correct'), action = b[0], setAction = b[1];
+    var c = useState(''), key = c[0], setKey = c[1];
+    var d = useState('http://192.168.1.20:8002/v1'), bad = d[0], setBad = d[1];
+    return h(React.Fragment, null,
+      h(F.TextField, { label: 'Adresse', type: 'url', value: url, onChange: setUrl }),
+      h(F.SelectField, { label: 'Action par défaut', value: action, onChange: setAction, options: [{ value: 'translate-fr', label: 'Traduire en français' }, { value: 'correct', label: 'Corriger' }, { value: 'pro', label: 'Professionnaliser' }] }),
+      h(F.TextField, { label: 'Clé API', type: 'password', value: key, onChange: setKey, placeholder: 'Facultative pour un serveur local', hint: 'Chiffrée par Windows (DPAPI).' }),
+      h(F.TextField, { label: 'Adresse distante', value: bad, onChange: setBad, error: 'Un serveur distant doit utiliser HTTPS ; HTTP est réservé au bouclage local.' }));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

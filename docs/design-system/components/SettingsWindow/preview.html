@@ -1,0 +1,31 @@
+<!-- @dsCard group="Réglages · structure" height=520 width=1200 subtitle="Barre de titre, navigation, page ; onglets sous 640 px" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>SettingsWindow — aperçu</title>
+<style>
+  html, body { height: 100%; }
+  body { background: var(--surface-sunken); }
+  .stage { box-sizing: border-box; display: grid; grid-template-columns: 680px 460px; gap: 24px; height: 100%; padding: 16px; }
+  .win { height: 488px; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--line-strong), 0 12px 32px rgba(0,0,0,.24); }
+  .narrow { width: 460px; }
+</style></head>
+<body>
+<div class="stage" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Win(props) {
+    var p = useState(props.start), page = p[0], setPage = p[1];
+    var s = useState('normal'), size = s[0], setSize = s[1];
+    var titles = { actions: 'Actions', reading: 'Lecture', engines: 'Moteurs', privacy: 'Confidentialité' };
+    return h(F.SettingsWindow, { page: page, onNavigate: setPage, saveStatus: props.status, saveError: props.error },
+      h(F.PageHeader, { title: titles[page], description: 'Une page par sujet ; le contenu défile, la barre de titre et la navigation restent.' }),
+      h(F.SettingGroup, null,
+        h(F.SettingRow, { label: 'Taille du texte', description: 'Verre court 16 px, bande 22 px.' }, h(F.Segmented, { label: 'Taille du texte', value: size, onChange: setSize, options: [{ value: 'normal', label: 'Normale' }, { value: 'large', label: 'Grande' }, { value: 'xlarge', label: 'Très grande' }] })),
+        h(F.SettingRow, { label: 'Lancer à l’ouverture de session', description: 'Seule l’icône de notification reste visible.' }, h(F.Switch, { label: 'Lancer à l’ouverture de session', checked: true }))));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(React.Fragment, null,
+    h('div', { className: 'win' }, h(Win, { start: 'reading', status: 'saved' })),
+    h('div', { className: 'win narrow' }, h(Win, { start: 'actions', status: 'error', error: 'Le raccourci est déjà utilisé ou indisponible.' }))));
+</script>
+</body>
+</html>

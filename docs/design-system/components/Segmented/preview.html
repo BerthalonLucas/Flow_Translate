@@ -1,0 +1,22 @@
+<!-- @dsCard group="Réglages · contrôles" height=120 subtitle="Un choix parmi deux à quatre, flèches gauche et droite" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Segmented — aperçu</title>
+<style> .row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; padding: 20px 24px; } </style></head>
+<body>
+<div class="row" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Demo() {
+    var a = useState('normal'), close = a[0], setClose = a[1];
+    var b = useState('quality'), mode = b[0], setMode = b[1];
+    var c = useState('replace'), out = c[0], setOut = c[1];
+    return h(React.Fragment, null,
+      h(F.Segmented, { label: 'Fermeture automatique', value: close, onChange: setClose, options: [{ value: 'fast', label: 'Rapide' }, { value: 'normal', label: 'Normale' }, { value: 'slow', label: 'Lente' }, { value: 'never', label: 'Jamais' }] }),
+      h(F.Segmented, { label: 'Moteur par défaut', value: mode, onChange: setMode, options: [{ value: 'quality', label: 'Qualité' }, { value: 'fast', label: 'Rapide' }] }),
+      h(F.Segmented, { label: 'Résultat du raccourci', size: 'sm', value: out, onChange: setOut, options: [{ value: 'display', label: 'Afficher' }, { value: 'replace', label: 'Remplacer' }] }));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

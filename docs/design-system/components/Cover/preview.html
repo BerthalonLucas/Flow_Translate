@@ -1,0 +1,53 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>FlowTranslate</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--surface); color: var(--ink); font-family: var(--font-display); overflow: hidden; }
+  .cover { position: relative; width: 960px; height: 288px; overflow: hidden; }
+  .band { position: absolute; left: 0; top: 0; width: 960px; height: 120px; }
+  .band svg { display: block; width: 960px; height: 120px; }
+  .inverse { fill: var(--surface-inverse); }
+  .onink { fill: var(--on-inverse); }
+  .brand { fill: var(--signal); }
+  .mid { fill: var(--ink-muted); }
+  .cut { fill: var(--surface); }
+  .r-glass { rx: var(--radius-glass); }
+  .r-xl { rx: var(--radius-xl); }
+  .words { position: absolute; left: var(--space-6); bottom: var(--space-6); max-width: 440px; }
+  .name { margin: 0; font-family: var(--font-display); font-size: 64px; line-height: .95; font-weight: 600; letter-spacing: -.02em; color: var(--ink); }
+  .tagline { margin: var(--space-2) 0 0 2px; font-family: var(--font-sans); font-size: 14px; line-height: 20px; color: var(--ink-muted); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="band" aria-hidden="true">
+<svg viewBox="0 0 960 120" width="960" height="120">
+<!--
+  blocks      surface-inverse 520×88 (the glass, graphite in light, paper in dark) · signal 136×140 slab bled off the top · signal 104×28 action pill (pill-height) · ink-muted 208×88 (the menu) — the top band, ≈ 30% of 960×288
+  arrangement top-band skeleton (the name is wider than 440px at 64px): glass slab with its pill biting the top edge at pill-inset 16, the highlighter slab between, the menu block right, gutters space-6
+  pattern     literal motif, from "trois lignes de texte, la médiane passée au surligneur": pill lines in on-inverse cut across the glass, the middle one a thicker signal band; three menu-entry pills cut out of the grey block in surface
+  scales      glass and slab corners radius-glass 28, menu block radius-xl 16, pills rx half their height; overlap pill-overlap 14; line pitch space-5; margins space-6
+-->
+<rect class="inverse r-glass" x="24" y="28" width="520" height="88" rx="28"/>
+<rect class="onink" x="56" y="46" width="392" height="10" rx="5"/>
+<rect class="brand" x="50" y="64" width="330" height="16" rx="8"/>
+<rect class="onink" x="56" y="90" width="236" height="10" rx="5"/>
+<rect class="brand" x="424" y="14" width="104" height="28" rx="14"/>
+<rect class="brand r-glass" x="568" y="-24" width="136" height="140" rx="28"/>
+<rect class="mid r-xl" x="728" y="28" width="208" height="88" rx="16"/>
+<rect class="cut" x="748" y="46" width="120" height="10" rx="5"/>
+<rect class="cut" x="748" y="66" width="96" height="10" rx="5"/>
+<rect class="cut" x="748" y="90" width="148" height="10" rx="5"/>
+</svg>
+</div>
+<div class="words">
+<h1 class="name">FlowTranslate</h1>
+<p class="tagline">Une sélection, un raccourci, le texte transformé.</p>
+</div>
+</div>
+</body>
+</html>

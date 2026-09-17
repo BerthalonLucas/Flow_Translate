@@ -1,0 +1,21 @@
+<!-- @dsCard group="Réglages · structure" height=316 subtitle="Libellé, description, contrôle à droite, dans une carte" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>SettingRow — aperçu</title>
+<style> .pad { padding: 20px 24px; } </style></head>
+<body>
+<div class="pad" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Demo() {
+    var m = useState('quality'), mode = m[0], setMode = m[1];
+    var a = useState(true), auto = a[0], setAuto = a[1];
+    return h(F.SettingGroup, { title: 'Sur cet appareil' },
+      h(F.SettingRow, { label: 'Moteur par défaut', description: 'Qualité : plus lent, meilleures tournures.' }, h(F.Segmented, { label: 'Moteur par défaut', value: mode, onChange: setMode, options: [{ value: 'quality', label: 'Qualité' }, { value: 'fast', label: 'Rapide' }] })),
+      h(F.SettingRow, { label: 'Lancer à l’ouverture de session', description: 'Seule l’icône de notification reste visible.' }, h(F.Switch, { label: 'Lancer à l’ouverture de session', checked: auto, onChange: setAuto })),
+      h(F.SettingRow, { icon: 'history', label: 'Historique', description: '3 entrées chiffrées' }, h(F.Button, { variant: 'danger', size: 'sm' }, 'Tout supprimer')));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<!-- @dsCard group="Réglages · blocs" height=404 subtitle="Résultats chiffrés récents, suppression unitaire ou totale, état vide" -->
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>HistoryList — aperçu</title>
+<style> .col { display: grid; gap: 12px; padding: 20px 24px; max-width: 640px; } </style></head>
+<body>
+<div class="col" id="root"></div>
+<script>
+  var F = window.FlowTranslate, h = React.createElement, useState = React.useState;
+  function Demo() {
+    var e = useState([
+      { id: '1', text: 'Je vous envoie le devis corrigé demain matin.', meta: 'Corriger · Rapide · 17 sept. 09:12' },
+      { id: '2', text: 'Pourriez-vous envoyer la proposition mise à jour avant jeudi ?', meta: 'Traduire en français · Qualité · 16 sept. 18:40' },
+      { id: '3', text: 'Thank you for your patience while we review the contract and the delivery schedule.', meta: 'Traduire en anglais · Qualité · 16 sept. 11:05' }
+    ]), entries = e[0], setEntries = e[1];
+    return h(React.Fragment, null,
+      h(F.HistoryList, { entries: entries, onRemove: function (id) { setEntries(entries.filter(function (x) { return x.id !== id; })); }, onClear: function () { setEntries([]); } }),
+      h(F.HistoryList, { entries: [] }));
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(h(Demo));
+</script>
+</body>
+</html>
