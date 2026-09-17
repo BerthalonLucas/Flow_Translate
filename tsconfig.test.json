@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+    ,"types": ["vite/client"]
+  },
+  // src/env.d.ts n'est pas un module importé : c'est la déclaration ambiante de
+  // __APP_VERSION__, injectée par vite.config.ts. tsconfig.app.json la voit par son
+  // include "src" ; sans elle ici, tout fichier de test qui atteint src/App.tsx est rouge.
+  "include": ["e2e", "visual-tests", "src/env.d.ts"]
+}
