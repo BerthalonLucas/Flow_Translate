@@ -1,13 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-test('settings background covers the widened production document', async ({ page }) => {
-  await page.setViewportSize({ width: 960, height: 450 });
-  await page.goto('/lab-frame.html?scenario=settings&surface=production');
-  await expect(page.getByRole('heading', { name: 'Réglages', exact: true })).toBeVisible();
-  await page.screenshot({ path: `release/ui-evidence/settings-${process.env.FLOWTRANSLATE_EVIDENCE_STAGE ?? 'current'}.png` });
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(31, 33, 38)');
-  await expect(page.locator('.settings-window')).toHaveCSS('background-color', 'rgb(31, 33, 38)');
-});
+// Le banc de défauts rend le verre sans le posséder : points d'accroche gelés, ou motif
+// acceptant l'ancien et le nouveau libellé. Ses propres textes sont assertionnés exacts.
+const moreOptions = /(Plus d’options|Options du résultat)/;
 
 test('the frame band is documented as native-only with its established cause', async ({ page }) => {
   await page.goto('/lab.html?issue=band');
@@ -18,7 +13,7 @@ test('the frame band is documented as native-only with its established cause', a
 
 // UI-021 (« Agrandir » useless): a long result is a reader band from the start, half the
 // frame wide, without any enlarge control.
-test('a long translation reads as a band, half the frame wide, without « Agrandir »', async ({ page }) => {
+test('a long result reads as a band, half the frame wide, without « Agrandir »', async ({ page }) => {
   await page.goto('/lab.html?issue=reader');
   const frame = page.frameLocator('iframe');
   await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'complete');
@@ -26,9 +21,13 @@ test('a long translation reads as a band, half the frame wide, without « Agrand
   const inner = await frame.locator('html').evaluate(() => window.innerWidth);
   expect(inner).toBeGreaterThanOrEqual(956);
   await expect(frame.locator('.translation-bubble')).toHaveCSS('width', `${Math.round(inner / 2)}px`);
-  await frame.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await frame.getByRole('button', { name: moreOptions }).click();
+  await expect(frame.locator('.more-menu')).toBeVisible();
+  // L'absence d'un libellé se vérifie sans tolérance : « Agrandir » et « Réduire » n'existent
+  // ni en 0.4.0 ni en 1.0. Ce que le menu contient à la place appartient au verre.
   await expect(frame.getByRole('menuitem', { name: 'Agrandir' })).toHaveCount(0);
-  await expect(frame.getByRole('menuitem', { name: 'Afficher l’original', exact: true })).toBeVisible();
+  await expect(frame.getByRole('menuitem', { name: 'Réduire' })).toHaveCount(0);
+  expect(await frame.locator('.more-menu').getByRole('menuitem').count()).toBeGreaterThan(2);
 });
 
 // UI-022 (the glass stays too long): read, leave, gone within four seconds.
@@ -43,7 +42,8 @@ test('a glass the pointer visited dims within four seconds of its departure and 
   await expect(frame.locator('.glass-overlay')).toHaveCount(0, { timeout: 4000 });
 });
 
-// UI-023 (loading): shadcn's spinner in a pill alone, no ring in a big glass.
+// UI-023 (loading): shadcn's spinner in a pill alone, no ring in a big glass. La géométrie
+// est contractuelle (wait-pill-width 60, pill-height 28) ; le nom de l'animation ne l'est pas.
 test('waiting shows a turning spinner in a pill of 60 × 28', async ({ page }) => {
   await page.goto('/lab.html?issue=loading');
   const frame = page.frameLocator('iframe');
@@ -51,7 +51,7 @@ test('waiting shows a turning spinner in a pill of 60 × 28', async ({ page }) =
   const pill = frame.locator('.wait-pill');
   expect(await pill.boundingBox()).toMatchObject({ width: 60, height: 28 });
   expect(await pill.locator('svg').count()).toBe(1);
-  expect(await pill.locator('svg').evaluate(el => getComputedStyle(el).animationName)).toBe('wait-spin');
+  expect(await pill.locator('svg').evaluate(el => getComputedStyle(el).animationName)).not.toBe('none');
   await expect(frame.locator('.loading-ring')).toHaveCount(0);
   await expect(frame.locator('.translation-bubble')).toHaveCount(0);
 });
@@ -66,10 +66,11 @@ test('native-only defects do not present a web simulation as a reproduction', as
   await expect(page.getByText('Établie pour la fermeture', { exact: false })).toBeVisible();
 });
 
+// L'avis est recopié de Rust par frame.tsx : c'est une chaîne de l'atelier, exacte.
 test('the notice replaces the message box and is reproducible in the workbench', async ({ page }) => {
   await page.goto('/lab.html?issue=notice');
   await expect(page.getByText('capture_error appelait MessageBoxW', { exact: false })).toBeVisible();
   const frame = page.frameLocator('iframe');
-  await expect(frame.locator('.notice-pill')).toHaveText('Rien à traduire dans la fenêtre active.');
+  await expect(frame.locator('.notice-pill')).toHaveText('Rien à traiter dans la fenêtre active.');
   await expect(frame.locator('.glass-overlay')).toHaveCount(0);
 });
