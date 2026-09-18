@@ -39,7 +39,7 @@ Verre, bande, pilule, placement, temps de lecture et chemin Remplacer ne changen
 | Maj qui retourne toutes les icônes | B | La liste clignote (`visuel/t1-bulle.png`) |
 | Présélection de la dernière action | A, B, C | Entrée change de sens au fil des jours (`visuel/v5-chat.png`) |
 | Compteur « Choisie 23 fois », étiquette de pilule cliquable | B | Statistique inutile ; commande cachée |
-| Barre horizontale d’icônes | V4 | 620 px avec libellés, illisible sans (`visuel/v4-libelles-trop-large-mail.png`) |
+| Barre horizontale d’icônes | V4 | 620 px quand les quatre noms sont écrits, illisible sans eux (`visuel/v4-mail.png`, où seule la ligne active est nommée) |
 | Ctrl+Alt seul par défaut | demande | Hook permanent, faux positifs, AltGr [Q 1] |
 | Ctrl+Espace par défaut | Lucas | Pris par l’autocomplétion de VS Code, JetBrains et Visual Studio, Word et Outlook, Excel, PowerShell, IME chinois et japonais ; proposé au choix avec avertissement [Q 1] |
 

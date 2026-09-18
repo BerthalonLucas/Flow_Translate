@@ -5,8 +5,8 @@ la réflexion UX du 17/09/2026. Elles servent la spec voisine (`../SPEC-UX.md`),
 elle-même est prévue pour la 0.8.0.
 
 - `bulles.html` → `v1-*` à `v5-*` : cinq formes de bulle, chacune posée sur deux contextes crédibles,
-  un mail sur page claire et une messagerie sombre. `v4-libelles-trop-large-mail.png` montre pourquoi
-  la barre horizontale à libellés a été écartée. **V5 est la forme retenue.**
+  un mail sur page claire et une messagerie sombre. `v4-*` montre pourquoi la barre horizontale a été
+  écartée : avec les quatre noms écrits elle atteint 620 px, sans eux on ne lit plus les actions. **V5 est la forme retenue.**
 - `transition.html` → `t1-*` à `t5-*` : l’instant d’après, de la bulle au verre — bulle, fondu,
   pilule d’attente, résultat affiché, remplacement.
 - `shoot.mjs` : rend chaque `.shot` d’une page en PNG (`node shoot.mjs bulles.html`), avec le Chromium

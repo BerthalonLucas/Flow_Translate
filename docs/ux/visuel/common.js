@@ -98,7 +98,7 @@
       '<div class="foot" style="height:36px;gap:6px">' + seg + '<span class="r" style="margin-left:auto">' + chip + '</span></div>' + also + '</div>';
   }
   // V4 · Barre horizontale sur la ligne de la pilule (famille PopClip / Grammarly).
-  // Avec les quatre noms écrits, la barre fait 620 px et sort du verre (v4-libelles-trop-large-mail.png) :
+  // Avec les quatre noms écrits, la barre fait 620 px et sort du verre :
   // ici, icônes seules et le nom de la ligne active seulement.
   function v4(o) {
     var its = ACTIONS.slice(0, 4).map(function (a, i) {
