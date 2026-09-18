@@ -1,5 +1,6 @@
 mod actions;
 use actions::{Execution, OutputMode};
+mod autostart;
 mod capture;
 mod clipboard_guard;
 mod crypto;
@@ -8,6 +9,7 @@ mod host;
 mod inference;
 mod placement;
 mod settings;
+mod tray;
 mod types;
 use arboard::Clipboard;
 use chrono::Utc;
@@ -16,6 +18,7 @@ use settings::SettingsStore;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+use tray::TrayState;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tokio_util::sync::CancellationToken;
 use types::*;
@@ -57,8 +60,12 @@ struct Inner {
     /// Bumped by every notice: the timed hide only acts on its own generation.
     notice_generation: u64,
     /// The last complete result, kept ten minutes after its glass closed so the tray
-    /// can show it again (« Revoir la dernière traduction »).
+    /// can show it again (« Revoir le dernier résultat »).
     last_result: Option<(CompletedResult, std::time::Instant)>,
+    /// A notice raised during `setup`, before any WebView exists. `show_notice` needs a
+    /// listening overlay, and the `pending_capture` buffer only covers captures: this
+    /// one waits for `frontend_ready` on its own.
+    pending_notice: Option<String>,
 }
 // Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
 #[derive(Clone, Copy, Debug)]
@@ -101,6 +108,7 @@ impl Inner {
             measured: false,
             notice_generation: 0,
             last_result: None,
+            pending_notice: None,
         }
     }
     /// Sets the result aside for the tray before the glass state forgets it.
@@ -146,6 +154,12 @@ struct AppState {
     settings_store: SettingsStore,
     settings_lock: Mutex<()>,
     history: HistoryStore,
+    /// Where the next mount of the Réglages must land. The window exists from the start,
+    /// hidden, so the event can reach it before it is ready to listen.
+    settings_target: Mutex<Option<SettingsTarget>>,
+    /// The « réglages illisibles » sentence, for the Callout at the top of Actions.
+    /// Read once, by `take_startup_notice`.
+    startup_notice: Mutex<Option<&'static str>>,
     demo: bool,
     demo_clipboard: bool,
     demo_long: bool,
@@ -347,7 +361,7 @@ fn show_notice(app: &AppHandle, message: &str) {
     });
 }
 
-/// Tray « Revoir la dernière traduction »: shows the last complete result again, as a
+/// Tray « Revoir le dernier résultat »: shows the last complete result again, as a
 /// capture that carries its translation, for ten minutes after its glass closed.
 const REPLAY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 fn replay_last(app: &AppHandle) -> Result<(), String> {
@@ -358,7 +372,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             .or_else(|| i.last_result.clone().filter(|(_, at)| at.elapsed() <= REPLAY_WINDOW).map(|(r, _)| r))
     };
     let Some(result) = last else {
-        show_notice(app, "Aucune traduction récente.");
+        show_notice(app, "Aucun résultat récent.");
         return Ok(());
     };
     let public = Capture {
@@ -392,7 +406,7 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut_id: Option<u3
     if let Some(window) = app.get_webview_window("settings") {
         // The hidden settings window can hold the foreground for an instant at startup
         // (the demo capture of the probe met it): only the shown one refuses a capture.
-        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err("Fermez les réglages avant d’utiliser un raccourci.".into()); }
+        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err("Les réglages sont ouverts. Fermez-les, puis réessayez.".into()); }
     }
     let execution = {
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -419,10 +433,26 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut_id: Option<u3
     result
 }
 #[tauri::command]
-fn frontend_ready(state: State<'_, AppState>) -> Result<Option<Capture>, String> {
-    let mut i = state.inner.lock().map_err(|_| lock_error())?;
-    i.frontend_ready = true;
-    Ok(i.pending_capture.take())
+fn frontend_ready(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<Capture>, String> {
+    let (pending, notice) = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        i.frontend_ready = true;
+        let notice = (window.label() == "overlay").then(|| i.pending_notice.take()).flatten();
+        (i.pending_capture.take(), notice)
+    };
+    // The startup notice waited for a window able to draw it.
+    if let Some(notice) = notice {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            show_notice(&handle, &notice);
+        });
+    }
+    Ok(pending)
 }
 
 #[tauri::command]
@@ -432,7 +462,7 @@ fn translate(
     request: TranslationRequest,
 ) -> Result<(), String> {
     if request.text.is_empty() || request.text.chars().count() > 6000 {
-        return Err("La traduction accepte de 1 à 6 000 caractères.".into());
+        return Err("Le texte doit contenir de 1 à 6 000 caractères. Sélectionnez un passage plus court.".into());
     }
     let (profile, instruction, execution_info, cancel, inner, history, demo, demo_long) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
@@ -450,9 +480,11 @@ fn translate(
         if request.action_id != run.info.action_id {
             return Err("L’action ne correspond pas à la capture.".into());
         }
-        if !run.started && request.mode != run.info.mode { return Err("Le profil ne correspond pas à la capture.".into()); }
+        if !run.started && request.mode != run.info.mode { return Err("Le moteur ne correspond pas à la capture.".into()); }
         let key = match request.mode { Mode::Fast => "fast", Mode::Quality => "quality" };
-        let profile = run.profiles.get(key).ok_or("Le profil est absent.")?.clone();
+        let profile = run.profiles.get(key).cloned().ok_or_else(|| {
+            format!("Le moteur {} est absent. Rouvrez les Réglages pour le configurer.", request.mode.label())
+        })?;
         actions::validate_template(&run.action.prompt_template)?;
         let instruction = run.action.prompt_template.clone();
         let execution_info = run.info.clone();
@@ -477,6 +509,7 @@ fn translate(
     };
     tauri::async_runtime::spawn(async move {
         let id = request.id.clone();
+        tray::set_state(&app, TrayState::Busy);
         let result = if demo {
             let output = if demo_long {
                 "Voici une réponse synthétique assez longue pour dépasser les huit lignes du verre court et ouvrir la bande de lecture en bas de l’écran du curseur. Elle contient plusieurs phrases, des retours naturels et assez de texte pour vérifier que la bande reste stable lorsque la pilule et le menu se chevauchent visuellement, que le défilement fonctionne à la molette et que le budget de lecture se calcule sur le nombre de mots. Aucun appel d’inférence réel n’est effectué dans ce mode de démonstration : le texte est fixe, sans rapport avec la sélection, et sert uniquement à vérifier la géométrie, le suivi de l’écran de la souris et la sortie en deux temps de la bande une fois le temps de lecture écoulé."
@@ -508,13 +541,14 @@ fn translate(
                 tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(65))=>{}}
             }
             if cancel.is_cancelled() {
-                Err("Traduction annulée.".into())
+                Err("Traitement annulé.".into())
             } else {
                 Ok(out)
             }
         } else {
             inference::stream(
                 profile,
+                request.mode,
                 instruction,
                 request.text.clone(),
                 cancel,
@@ -544,6 +578,7 @@ fn translate(
             Err(_) => return,
         };
         if !i.current(&id) {
+            tray::clear_busy(&app);
             return;
         }
         match result {
@@ -581,6 +616,7 @@ fn translate(
                     },
                 );
                 drop(i);
+                tray::succeeded(&app);
                 schedule_auto_delivery(&app);
             }
             Err(message) => {
@@ -592,9 +628,13 @@ fn translate(
                         request_id: id,
                         kind: StreamKind::Error,
                         text: None,
-                        message: Some(message),
+                        message: Some(message.clone()),
                     },
                 );
+                drop(i);
+                // An engine failure asks for something: the icon says so until the next
+                // success, and its tooltip names the problem without any content.
+                capture_error(&app, &message, false);
             }
         }
     });
@@ -614,7 +654,7 @@ fn result_for(state: &AppState, id: &str) -> Result<CompletedResult, String> {
     i.completed
         .clone()
         .filter(|r| r.request_id == id && r.complete && i.visible)
-        .ok_or_else(|| "Aucun résultat complet pour cette requête.".into())
+        .ok_or_else(|| "Aucun résultat complet pour cette requête. Relancez la capture.".into())
 }
 /// A « replace » capture delivers its first complete result by pasting it over the
 /// selection (0.4.0), once, as soon as inference ends. The state lock is held through
@@ -632,11 +672,15 @@ fn schedule_auto_delivery(app: &AppHandle) {
             c.public.can_replace = false;
             c.target.take()
         });
-        let outcome = target.as_ref().ok_or_else(|| "Aucune sélection à remplacer; le résultat reste dans la bulle.".to_string())
+        let outcome = target.as_ref().ok_or_else(|| "Aucune sélection à remplacer. Copiez le résultat.".to_string())
             .and_then(|target| capture::paste(target, &result.translated_text, false));
         let capture_id = result.capture_id.clone();
         drop(i);
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
+        match &outcome {
+            Ok(_) => tray::succeeded(&app),
+            Err(message) => capture_error(&app, message, false),
+        }
         let _ = app.emit_to("overlay", "result-delivery", serde_json::json!({
             "requestId": result.request_id,
             "status": if outcome.is_ok() { "applied" } else { "fallback" },
@@ -656,7 +700,7 @@ fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), Str
     host::suppress_clipboard_tracking(std::time::Duration::from_millis(1_500));
     Clipboard::new()
         .and_then(|mut c| c.set_text(r.translated_text))
-        .map_err(|_| "La copie est indisponible.".into())
+        .map_err(|_| "Copie indisponible. Réessayez.".into())
 }
 /// « Remplacer » from the menu of the glass: the same paste, the source window brought
 /// back to the front first (the click was on our window). One attempt per result.
@@ -669,19 +713,19 @@ async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: 
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible || i.active.is_some() || i.pending_dismiss.is_some()
             || i.completed.as_ref().is_none_or(|done| done.request_id != r.request_id) {
-            return Err("Ce résultat n’est plus actif.".into());
+            return Err("Ce résultat n’est plus actif. Relancez la capture.".into());
         }
         let fg = host::foreground();
         let ours = ["overlay", "capsule"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
         let c = i.capture.as_mut().filter(|c| c.public.id == r.capture_id && c.public.can_replace)
-            .ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
-        let target = c.target.take().ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
+            .ok_or_else(|| "La sélection n’est plus disponible. Copiez le résultat.".to_string())?;
+        let target = c.target.take().ok_or_else(|| "La sélection n’est plus disponible. Copiez le résultat.".to_string())?;
         c.public.can_replace = false;
         let capture_id = c.public.id.clone();
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
-        if fg != target.native_window && !ours { return Err("La fenêtre source a changé; remplacement refusé.".into()); }
+        if fg != target.native_window && !ours { return Err("La fenêtre source a changé. Copiez le résultat.".into()); }
         capture::paste(&target, &r.translated_text, true).map(|_| ())
-    }).await.map_err(|_| "Le remplacement a été interrompu; utilisez Copier.".to_string())?
+    }).await.map_err(|_| "Le remplacement a été interrompu. Copiez le résultat.".to_string())?
 }
 fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
     let handle = app.clone();
@@ -693,7 +737,7 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
                 if let Some(window) = handle.get_webview_window(label) { let _ = host::hide(&window); }
             }
         }
-    }).map_err(|_| "Fermeture de la traduction indisponible.".to_string())
+    }).map_err(|_| "Fermeture du résultat indisponible.".to_string())
 }
 
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
@@ -721,7 +765,7 @@ fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let _ = schedule_finish_dismiss(handle, timeout_id, generation);
     });
     app.emit_to("overlay", "overlay-dismiss-requested", OverlayDismissRequested { capture_id })
-        .map_err(|_| "Fermeture de la traduction indisponible.".to_string())?;
+        .map_err(|_| "Fermeture du résultat indisponible.".to_string())?;
     Ok(())
 }
 
@@ -739,14 +783,63 @@ fn complete_overlay_dismiss(app: AppHandle, state: State<'_, AppState>, capture_
 fn dismiss_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     dismiss(&app, &state)
 }
-#[tauri::command]
-fn open_settings(app: AppHandle) -> Result<(), String> {
+/// Every opening starts from its target: the window is shown once and lives on hidden,
+/// so nothing would re-route it otherwise.
+fn open_settings_at(app: &AppHandle, target: SettingsTarget) -> Result<(), String> {
     let w = app
         .get_webview_window("settings")
         .ok_or_else(|| "Réglages indisponibles.".to_string())?;
+    if let Ok(mut slot) = app.state::<AppState>().settings_target.lock() {
+        *slot = Some(target.clone());
+    }
+    let _ = app.emit_to("settings", "settings-target", &target);
     w.show()
         .and_then(|_| w.set_focus())
         .map_err(|_| "Ouverture des réglages impossible.".into())
+}
+
+#[tauri::command]
+fn open_settings(app: AppHandle, target: Option<SettingsTarget>) -> Result<(), String> {
+    open_settings_at(&app, target.unwrap_or_else(SettingsTarget::actions))
+}
+
+/// Read when the Réglages mount: the event may have been emitted before the WebView
+/// could listen. Consumes the target.
+#[tauri::command]
+fn take_settings_target(state: State<'_, AppState>) -> Result<Option<SettingsTarget>, String> {
+    Ok(state.settings_target.lock().map_err(|_| lock_error())?.take())
+}
+
+/// The « réglages illisibles » sentence, once.
+#[tauri::command]
+fn take_startup_notice(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state
+        .startup_notice
+        .lock()
+        .map_err(|_| lock_error())?
+        .take()
+        .map(str::to_string))
+}
+
+/// Pure, no network: what the address field asks on blur, before anything is saved.
+#[tauri::command]
+fn validate_endpoint(endpoint: String) -> Result<(), String> {
+    settings::validate_endpoint(&endpoint).map(|_| ())
+}
+
+/// The first command that puts stored plain text into the clipboard, so it is refused
+/// anywhere but the Réglages, the way `get_settings` already refuses. The frontend never
+/// supplies the text: Rust decrypts the row and copies the result alone.
+#[tauri::command]
+fn copy_history(window: tauri::WebviewWindow, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if window.label() != "settings" {
+        return Err("Copie indisponible. Réessayez.".into());
+    }
+    let entry = state.history.get(&id)?;
+    host::suppress_clipboard_tracking(std::time::Duration::from_millis(1_500));
+    Clipboard::new()
+        .and_then(|mut c| c.set_text(entry.translated_text))
+        .map_err(|_| "Copie indisponible. Réessayez.".into())
 }
 #[tauri::command]
 fn drag_settings(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -778,7 +871,7 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
     };
     let w = app
         .get_webview_window("overlay")
-        .ok_or_else(|| "Traduction indisponible.".to_string())?;
+        .ok_or_else(|| "Fenêtre du résultat indisponible.".to_string())?;
     host::activate(&w)?;
     let (current, should_hide) = {
         let state = app.state::<AppState>();
@@ -1024,7 +1117,7 @@ async fn check_connection(
         .settings
         .profile(mode)?
         .clone();
-    Ok(match inference::check(&p).await {
+    Ok(match inference::check(&p, mode).await {
         Ok(_) => ConnectionStatus {
             connected: true,
             message: "Connexion réussie.".into(),
@@ -1170,7 +1263,7 @@ fn finish_position(
             handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0),
             handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
           if apply_rect || apply_regions {
-            let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
+            let window = handle.get_webview_window("overlay").ok_or_else(|| "Fenêtre du résultat indisponible.".to_string())?;
             // Folds, unfolds and menus only change the surfaces: no SetWindowPos.
             if apply_rect { host::place(&window, rect)?; }
             host::set_regions(&window, &regions, scale)?;
@@ -1186,23 +1279,45 @@ fn finish_position(
         if let Some(placed) = placed { let _ = placed.send(result); }
     }).map_err(|_| "Placement indisponible.".to_string())
 }
-fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
-    if let Some(tray) = app.tray_by_id("flowtranslate") {
-        let tooltip = if simulated {
-            "FlowTranslate — Démonstration simulée"
-        } else {
-            "FlowTranslate"
-        };
-        let _ = tray.set_tooltip(Some(tooltip));
+fn tray_tooltip(simulated: bool) -> &'static str {
+    if simulated {
+        "FlowTranslate — Démonstration simulée"
+    } else {
+        "FlowTranslate"
     }
 }
+/// A capture that starts again clears the last problem: tooltip and glyph go back to rest.
+fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
+    if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
+        let _ = tray.set_tooltip(Some(tray_tooltip(simulated)));
+    }
+    tray::succeeded(app);
+}
+/// The alert is for failures that ask for something. « Rien à traiter » is an advice:
+/// it leaves the glyph and the tooltip alone.
 fn capture_error(app: &AppHandle, message: &str, notify: bool) {
-    if let Some(tray) = app.tray_by_id("flowtranslate") {
+    if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
         let _ = tray.set_tooltip(Some(format!("FlowTranslate — {message}")));
     }
+    tray::set_state(app, TrayState::Alert);
     if notify {
         show_notice(app, message);
     }
+}
+/// Raised before any window exists: the pill waits for `frontend_ready`, the Callout for
+/// `take_startup_notice`, and the icon says so straight away.
+fn raise_startup_notice(app: &AppHandle, notice: &'static str) {
+    let state = app.state::<AppState>();
+    if let Ok(mut i) = state.inner.lock() {
+        i.pending_notice = Some(notice.to_string());
+    }
+    if let Ok(mut slot) = state.startup_notice.lock() {
+        *slot = Some(notice);
+    }
+    if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
+        let _ = tray.set_tooltip(Some(format!("FlowTranslate — {notice}")));
+    }
+    tray::set_state(app, TrayState::Alert);
 }
 fn watch_context(app: AppHandle) {
     std::thread::spawn(move || {
@@ -1270,7 +1385,7 @@ fn watch_context(app: AppHandle) {
                     TargetInvalidated {
                         capture_id: id,
                         anchor_lost: true,
-                        message: "La sélection a changé. Utilisez Copier.".into(),
+                        message: "La sélection a changé. Copiez le résultat.".into(),
                     },
                 );
                 let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None);
@@ -1282,15 +1397,27 @@ fn watch_context(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            let _ = open_settings(app.clone());
+            let _ = open_settings_at(app, SettingsTarget::actions());
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_autostart::Builder::new().build())
+        // Frozen, and no longer taken from `productName`: the rename must not write a
+        // second value, leave `Run\FlowTranslate` launching a stale executable and make
+        // `disable()` fail on a value that is not there any more.
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(autostart::RUN_NAME)
+                .build(),
+        )
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             let store = SettingsStore::new(&root);
-            let settings = store.load()?;
-            let history = HistoryStore::new(&root)?;
+            // `store.load()?` and `HistoryStore::new(&root)?` used to end the start here,
+            // with no icon, no notice and no log — in release, with `panic = "abort"` and
+            // `windows_subsystem = "windows"`, nothing at all happened.
+            let outcome = store.load_tolerant();
+            let mut settings = outcome.settings;
+            let startup_notice = outcome.notice;
+            let history = HistoryStore::recover(&root);
             let args = std::env::args().collect::<Vec<_>>();
             let demo = args.iter().any(|a| {
                 matches!(
@@ -1300,13 +1427,35 @@ pub fn run() {
             });
             let demo_clipboard = args.iter().any(|a| a == "--demo-clipboard");
             let demo_long = args.iter().any(|a| a == "--demo-long");
-            let shortcuts = settings.shortcut_bindings.iter().filter(|b| b.enabled).map(|b| b.shortcut.clone()).collect::<Vec<_>>();
+            // The pair, not the chord alone: a refusal must show its reason on the card
+            // of the action the shortcut runs, and the id was lost before the loop below.
+            let shortcuts = settings
+                .shortcut_bindings
+                .iter()
+                .filter(|b| b.enabled)
+                .map(|b| (b.shortcut.clone(), b.action_id.clone()))
+                .collect::<Vec<_>>();
             let simulated = demo || args.iter().any(|a| a == "--simulate-inference");
+            // Both directions. Trusted settings that ask for autostart rewrite a missing
+            // or stale value; settings recovered from an unreadable file believe an
+            // existing value instead, so the box tells the truth and stays untickable
+            // nowhere — it can be unticked, and a toggle only fires on a change.
+            let exe = std::env::current_exe().unwrap_or_default();
+            let run = autostart::classify(autostart::read_run_value().as_deref(), &exe);
+            let reconciliation = autostart::reconcile(outcome.origin, settings.autostart, run);
+            if autostart::apply(&mut settings, reconciliation) {
+                let _ = store.save(&settings);
+            }
+            if reconciliation.write {
+                let _ = app.autolaunch().enable();
+            }
             app.manage(AppState {
                 inner: Arc::new(Mutex::new(Inner::new(settings))),
                 settings_store: store,
                 settings_lock: Mutex::new(()),
                 history,
+                settings_target: Mutex::new(None),
+                startup_notice: Mutex::new(startup_notice),
                 demo,
                 demo_clipboard,
                 demo_long,
@@ -1320,16 +1469,12 @@ pub fn run() {
                 menu::{Menu, MenuItem},
                 tray::TrayIconBuilder,
             };
-            let replay = MenuItem::with_id(app, "replay", "Revoir la dernière traduction", true, None::<&str>)?;
+            let replay = MenuItem::with_id(app, "replay", "Revoir le dernier résultat", true, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "Réglages", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&replay, &settings_item, &quit])?;
-            let mut tray = TrayIconBuilder::with_id("flowtranslate")
-                .tooltip(if simulated {
-                    "FlowTranslate — Démonstration simulée"
-                } else {
-                    "FlowTranslate"
-                })
+            let mut tray = TrayIconBuilder::with_id(tray::TRAY_ID)
+                .tooltip(tray_tooltip(simulated))
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "replay" => {
@@ -1341,7 +1486,7 @@ pub fn run() {
                         });
                     }
                     "settings" => {
-                        let _ = open_settings(app.clone());
+                        let _ = open_settings_at(app, SettingsTarget::actions());
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -1350,6 +1495,13 @@ pub fn run() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+            // The state glyphs live in the resources and are read now; a missing file
+            // simply leaves the application icon in place.
+            tray::apply(app.handle());
+            tray::watch(app.handle().clone());
+            if let Some(notice) = startup_notice {
+                raise_startup_notice(app.handle(), notice);
+            }
             for label in ["overlay", "capsule"] {
                 if let Some(w) = app.get_webview_window(label) {
                     host::apply_glass(&w);
@@ -1374,13 +1526,22 @@ pub fn run() {
                     }
                 });
             }
-            for shortcut in shortcuts {
+            for (shortcut, action_id) in shortcuts {
                 if let Err(message) = register_shortcut(app.handle(), &shortcut) {
                     capture_error(app.handle(), &message, false);
-                    let _ = open_settings(app.handle().clone());
+                    let _ = open_settings_at(
+                        app.handle(),
+                        SettingsTarget {
+                            page: SettingsPage::Actions,
+                            action_id: Some(action_id),
+                            engine: None,
+                            reason: Some(message),
+                        },
+                    );
                 }
             }
-            host::install_escape_hook()?;
+            // A hook that cannot be installed costs Escape, not the start.
+            let _ = host::install_escape_hook();
             watch_context(app.handle().clone());
             if demo {
                 let handle = app.handle().clone();
@@ -1390,7 +1551,7 @@ pub fn run() {
                 });
             }
             if args.iter().any(|a| a == "--settings") {
-                let _ = open_settings(app.handle().clone());
+                let _ = open_settings_at(app.handle(), SettingsTarget::actions());
             }
             Ok(())
         })
@@ -1406,6 +1567,10 @@ pub fn run() {
             dismiss_overlay,
             complete_overlay_dismiss,
             open_settings,
+            take_settings_target,
+            take_startup_notice,
+            validate_endpoint,
+            copy_history,
             focus_overlay,
             override_cursor,
             resize_overlay,

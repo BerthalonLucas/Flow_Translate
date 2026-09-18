@@ -9,11 +9,63 @@ pub enum Mode {
     Quality,
 }
 
+impl Mode {
+    /// The name people read. 0.5.0 keeps the two engines of 0.4.0; renaming them is 0.6.0.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Fast => "Rapide",
+            Mode::Quality => "Qualité",
+        }
+    }
+}
+
+/// Same names, from the key used in `profiles` and in the settings file.
+pub fn engine_label(key: &str) -> &'static str {
+    match key {
+        "fast" => "Rapide",
+        _ => "Qualité",
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
     Fr,
     En,
+}
+
+/// The four pages of the Réglages. Démarrer belongs to 0.9.0.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingsPage {
+    #[default]
+    Actions,
+    Reading,
+    Engines,
+    Privacy,
+}
+
+/// Where an `open_settings` lands. `action_id` unfolds and highlights that action card,
+/// `engine` highlights that EngineCard, `reason` is shown under the line concerned.
+/// The window already exists, hidden, so it cannot route itself on mount: the target is
+/// remembered, emitted as `settings-target`, and read back by `take_settings_target`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsTarget {
+    pub page: SettingsPage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Mode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl SettingsTarget {
+    /// What `open_settings` without an argument means.
+    pub fn actions() -> Self {
+        Self::default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -215,9 +267,9 @@ impl Settings {
             Mode::Fast => "fast",
             Mode::Quality => "quality",
         };
-        self.profiles
-            .get(key)
-            .ok_or_else(|| format!("Le profil {key} est absent."))
+        self.profiles.get(key).ok_or_else(|| {
+            format!("Le moteur {} est absent. Rouvrez les Réglages pour le configurer.", mode.label())
+        })
     }
 }
 

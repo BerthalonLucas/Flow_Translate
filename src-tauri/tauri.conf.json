@@ -48,8 +48,8 @@
         "create": false,
         "title": "Réglages FlowTranslate",
         "url": "/?window=settings",
-        "width": 620,
-        "height": 720,
+        "width": 760,
+        "height": 640,
         "visible": false,
         "decorations": false,
         "transparent": false,
@@ -70,6 +70,9 @@
     ],
     "icon": [
       "icons/icon.ico"
+    ],
+    "resources": [
+      "icons/tray/*.png"
     ],
     "windows": {
       "nsis": {

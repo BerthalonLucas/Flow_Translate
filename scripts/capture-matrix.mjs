@@ -120,7 +120,7 @@ try {
   await run('Windows Terminal (fresh copy < 3 s)', () => launch('wt.exe', 'cmd.exe /k title FlowTranslateMatrix'), 'FlowTranslateMatrix',
     async () => { await sleep(2500); ps('setClipboard', ['-Text', SENTENCE]); await sleep(800); }, 'fresh clipboard (docked), no synthetic effect');
   await run('Windows Terminal (copy older than 3 s)', () => launch('wt.exe', 'cmd.exe /k title FlowTranslateMatrix'), 'FlowTranslateMatrix',
-    async () => { await sleep(2500); }, 'notice « Rien à traduire dans la fenêtre active. »');
+    async () => { await sleep(2500); }, 'notice « Rien à traiter dans la fenêtre active. »');
   report.status = report.cases.every(c => !c.error) ? 'DONE' : 'ERRORS';
 } finally {
   await writeFile(join(output, 'result.json'), JSON.stringify(report, null, 2));

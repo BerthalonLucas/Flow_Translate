@@ -54,7 +54,7 @@ fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool),
         return Err("Aucune sélection active.".into());
     }
     if text.encode_utf16().count() >= 6001 {
-        return Err("La sélection dépasse 6 000 unités de texte et pourrait être tronquée.".into());
+        return Err("La sélection dépasse 6 000 caractères. Sélectionnez un passage plus court.".into());
     }
     let selection_len = text.chars().count();
     let range_editable = range
@@ -128,7 +128,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 }
                 Err(_) => {
                     return Err(
-                        "Impossible de vérifier si le champ actif est protégé; capture refusée."
+                        "Impossible de vérifier si le champ actif est protégé. La capture est refusée."
                             .into(),
                     );
                 }
@@ -202,7 +202,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
     let text = text
         .filter(|text| !text.trim().is_empty())
         .ok_or_else(|| {
-            let mut message = "Rien à traduire dans la fenêtre active.".to_string();
+            let mut message = "Rien à traiter dans la fenêtre active.".to_string();
             // For the real capture matrix only (FLOWTRANSLATE_CAPTURE_TRACE): which step of
             // the synthetic copy gave up and how old the user's last copy is. Never any text.
             if std::env::var_os("FLOWTRANSLATE_CAPTURE_TRACE").is_some() {
@@ -212,7 +212,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
             message
         })?;
     if text.chars().count() > 6000 {
-        return Err("Sélection trop longue (6 000 caractères).".into());
+        return Err("La sélection dépasse 6 000 caractères. Sélectionnez un passage plus court.".into());
     }
     ensure_source_unchanged(source_window)?;
     let can_replace = replaceable(origin, true, source_class, false);
@@ -269,20 +269,20 @@ fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
 /// not a change (the paste goes to the same control).
 pub fn validate_target(target: &TargetIdentity) -> Result<(), String> {
     if crate::host::foreground() != target.native_window {
-        return Err("La fenêtre source a changé; remplacement refusé.".into());
+        return Err("La fenêtre source a changé. Copiez le résultat.".into());
     }
     if target.control != 0 && crate::host::focused_control(target.native_window).is_some_and(|(handle, _)| handle != target.control) {
-        return Err("Le champ actif a changé; remplacement refusé.".into());
+        return Err("Le champ actif a changé. Copiez le résultat.".into());
     }
     let Some(runtime_id) = &target.runtime_id else { return Ok(()) };
     let Some(element) = ui_automation().ok().and_then(|a| a.get_focused_element().ok()) else { return Ok(()) };
     if element.get_runtime_id().is_ok_and(|id| id != *runtime_id) {
-        return Err("La cible a changé; remplacement refusé.".into());
+        return Err("La cible a changé. Copiez le résultat.".into());
     }
     if target.anchor.is_none() { return Ok(()); }
     if let Ok((text, anchor, selection_len, _)) = selection(&element) {
         if text != target.selected_text || selection_len != target.selection_len || Some(target.anchor) != Some(anchor) {
-            return Err("La sélection a changé; remplacement refusé.".into());
+            return Err("La sélection a changé. Copiez le résultat.".into());
         }
     }
     Ok(())
@@ -334,13 +334,13 @@ fn field_text(target: &TargetIdentity) -> Option<String> {
 /// and puts the clipboard back while it still holds our write. `reactivate` (the menu
 /// of the glass) brings the source window back to the front first.
 pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<Delivery, String> {
-    if value.contains('\0') { return Err("Le résultat contient un caractère nul; remplacement refusé.".into()); }
-    if !target.editable { return Err("Ce champ n’est pas modifiable; utilisez Copier.".into()); }
+    if value.contains('\0') { return Err("Le résultat contient un caractère nul. Copiez le résultat.".into()); }
+    if !target.editable { return Err("Ce champ n’est pas modifiable. Copiez le résultat.".into()); }
     #[cfg(windows)]
     if reactivate && crate::host::foreground() != target.native_window {
         use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::SetForegroundWindow};
         if !unsafe { SetForegroundWindow(HWND(target.native_window as *mut _)) }.as_bool() {
-            return Err("Impossible de réactiver la fenêtre source; utilisez Copier.".into());
+            return Err("Impossible de réactiver la fenêtre source. Copiez le résultat.".into());
         }
         std::thread::sleep(Duration::from_millis(60));
     }
@@ -348,7 +348,7 @@ pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<D
     let _ = reactivate;
     validate_target(target)?;
     if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
-        return Err("Relâchez les touches du raccourci, puis réessayez depuis la bulle.".into());
+        return Err("Les touches du raccourci sont encore enfoncées. Relâchez-les, puis réessayez.".into());
     }
     validate_target(target)?;
     let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
@@ -360,7 +360,7 @@ pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<D
     }
     if let Err(sent) = crate::host::send_paste_chord() {
         if sent == 0 { let _ = keeper.restore(sequence); }
-        return Err("Le collage a été bloqué par Windows ou par l’application; utilisez Copier.".into());
+        return Err("Collage impossible ici. Copiez le résultat.".into());
     }
     let started = Instant::now();
     let mut readable = true;

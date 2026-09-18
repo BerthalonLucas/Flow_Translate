@@ -10,7 +10,7 @@ use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
-    Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST},
+    Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY},
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{
@@ -268,6 +268,13 @@ pub fn monitor_at(location: Option<Rect>) -> (Rect, f64, isize) {
     };
     let (work, scale) = monitor_info(handle.0 as isize);
     (work, scale, handle.0 as isize)
+}
+
+/// The DPI scale of the primary screen, where the taskbar lives: the notification
+/// area picks its glyph from it, not from the screen the cursor happens to be on.
+pub fn primary_scale() -> f64 {
+    let handle = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+    monitor_info(handle.0 as isize).1
 }
 
 /// The screen under the cursor (test override honoured), as an HMONITOR value.

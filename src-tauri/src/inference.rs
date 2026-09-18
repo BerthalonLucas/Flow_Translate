@@ -1,6 +1,6 @@
 use crate::{
     settings::validate_endpoint,
-    types::{Profile, StreamKind},
+    types::{Mode, Profile, StreamKind},
 };
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -189,6 +189,7 @@ pub fn clean_output(text: &str) -> String {
 
 pub async fn stream<F>(
     profile: Profile,
+    engine: Mode,
     instruction: String,
     text: String,
     cancel: CancellationToken,
@@ -212,9 +213,9 @@ where
             req = req.bearer_auth(&profile.api_key);
         }
         if cancel.is_cancelled() {
-            return Err("Traduction annulée.".into());
+            return Err("Traitement annulé.".into());
         }
-        let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traduction annulée.".into()),r=req.send()=>r.map_err(|e|unreachable_message(&profile.endpoint, &e))?};
+        let response = tokio::select! {_ = cancel.cancelled()=>return Err("Traitement annulé.".into()),r=req.send()=>r.map_err(|e|unreachable_message(&profile.endpoint, &e, engine))?};
         if response.status().is_success() {
             break response;
         }
@@ -229,7 +230,9 @@ where
             thinking_switch = false;
             continue;
         }
-        return Err(format!("Le serveur a répondu HTTP {status}."));
+        return Err(format!(
+            "Le serveur a répondu HTTP {status}. Vérifiez l’adresse et la clé dans les Réglages."
+        ));
     };
     let mut bytes = response.bytes_stream();
     let mut decoder = SseDecoder::default();
@@ -239,7 +242,7 @@ where
     let mut stop = false;
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => return Err("Traduction annulée.".into()),
+            _ = cancel.cancelled() => return Err("Traitement annulé.".into()),
             next = bytes.next() => match next {
                 Some(Ok(part)) => for item in decoder.push(&part)? {
                     match item {
@@ -258,7 +261,7 @@ where
                         }
                     }
                 },
-                Some(Err(_)) => return Err("Le flux du serveur a été interrompu.".into()),
+                Some(Err(_)) => return Err("Le flux du serveur a été interrompu. Réessayez.".into()),
                 None => break,
             }
         }
@@ -268,18 +271,25 @@ where
     if !tail.is_empty() { result.push_str(&tail); emit(Chunk { kind: StreamKind::Delta, text: Some(tail), message: None })?; }
     let result = clean_output(&result);
     if !done || !stop || result.is_empty() {
-        return Err("Le serveur n’a pas confirmé une réponse complète.".into());
+        return Err("Le serveur n’a pas confirmé une réponse complète. Réessayez.".into());
     }
     if cancel.is_cancelled() {
-        return Err("Traduction annulée.".into());
+        return Err("Traitement annulé.".into());
     }
     Ok(result)
 }
 
-/// The raw reqwest text names the full URL and the transport; the glass only
-/// needs the host and what to do about it.
-fn unreachable_message(endpoint: &str, error: &reqwest::Error) -> String {
-    let target = reqwest::Url::parse(endpoint)
+/// How far the request got. The raw reqwest text names the full URL and the transport;
+/// the glass only needs the host and what to do about it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reach {
+    Timeout,
+    Refused,
+    Other,
+}
+
+fn host_port(endpoint: &str) -> String {
+    reqwest::Url::parse(endpoint)
         .ok()
         .and_then(|url| {
             url.host_str().map(|host| match url.port() {
@@ -287,17 +297,37 @@ fn unreachable_message(endpoint: &str, error: &reqwest::Error) -> String {
                 None => host.to_string(),
             })
         })
-        .unwrap_or_else(|| "configuré".to_string());
-    if error.is_timeout() {
-        format!("Le serveur {target} ne répond pas.")
-    } else if error.is_connect() {
-        format!("Serveur {target} injoignable. Démarrez-le ou changez de profil dans les Réglages.")
-    } else {
-        format!("Connexion au serveur {target} impossible.")
+        .unwrap_or_else(|| "l’adresse configurée".to_string())
+}
+
+/// « Raison. Quoi faire. », always. The colon of an `hôte:port` is an ordinary colon:
+/// no non-breaking space there, whatever the interface rule says elsewhere.
+fn unreachable_text(target: &str, reach: Reach, engine: Mode) -> String {
+    match reach {
+        Reach::Timeout => format!(
+            "Le moteur {} ne répond pas. Vérifiez qu’il est démarré sur {target}.",
+            engine.label()
+        ),
+        Reach::Refused => format!("Aucune réponse de {target}. Démarrez le serveur, puis vérifiez."),
+        Reach::Other => format!(
+            "Connexion au moteur {} impossible. Vérifiez son adresse dans les Réglages.",
+            engine.label()
+        ),
     }
 }
 
-pub async fn check(profile: &Profile) -> Result<(), String> {
+fn unreachable_message(endpoint: &str, error: &reqwest::Error, engine: Mode) -> String {
+    let reach = if error.is_timeout() {
+        Reach::Timeout
+    } else if error.is_connect() {
+        Reach::Refused
+    } else {
+        Reach::Other
+    };
+    unreachable_text(&host_port(endpoint), reach, engine)
+}
+
+pub async fn check(profile: &Profile, engine: Mode) -> Result<(), String> {
     let endpoint = api_url(&profile.endpoint, "models")?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -311,17 +341,17 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
     let response = req
         .send()
         .await
-        .map_err(|e| unreachable_message(&profile.endpoint, &e))?;
+        .map_err(|e| unreachable_message(&profile.endpoint, &e, engine))?;
     if !response.status().is_success() {
         return Err(format!(
-            "Le serveur a répondu HTTP {}.",
+            "Le serveur a répondu HTTP {}. Vérifiez l’adresse et la clé dans les Réglages.",
             response.status().as_u16()
         ));
     }
     let value: Value = response
         .json()
         .await
-        .map_err(|_| "Réponse /v1/models invalide.".to_string())?;
+        .map_err(|_| "Réponse /v1/models invalide. Vérifiez l’adresse dans les Réglages.".to_string())?;
     let found = value
         .get("data")
         .and_then(Value::as_array)
@@ -331,7 +361,7 @@ pub async fn check(profile: &Profile) -> Result<(), String> {
         });
     if !found {
         return Err(format!(
-            "Le modèle {} n’est pas exposé par le serveur.",
+            "Le modèle {} n’est pas exposé par le serveur. Choisissez-en un autre dans les Réglages.",
             profile.model
         ));
     }
@@ -390,6 +420,29 @@ mod tests {
         assert_eq!(prefix.finish(), "<th");
     }
     #[test]
+    fn an_unreachable_engine_is_named_and_the_host_port_keeps_an_ordinary_colon() {
+        assert_eq!(
+            unreachable_text("127.0.0.1:8002", Reach::Timeout, Mode::Quality),
+            "Le moteur Qualité ne répond pas. Vérifiez qu’il est démarré sur 127.0.0.1:8002."
+        );
+        assert_eq!(
+            unreachable_text("127.0.0.1:8001", Reach::Refused, Mode::Fast),
+            "Aucune réponse de 127.0.0.1:8001. Démarrez le serveur, puis vérifiez."
+        );
+        for reach in [Reach::Timeout, Reach::Refused, Reach::Other] {
+            for engine in [Mode::Fast, Mode::Quality] {
+                let text = unreachable_text("127.0.0.1:8001", reach, engine);
+                assert!(!text.contains('\u{00A0}'), "{text}");
+                // « Raison. Quoi faire. »
+                assert_eq!(text.matches(". ").count(), 1, "{text}");
+                assert!(text.ends_with('.'), "{text}");
+            }
+        }
+        assert_eq!(host_port("http://127.0.0.1:8001/v1"), "127.0.0.1:8001");
+        assert_eq!(host_port("https://translate.example.test"), "translate.example.test");
+    }
+
+    #[test]
     fn the_final_text_loses_a_wrapping_fence_and_trailing_space_but_keeps_its_quotes() {
         assert_eq!(clean_output("```text\nBonjour\n```"), "Bonjour");
         assert_eq!(clean_output("```\nBonjour\n```\n"), "Bonjour");
@@ -406,9 +459,10 @@ mod tests {
             model: format!("flowtranslate-{mode}"),
             api_key: String::new(),
         };
-        check(&profile).await.expect("live model discovery");
+        let engine = if mode == "fast" { Mode::Fast } else { Mode::Quality };
+        check(&profile, engine).await.expect("live model discovery");
         let mut deltas = String::new();
-        let result = stream(profile.clone(), instruction(), "Please confirm the budget of 1250 EUR for project Orion.".into(), CancellationToken::new(), |chunk| {
+        let result = stream(profile.clone(), engine, instruction(), "Please confirm the budget of 1250 EUR for project Orion.".into(), CancellationToken::new(), |chunk| {
             if let Some(text) = chunk.text { deltas.push_str(&text); }
             Ok(())
         }).await.expect("live native streaming translation");
@@ -416,11 +470,11 @@ mod tests {
         assert!(result.contains("Orion") && result.contains("EUR"));
         let cancel = CancellationToken::new();
         let trigger = cancel.clone();
-        let cancelled = stream(profile, instruction(), "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), cancel, |chunk| {
+        let cancelled = stream(profile, engine, instruction(), "Please translate this message carefully and confirm that the delivery is scheduled for Thursday morning.".into(), cancel, |chunk| {
             if chunk.text.is_some() { trigger.cancel(); }
             Ok(())
         }).await;
-        assert_eq!(cancelled.unwrap_err(), "Traduction annulée.");
+        assert_eq!(cancelled.unwrap_err(), "Traitement annulé.");
     }
     #[test]
     fn fragmented_utf8_and_frames() {

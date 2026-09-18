@@ -20,6 +20,40 @@ struct SecretPayload {
 }
 
 impl HistoryStore {
+    /// A store that has not opened anything. Its operations fail one by one, which is
+    /// what an unreadable database should cost: a startup used to die on it.
+    fn unchecked(root: &Path) -> Self {
+        Self { path: root.join("history.sqlite3") }
+    }
+
+    /// Startup path. A database that refuses to open is set aside — never deleted — and
+    /// a new one is created next to it; if even that fails, the application starts
+    /// anyway and every history call answers with its own error.
+    pub fn recover(root: &Path) -> Self {
+        if let Ok(store) = Self::new(root) {
+            return store;
+        }
+        let base = root.join("history.sqlite3");
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        for extra in ["", "-wal", "-shm"] {
+            let from = root.join(format!("history.sqlite3{extra}"));
+            let to = root.join(format!("history.illisible-{stamp}.sqlite3{extra}"));
+            if from.exists() && !to.exists() {
+                let _ = std::fs::rename(from, to);
+            }
+        }
+        let _ = base;
+        Self::new(root).unwrap_or_else(|_| Self::unchecked(root))
+    }
+
+    /// One row, decrypted, for « Copier le résultat » in the Réglages.
+    pub fn get(&self, id: &str) -> Result<HistoryEntry, String> {
+        self.list()?
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| "Copie indisponible. Réessayez.".to_string())
+    }
+
     pub fn new(root: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(root)
             .map_err(|_| "Impossible de créer le dossier d’historique.".to_string())?;
