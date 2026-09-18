@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Bulle → pilule d’attente → verre</title>
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="common.css">
+<script src="icons.js"></script><script src="common.js"></script>
+</head>
+<body>
+<script>
+  // L’instant d’après, variante V5, mail clair. Deux chemins : Afficher (Professionnaliser, Maj) puis Remplacer (Corriger).
+  var pro = 'À la suite de notre échange de ce matin, je vous transmets le devis corrigé pour la commande du mois prochain. Il intègre les remarques de votre équipe sur les délais de livraison et ajuste les quantités du premier lot, comme convenu.';
+  var frames = [
+    { id: 't1-bulle', label: '1 · Ctrl+Alt+Espace, ↓ puis Maj enfoncée : Professionnaliser va afficher au lieu de remplacer', ovl: function () { return window.variants.v5({ canReplace: true, hl: 1, shift: true }); } },
+    { id: 't2-fondu', label: '2 · +60 ms après Entrée : la bulle s’efface (100 ms), la pilule d’attente apparaît sur sa ligne haute', ovl: function () { return '<div class="fade">' + window.variants.v5({ canReplace: true, hl: 1, shift: true }) + '</div>' + window.pieces.waitPill({}); } },
+    { id: 't3-attente', label: '3 · +1,5 s : pilule d’attente seule, balayage lent', ovl: function () { return window.pieces.waitPill({ slow: true }); } },
+    { id: 't4-verre', label: '4 · résultat : le verre s’ouvre depuis la ligne de la pilule ; Remplacer est dans la pilule tant que la sélection tient', ovl: function () { return window.pieces.glass({ tag: 'Professionnaliser', text: pro, replace: true }); } },
+    { id: 't5-remplace', label: '5 · autre chemin, Corriger + Entrée : pilule seule, coche 900 ms, le paragraphe est réécrit sur place', replaced: true, ovl: function () { return window.pieces.waitPill({ done: true }); } }
+  ];
+  frames.forEach(function (f) {
+    var wrap = document.createElement('div');
+    wrap.innerHTML = window.contexts.mail({ replaced: !!f.replaced });
+    var scene = wrap.firstElementChild;
+    var ovl = document.createElement('div');
+    ovl.className = 'ovl';
+    ovl.setAttribute('data-theme', 'dark');
+    ovl.innerHTML = f.ovl();
+    scene.appendChild(ovl);
+    if (!f.replaced) scene.insertAdjacentHTML('beforeend', window.cursorSvg);
+    var shot = document.createElement('div');
+    shot.className = 'shot crop';
+    shot.id = f.id;
+    shot.innerHTML = '<div class="label">' + f.label + '</div>';
+    shot.appendChild(scene);
+    document.body.appendChild(shot);
+  });
+  document.querySelectorAll('.scene').forEach(window.place);
+  // t5 : la fenêtre native est réservée à la capture, sur l’ancre d’origine. Le texte corrigé a gagné une ligne (24 px) :
+  // la pilule reste où elle était, donc 24 px plus haut que ce que donne l’ancre recalculée.
+  var t5 = document.querySelector('#t5-remplace .ovl');
+  t5.style.top = (parseFloat(t5.style.top) - 24) + 'px';
+</script>
+</body>
+</html>

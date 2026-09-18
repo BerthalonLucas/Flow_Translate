@@ -2,7 +2,7 @@
 
 17 sept. 2026 · base 0.4.0 · relue par un contradicteur (§ 14) · **questions tranchées par Lucas le 17/09 (§ 13)** · lecture : un quart d’heure
 
-**[code]** vérifié dans le dépôt · **[proto]** à confirmer par le prototype (§ 12) · **[Q n]** question du § 13 · captures `visuel/…` : maquettes de l’étude visuelle du 17/09, gardées hors du dépôt (contenu d’exemple).
+**[code]** vérifié dans le dépôt · **[proto]** à confirmer par le prototype (§ 12) · **[Q n]** question du § 13 · captures `visuel/…` : [`visuel/`](visuel/), maquettes de l’étude visuelle du 17/09.
 
 ---
 

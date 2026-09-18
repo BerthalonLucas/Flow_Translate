@@ -1,0 +1,102 @@
+/* Maquettes de la bulle de choix d’action — contextes et variantes. Tokens et bundle du DS chargés à côté. */
+html, body { margin: 0; background: #3a3b40; font-family: var(--font-sans); }
+body { padding: 24px; display: grid; gap: 24px; justify-content: start; }
+
+/* ——— Scène : une application à l’échelle 1 ——— */
+.shot { display: grid; grid-template-rows: 24px 1fr; width: 900px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+.shot .label { display: flex; align-items: center; padding: 0 10px; background: #26272b; color: #cfd2d8; font: 400 12px/16px var(--font-small); }
+.scene { position: relative; width: 900px; height: 600px; overflow: hidden; }
+.ft-menu-item { box-sizing: border-box; }
+.ft-menu-item .ell { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker .row .tag-out { margin-left: auto; color: var(--glass-ink-muted); font: 600 12px/16px var(--font-small); }
+.shot.crop { grid-template-rows: 24px 360px; }
+.shot.crop .scene { margin-top: -200px; }
+
+/* Sélection à la Windows (Chromium/Edge) */
+.sel { background: rgba(0,120,212,.32); color: inherit; border-radius: 0; }
+.cursor { position: absolute; z-index: 8; width: 13px; height: 20px; pointer-events: none; }
+
+/* ——— Contexte clair : Outlook Web, nouveau message ——— */
+.mail { background: #ffffff; color: #242424; font: 15px/24px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+.mail .top { height: 48px; background: #0f6cbd; display: flex; align-items: center; padding: 0 16px; gap: 18px; color: #fff; font: 600 15px/20px var(--font-sans); }
+.mail .top .grid { width: 20px; height: 20px; background: radial-gradient(circle, #fff 1.6px, transparent 1.8px) 0 0/6.5px 6.5px; opacity: .9; }
+.mail .top .search { margin-left: 120px; width: 420px; height: 32px; border-radius: 6px; background: rgba(255,255,255,.92); color: #616161; font: 400 14px/32px var(--font-sans); padding: 0 12px; }
+.mail .ribbon { height: 44px; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; gap: 4px; padding: 0 16px; font: 400 14px/20px var(--font-sans); color: #242424; }
+.mail .ribbon .send { height: 32px; padding: 0 14px 0 10px; border-radius: 4px; background: #0f6cbd; color: #fff; font-weight: 600; line-height: 32px; margin-right: 12px; }
+.mail .ribbon .tb { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 4px; color: #424242; font: 600 14px/20px var(--font-sans); }
+.mail .ribbon .sep { width: 1px; height: 22px; background: #e0e0e0; margin: 0 6px; }
+.mail .field { display: flex; align-items: center; height: 40px; margin: 0 24px; border-bottom: 1px solid #e0e0e0; font: 400 14px/20px var(--font-sans); color: #242424; }
+.mail .field .lbl { width: 56px; color: #616161; }
+.mail .field .chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px 0 3px; border-radius: 13px; background: #f0f0f0; }
+.mail .field .chip .av { width: 20px; height: 20px; border-radius: 50%; background: #c239b3; color: #fff; font: 600 9px/20px var(--font-sans); text-align: center; }
+.mail .body { padding: 16px 24px 0 24px; width: 640px; }
+.mail .body p { margin: 0 0 24px; }
+.mail .body p.tight { margin-bottom: 0; }
+
+/* ——— Contexte sombre : messagerie d’équipe, fil de discussion ——— */
+.chat { display: grid; grid-template-columns: 64px 260px 1fr; background: #1f1f1f; color: #d6d6d6; font: 14px/20px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+.chat .rail { background: #141414; display: grid; grid-auto-rows: 56px; justify-items: center; align-items: center; padding-top: 8px; }
+.chat .rail i { display: block; width: 22px; height: 22px; border-radius: 6px; background: #3a3a3a; }
+.chat .rail i.on { background: #7f85f5; }
+.chat .list { background: #292929; border-right: 1px solid #333; padding: 14px 0; }
+.chat .list h3 { margin: 0 16px 12px; font: 700 18px/24px var(--font-sans); color: #fff; }
+.chat .list .row { display: grid; grid-template-columns: 32px 1fr; gap: 10px; align-items: center; padding: 8px 16px; }
+.chat .list .row.on { background: #3d3d3d; }
+.chat .list .row .av { width: 32px; height: 32px; border-radius: 50%; background: #5b5fc7; }
+.chat .list .row .n { font: 600 14px/18px var(--font-sans); color: #fff; }
+.chat .list .row .s { font: 400 12px/16px var(--font-small); color: #adadad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat .main { position: relative; }
+.chat .head { height: 56px; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0 24px; gap: 12px; font: 700 16px/20px var(--font-sans); color: #fff; }
+.chat .head .av { width: 32px; height: 32px; border-radius: 50%; background: #5b5fc7; }
+.chat .msgs { padding: 20px 24px 0; display: grid; gap: 18px; }
+.chat .msg { display: grid; grid-template-columns: 32px 1fr; gap: 12px; }
+.chat .msg .av { width: 32px; height: 32px; border-radius: 50%; background: #c4314b; }
+.chat .msg.me .av { background: #5b5fc7; }
+.chat .msg .meta { font: 600 13px/18px var(--font-sans); color: #fff; margin-bottom: 4px; }
+.chat .msg .meta span { font: 400 12px/18px var(--font-small); color: #adadad; margin-left: 8px; }
+.chat .msg .txt { width: 480px; padding: 10px 14px; border-radius: 8px; background: #292929; color: #d6d6d6; }
+.chat .msg.me .txt { background: #2f2f4a; }
+.chat .compose { position: absolute; left: 24px; right: 24px; bottom: 20px; height: 44px; border-radius: 8px; background: #292929; border: 1px solid #3d3d3d; color: #8a8a8a; font: 400 14px/44px var(--font-sans); padding: 0 14px; }
+
+/* ——— Boîte d’overlay : origine = coin haut gauche du verre, ligne de la pilule ——— */
+.ovl { position: absolute; width: 380px; z-index: 5; color: var(--glass-ink); font-family: var(--font-sans); }
+.ovl .ft-wait { position: absolute; top: 0; right: 16px; }
+.ovl .ft-glass { position: absolute; top: 14px; left: 0; right: 0; }
+.ovl .ft-pill { animation: none; }
+.ovl .ft-menu, .ovl .picker { animation: none; }
+
+/* ——— Variantes de bulle ——— */
+.picker { position: absolute; box-sizing: border-box; padding: 4px; border: 1px solid var(--glass-line); border-radius: var(--radius-xl); background: var(--glass); box-shadow: var(--shadow-menu); color: var(--glass-ink); }
+.picker .row { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius-lg); font: 400 13px/16px var(--font-sans); color: var(--glass-ink); position: relative; }
+.picker .row .ft-svg { color: var(--glass-ink-muted); }
+.picker .row .out { margin-left: auto; color: var(--glass-ink-subtle); }
+.picker .row.hl { background: var(--glass-hover); }
+.picker .row.hl .ft-svg { color: var(--glass-ink); }
+.picker .row.hl::before { content: ""; position: absolute; left: 0; top: 10px; width: 3px; height: 12px; border-radius: 2px; background: var(--signal); }
+.picker .row .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker .row .name.dim { color: var(--glass-ink-muted); }
+.picker .sep { height: 1px; margin: 4px 6px; background: var(--glass-divider); }
+.picker .cap { padding: 6px 10px 4px; font: 400 12px/16px var(--font-small); color: var(--glass-ink-subtle); }
+.picker .foot { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; font: 400 12px/16px var(--font-small); color: var(--glass-ink-muted); white-space: nowrap; }
+.picker .foot .r { margin-left: auto; color: var(--glass-ink-subtle); }
+.picker .foot .warn { color: var(--glass-warning); }
+.gkey { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--glass-line); border-radius: var(--radius-xs); background: var(--glass-raised); color: var(--glass-ink-muted); font: 600 12px/16px var(--font-small); }
+.gkeys { display: inline-flex; gap: 3px; }
+.picker .row.hl .gkey { color: var(--glass-ink); }
+.picker .row .gkey { margin-left: 4px; }
+
+/* Barre horizontale : famille de la pilule */
+.strip { position: absolute; top: 0; display: flex; align-items: center; height: 32px; padding: 0 4px; border-radius: var(--radius-full); background: var(--glass); box-shadow: inset 0 0 0 1px var(--glass-line), var(--shadow-pill); white-space: nowrap; }
+.strip .it { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 8px; border-radius: 13px; font: 400 13px/16px var(--font-sans); color: var(--glass-ink); }
+.strip .it .ft-svg { color: var(--glass-ink-muted); }
+.strip .it.hl { background: var(--glass-hover); }
+.strip .it.hl .ft-svg { color: var(--glass-ink); }
+.strip .it.hl::before { content: ""; width: 8px; height: 4px; border-radius: 2px; background: var(--signal); }
+.strip .rule { width: 1px; height: 14px; margin: 0 2px; background: var(--glass-divider); }
+.strip .tog { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 7px; border-radius: 13px; font: 600 12px/16px var(--font-small); color: var(--glass-ink-muted); }
+.strip .tog .ft-svg { color: var(--glass-ink-muted); }
+.strip .tog.off { opacity: var(--opacity-disabled); }
+
+/* Transition */
+.fade { opacity: .35; }
+.gone { opacity: 0; }

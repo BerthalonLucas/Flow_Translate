@@ -19,7 +19,8 @@ depuis un autre poste.
 | Chemin | Contenu |
 |---|---|
 | `docs/design-system/` | Le design system 1.0 « Graphite & Surligneur » : `README.md` (principes, thèmes, focus), `tokens.json` et `tokens.css` (source unique des variables, déjà copiée en `src/tokens.css`), `guidelines/` (dont `20-de-0-4-0-a-1-0.md`, la marche à suivre du portage), `components/` (README par composant + implémentation de référence `bundle.css` / `bundle.js`), `assets/` (SVG des icônes, logos, glyphes de zone de notification), `previews/` (les 56 rendus des aperçus, thèmes sombre et clair), `tools/` (scripts qui construisent le bundle, génèrent `tokens.css`, rendent les aperçus et contrôlent les contrastes) |
-| `docs/UX-SPEC.md` | La spec UX « Une porte, des lettres » : le geste, la bulle d'actions, moteurs, erreurs, § 12 le découpage en versions jusqu'à la 1.0, § 13 les onze décisions de Lucas du 17/09 |
+| `docs/ux/SPEC-UX.md` | La spec UX « Une porte, des lettres » : le geste, la bulle d'actions, moteurs, erreurs, § 12 le découpage en versions jusqu'à la 1.0, § 13 les onze décisions de Lucas du 17/09 |
+| `docs/ux/visuel/` | Les maquettes de l’étude visuelle de la bulle d’actions (V1 à V5 et les transitions), avec leur source HTML et le script de rendu ; contenu d’exemple neutre |
 | `docs/0.5.0/PLAN.md` | Le plan retenu : décisions d'interprétation, contrat entre unités, périmètre de chaque unité, ce qui reste après la fusion, hors périmètre |
 | `docs/0.5.0/CARTES.md` | Trois lectures du dépôt à la base `2fbfdac` : le front, le natif, les exigences 0.5.0 |
 | `docs/0.5.0/CRITIQUES-DU-PLAN.md` | Ce qu'une relecture adverse a trouvé dans les deux premières versions du plan |
@@ -64,9 +65,6 @@ avant de les fusionner fait partie du travail.
 
 ## Ce qui n'est pas dans le dépôt, volontairement
 
-- Les maquettes de l'étude visuelle de la bulle d'actions (variantes V1 à V5 et transitions) : elles
-  montrent un faux mail dont le contenu d'exemple vient du contexte professionnel. La spec les cite
-  (`visuel/…`) mais elles restent hors du dépôt.
 - L'archive `FlowTranslate exploration et prototype.zip`, les clés, les poids de modèles, `release/`.
 
 ## Rappels de travail

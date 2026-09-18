@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Bulle de choix d’action — variantes</title>
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="common.css">
+<script src="icons.js"></script><script src="common.js"></script>
+</head>
+<body>
+<script>
+  // Quatre variantes × deux contextes. Sélection remplaçable dans le mail (compose), pas dans le fil (message reçu).
+  var scenes = [
+    ['v1', 'mail'], ['v1', 'chat'],
+    ['v2', 'mail'], ['v2', 'chat'],
+    ['v3', 'mail'], ['v3', 'chat'],
+    ['v4', 'mail'], ['v4', 'chat'],
+    ['v5', 'mail'], ['v5', 'chat']
+  ];
+  var titles = { v1: 'V1 · menu 196 px, chiffres, ligne de sortie', v2: 'V2 · liste 280 px, lettres, sortie par ligne, pied moteur', v3: 'V3 · en-tête, lettres, segment Remplacer | Afficher, puce moteur', v4: 'V4 · barre horizontale sur la ligne de la pilule', v5: 'V5 · hybride : liste 280 px, la ligne active dit sa sortie en un mot, pied moteur + raccourci' };
+  scenes.forEach(function (s) {
+    var variant = s[0], ctx = s[1];
+    var wrap = document.createElement('div');
+    wrap.innerHTML = window.contexts[ctx]();
+    var scene = wrap.firstElementChild;
+    var ovl = document.createElement('div');
+    ovl.className = 'ovl';
+    ovl.setAttribute('data-theme', 'dark');
+    ovl.innerHTML = window.variants[variant]({ canReplace: ctx === 'mail', hl: 0 });
+    scene.appendChild(ovl);
+    scene.insertAdjacentHTML('beforeend', window.cursorSvg);
+    var shot = document.createElement('div');
+    shot.className = 'shot';
+    shot.id = variant + '-' + ctx;
+    shot.innerHTML = '<div class="label">' + titles[variant] + ' · ' + (ctx === 'mail' ? 'mail en cours d’écriture, sélection remplaçable' : 'message reçu, sélection non remplaçable') + '</div>';
+    shot.appendChild(scene);
+    document.body.appendChild(shot);
+  });
+  document.querySelectorAll('.scene').forEach(window.place);
+</script>
+</body>
+</html>
