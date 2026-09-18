@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { bridge } from './bridge';
+import { overlay } from './overlay-ipc';
 import { initialTranslationState, translationReducer } from './reducer';
 import type { Capture, CaptureNotice, CaptureTarget, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
@@ -7,7 +7,9 @@ import type { Capture, CaptureNotice, CaptureTarget, Mode, Screen, Settings, Str
 const NOTICE_MS = 4000;
 // A « replace » capture whose paste never reports back opens its glass after this.
 const DELIVERY_MS = 3000;
-export type Notice = { id: number; message: string };
+// tone: a notice is an aside (nothing to process) unless it reports a refused paste,
+// which is an error and must not fade on its own.
+export type Notice = { id: number; message: string; tone?: 'info' | 'danger' };
 
 export function useTranslation(readyOnMount = false) {
   const [state, dispatch] = useReducer(translationReducer, initialTranslationState);
@@ -37,12 +39,12 @@ export function useTranslation(readyOnMount = false) {
   }, [discardPending]);
 
   useEffect(() => {
-    settingsReadyRef.current = bridge.getSettings().then(next => { settingsRef.current = next; setSettings(next); return true; }).catch(() => false);
+    settingsReadyRef.current = overlay.getSettings().then(next => { settingsRef.current = next; setSettings(next); return true; }).catch(() => false);
     return () => { discardPending(); window.clearTimeout(noticeTimer.current); };
   }, [discardPending]);
-  const showNotice = useCallback((message: string) => {
+  const showNotice = useCallback((message: string, tone: 'info' | 'danger' = 'info') => {
     window.clearTimeout(noticeTimer.current);
-    setNotice({ id: Date.now(), message });
+    setNotice({ id: Date.now(), message, tone });
     noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
 
@@ -52,14 +54,14 @@ export function useTranslation(readyOnMount = false) {
     discardPending();
     requestRef.current = id;
     dispatch({ type: 'START', requestId: id, mode });
-    void bridge.translate({ id, captureId: capture.id, text: capture.text, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate-fr' }).catch((error: unknown) => {
-      if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : 'L’action n’a pas pu démarrer.' } });
+    void overlay.translate({ id, captureId: capture.id, text: capture.text, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate-fr' }).catch((error: unknown) => {
+      if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : 'L’action n’a pas pu démarrer. Réessayez.' } });
     });
   }, [discardPending]);
 
   const receiveCapture = useCallback((capture: Capture) => {
     if (handledCaptureRef.current === capture.id) return;
-    if (requestRef.current) void bridge.cancel(requestRef.current).catch(() => undefined);
+    if (requestRef.current) void overlay.cancel(requestRef.current).catch(() => undefined);
     discardPending();
     requestRef.current = null;
     handledCaptureRef.current = capture.id;
@@ -87,15 +89,15 @@ export function useTranslation(readyOnMount = false) {
     let off: Array<() => void> = [];
     let disposed = false;
     void Promise.all([
-      bridge.on<Capture>('capture', receiveCapture),
-      bridge.on<StreamEvent>('translation', event => {
+      overlay.on<Capture>('capture', receiveCapture),
+      overlay.on<StreamEvent>('translation', event => {
         if (event.requestId !== requestRef.current || closingRef.current) return;
         if (event.kind === 'delta') {
           pending.current.requestId = event.requestId;
           pending.current.text += event.text ?? '';
         } else { flush(); dispatch({ type: 'STREAM', event }); }
       }),
-      bridge.on<{ captureId: string }>('overlay-dismiss-requested', ({ captureId }) => {
+      overlay.on<{ captureId: string }>('overlay-dismiss-requested', ({ captureId }) => {
         if (captureId !== captureRef.current?.id) return;
         discardPending();
         requestRef.current = null;
@@ -103,19 +105,19 @@ export function useTranslation(readyOnMount = false) {
         setClosingCaptureId(captureId);
         dispatch({ type: 'CANCEL' });
       }),
-      bridge.on<Settings>('settings-changed', next => { settingsRef.current = next; setSettings(next); }),
-      bridge.on<{ captureId: string; message: string }>('target-invalidated', invalidation => {
+      overlay.on<Settings>('settings-changed', next => { settingsRef.current = next; setSettings(next); }),
+      overlay.on<{ captureId: string; message: string }>('target-invalidated', invalidation => {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       }),
-      bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
-      bridge.on<CaptureNotice>('capture-notice', ({ message }) => showNotice(message)),
-      bridge.on<ResultDelivery>('result-delivery', event => {
+      overlay.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
+      overlay.on<CaptureNotice>('capture-notice', ({ message }) => showNotice(message)),
+      overlay.on<ResultDelivery>('result-delivery', event => {
         if (event.requestId !== requestRef.current || closingRef.current) return;
         dispatch({ type: 'DELIVERY', event });
         // Pasted: the pill's check is the whole feedback; only a fallback needs its reason.
-        if (event.status === 'fallback') showNotice(event.message);
+        if (event.status === 'fallback') showNotice(event.message, 'danger');
       }),
-      bridge.on<Screen>('work-area', next => setScreen(next)),
+      overlay.on<Screen>('work-area', next => setScreen(next)),
     ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
       else {
@@ -123,7 +125,7 @@ export function useTranslation(readyOnMount = false) {
         if (readyOnMount) {
           try {
             if (!await settingsReadyRef.current) throw new Error('settings unavailable');
-            const capture = await bridge.frontendReady();
+            const capture = await overlay.frontendReady();
             if (capture && !disposed) receiveCapture(capture);
           } catch { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); }
         }
@@ -137,21 +139,21 @@ export function useTranslation(readyOnMount = false) {
     if (state.phase !== 'complete' || state.delivery !== 'pending' || !state.requestId) return;
     const requestId = state.requestId;
     const timer = window.setTimeout(() => {
-      const message = 'Le remplacement n’a pas répondu; le résultat reste dans la bulle.';
+      const message = 'Le remplacement n’a pas répondu. Copiez le résultat.';
       dispatch({ type: 'DELIVERY', event: { requestId, status: 'fallback', confirmed: false, message } });
-      showNotice(message);
+      showNotice(message, 'danger');
     }, DELIVERY_MS);
     return () => window.clearTimeout(timer);
   }, [state.phase, state.delivery, state.requestId, showNotice]);
 
-  const cancelAndDismiss = useCallback(() => { void bridge.dismiss().catch(() => setInitError('La fermeture a échoué. Réessayez.')); }, []);
+  const cancelAndDismiss = useCallback(() => { void overlay.dismiss().catch(() => setInitError('La fermeture a échoué. Réessayez.')); }, []);
   const completeDismiss = useCallback((captureId: string) => {
     if (closingRef.current !== captureId || captureRef.current?.id !== captureId) return;
     closingRef.current = null;
     captureRef.current = null;
     setClosingCaptureId(null);
     dispatch({ type: 'DISMISS' });
-    void bridge.completeDismiss(captureId).catch(() => undefined);
+    void overlay.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
   return { state, settings, screen, dispatch, receiveCapture, start, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };

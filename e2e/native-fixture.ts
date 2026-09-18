@@ -10,7 +10,12 @@ let settings: Settings = { mode: 'quality', defaultActionId: 'translate-fr', act
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.
 const capture = (id: string, text = 'Example selection', execution?: ExecutionInfo): Capture => ({ id, text, source: 'selection', canReplace: false, anchor: { x: 400, y: 300, width: 120, height: 18 }, screen: { width: 1920, height: 1040, scale: 1 }, ...(execution ? { execution } : {}) });
 const replaceExecution: ExecutionInfo = { actionId: 'correct', actionName: 'Corriger', outputMode: 'replace', mode: 'quality' };
+// A capture that names its action: the pill shows the label 1.0 added, since several
+// shortcuts now produce different results from the same selection.
+const displayExecution = (actionName: string): ExecutionInfo => ({ actionId: 'translate-fr', actionName, outputMode: 'display', mode: 'quality' });
 const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
+// `InvokeArgs` also covers a byte array; every command of this fixture sends an object.
+const asRecord = (args: unknown) => args as Record<string, unknown> | undefined;
 let request: TranslationRequest;
 let currentCapture = capture('first');
 let heldCopy = false;
@@ -19,7 +24,8 @@ let connected = false;
 let refuseShortcut = false;
 let refuseReplace = false;
 let resolveCopy: (() => void) | undefined;
-mockIPC((command, args) => {
+mockIPC((command, raw) => {
+  const args = asRecord(raw);
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
   if (command === 'get_history') return [];
@@ -40,8 +46,9 @@ Object.assign(window, { nativeFixture: {
   connect: () => { connected = true; },
   refuseShortcut: () => { refuseShortcut = true; },
   refuseReplace: () => { refuseReplace = true; },
-  error: () => emit('translation', { requestId: request.id, kind: 'error', message: 'Serveur indisponible.' }),
+  error: (message = 'Serveur indisponible.') => emit('translation', { requestId: request.id, kind: 'error', message }),
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },
+  captureAction: (id: string, actionName: string, text?: string) => { currentCapture = capture(id, text, displayExecution(actionName)); return emit('capture', currentCapture); },
   // A « replace » capture: Rust will paste the first complete result and report `result-delivery`.
   captureReplace: (id: string, text?: string) => { currentCapture = { ...capture(id, text, replaceExecution), canReplace: true }; return emit('capture', currentCapture); },
   deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.') => { await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message }); },

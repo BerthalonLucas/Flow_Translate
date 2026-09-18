@@ -1,19 +1,70 @@
-/* Design handoff « 1a » (2026-09-09): graphite glass holding only the text, opaque
-   action pill biting the upper-right edge, internal scrolling without a native bar.
-   2026-09-10: the glass paints its own material (no DWM backdrop). The packaged window
-   has no Win32 region (a 1-bit mask DWM clipped without anti-aliasing, dropping every
-   shadow): Chromium paints the silhouette with alpha, and the window is larger than the
-   glass by a halo that holds the shadows.
-   2026-09-13: the window is reserved once (src/layout.ts) so a menu never resizes it.
-   2026-09-14 (calibrated reading): two forms decided once on the real result, the short
-   glass (380 px, ≤ 8 lines) beside the selection or the reader band (half the screen,
-   22 px) centred at the bottom; a waiting pill with three dots before; no fold, no tab,
-   no « Agrandir »; the text is #e8eaef on one graphite, without sheen. */
+@import './tokens.css';
+
+/* Design system 1.0 « Graphite & Surligneur » (2026-09-17), ported from
+   docs/design-system/components/bundle.css. The overlay is theme-invariant graphite: it
+   reads the `--glass-*` tokens, never the settings surfaces, and `signal` is the only
+   colour that carries meaning.
+
+   What the port keeps from 0.4.0, because Rust depends on it: the five selectors measured
+   by publish() (.translation-bubble, .wait-pill, .action-pill, .more-menu,
+   .compact-feedback) with their names and their order, the halo that holds the shadows,
+   and every value of the `geometry` family (src/layout.ts).
+
+   Cohabitation rules (contract § 6), all invisible from a single worktree:
+   - this file is emitted after styles.css, so .icon-button, .primary-action and
+     .quiet-action are scoped under .glass-overlay: unscoped, the overlay would repaint
+     the settings buttons, light theme included;
+   - the same for .original-copy, which tokens.css freezes at 14/20 while the product
+     wants it two pixels under the chosen reading size;
+   - --focus is overridden on .glass-overlay, never redeclared on :root: custom properties
+     resolve by declaration order, so a :root rule here would decide the colour of the
+     settings focus ring by the order the two files happen to be emitted in. Inside the
+     glass the design system asks for `signal`, not `signal-ink` (README:68);
+   - tokens.css sets --halo-* on :root; the reset below must survive it, or the browser
+     preview takes the native padding and every box test moves. */
+
+/* The graphite half of the 0.4.0 variable block, restated on the tokens so that the
+   capsule (still wired, no longer shown) survives the day styles.css drops the original.
+   --focus, --switch-on and --switch-thumb-on are deliberately absent: they are the two
+   names the two files share, and a custom property on :root is decided by declaration
+   order, not by specificity. --error-text and --warning-text are absent for the same
+   reason the other way round: styles.css reads them on settings surfaces
+   (.row-warning, .save-status .retry, .save-error-detail), and restating them here would
+   repaint a window this file does not own. The whole block leaves after the merge. */
+:root {
+  --glass-bg: var(--glass);
+  --glass-border: var(--glass-line);
+  --glass-shadow: var(--shadow-glass);
+  --pill-bg: var(--glass);
+  --menu-bg: var(--glass);
+  --hover: var(--glass-hover);
+  --pressed: var(--glass-pressed);
+  --text: var(--glass-ink);
+  --text-muted: var(--glass-ink-muted);
+  --text-disabled: var(--glass-ink-disabled);
+  --accent-cursor: var(--signal);
+}
+
+/* Transparency of the windows that have no opaque surface. `overlay` and `capsule` are
+   transparent: true and nothing paints their root; index.html keeps its light
+   color-scheme, and no data-theme touches the canvas. An explicit colour beats any user
+   agent default, whatever Chromium does next. */
+html:has(> body.app-window-overlay), html:has(> body.app-window-capsule) { background: transparent; }
+body.app-window-overlay, body.app-window-capsule { background: transparent; }
 .native-overlay { background: transparent; }
-.glass-overlay { position: relative; display: flex; flex-direction: column; align-items: stretch; width: 380px; flex: none; color: var(--text); pointer-events: none; --copy-size: 16px; --copy-line: 24px; }
+
+.glass-overlay {
+  position: relative; display: flex; flex-direction: column; align-items: stretch;
+  width: var(--glass-width); flex: none; color: var(--glass-ink); font-family: var(--font-sans);
+  pointer-events: none; --copy-size: 16px; --copy-line: 24px;
+  /* Inside the glass the focus ring is `signal`: `signal-ink` turns amber on the settings
+     surfaces, and the glass is graphite in every theme. Scoped, never on :root. */
+  --focus: var(--signal);
+}
 .glass-overlay > * { pointer-events: auto; }
 /* Halo: root padding sized to the shadows. Rust reads the tight regions for the hit-test,
-   so the halo never catches a click; the browser preview keeps none. */
+   so the halo never catches a click; the browser preview keeps none. tokens.css posts
+   32/20/44 on :root, so this reset has to be here. */
 .glass-overlay { --halo-x: 0px; --halo-top: 0px; --halo-bottom: 0px; }
 .native-overlay .glass-overlay { --halo-x: 32px; --halo-top: 20px; --halo-bottom: 44px; box-sizing: content-box; padding: var(--halo-top) var(--halo-x) var(--halo-bottom); }
 /* Bottom: the root sits centred on the window's bottom edge (the reader reserve), the menu opens in the space above the pill. */
@@ -24,14 +75,19 @@
 /* While the native window moves to the bottom for a reader, nothing shows (paint only, still measured). */
 .glass-overlay[data-moving="true"] .glass-body { opacity: 0; }
 .glass-overlay[data-closing="true"], .glass-overlay[data-closing="true"] * { pointer-events: none; }
-.translation-bubble { position: relative; display: flex; flex-direction: column; width: 100%; min-height: calc(var(--copy-line) + 29px); max-height: 221px; padding: 0; border: 1px solid var(--glass-border); border-radius: 28px; background: var(--glass-bg); box-shadow: var(--glass-shadow); cursor: default; }
+
+/* ——— The glass ——— */
+.translation-bubble { position: relative; display: flex; flex-direction: column; width: 100%; min-height: calc(var(--copy-line) + 29px); max-height: 221px; padding: 0; border: 1px solid var(--glass-line); border-radius: var(--radius-glass); background: var(--glass); box-shadow: var(--shadow-glass); color: var(--glass-ink); cursor: default; }
 .glass-overlay[data-dragging="true"] .translation-bubble { cursor: grabbing; }
 .is-reader .translation-bubble { min-height: calc(var(--copy-line) + 34px); }
 /* Browser preview blurs its own backdrop; the packaged window paints only the DOM. */
 .standalone-demo .translation-bubble, .demo-desktop .translation-bubble { backdrop-filter: blur(32px) saturate(140%); -webkit-backdrop-filter: blur(32px) saturate(140%); }
+/* The reading surface takes the keyboard ring for the whole glass, inside its outline. */
+.translation-bubble:has(.translation-copy:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
 .reading-area { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 27px; }
-.translation-copy { flex: 1 1 auto; min-height: 0; height: 100%; padding: 16px 22px 13px; color: #e8eaef; font-size: var(--copy-size); line-height: var(--copy-line); letter-spacing: 0; font-weight: 400; cursor: text; outline: none; overscroll-behavior: contain; text-wrap: pretty; }
-.is-reader .translation-copy { padding: 18px 28px 16px; }
+.translation-copy { flex: 1 1 auto; min-height: 0; height: 100%; padding: var(--glass-pad-top) var(--glass-pad-x) var(--glass-pad-bottom); color: var(--glass-ink); font-size: var(--copy-size); line-height: var(--copy-line); letter-spacing: 0; font-weight: 400; cursor: text; outline: none; overscroll-behavior: contain; text-wrap: pretty; }
+.is-reader .translation-copy { padding: var(--reader-pad-top) var(--reader-pad-x) var(--reader-pad-bottom); font-family: var(--font-display); }
+.translation-copy::selection, .translation-copy *::selection { background: var(--selection); color: var(--glass-ink); }
 .translation-copy[data-scroll-edge="top"] { mask-image: linear-gradient(#000 calc(100% - 34px), transparent); -webkit-mask-image: linear-gradient(#000 calc(100% - 34px), transparent); }
 .translation-copy[data-scroll-edge="middle"] { mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); -webkit-mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); }
 .translation-copy[data-scroll-edge="bottom"] { mask-image: linear-gradient(transparent, #000 22px); -webkit-mask-image: linear-gradient(transparent, #000 22px); }
@@ -40,19 +96,23 @@
 /* Words break at spaces or at the <wbr> the frontend places after a long run's separators; a letter-level cut is the last resort. */
 .translation-text { white-space: pre-wrap; overflow-wrap: break-word; }
 .translation-text.is-placeholder { display: block; }
-/* Waiting: shadcn's spinner (lucide LoaderCircle, one turn per second, linear), white on the pill. */
-.wait-spinner { display: inline-flex; align-items: center; justify-content: center; height: 28px; color: #fff; }
+
+/* Waiting: shadcn's spinner (lucide LoaderCircle, one turn per second, linear). */
+.wait-spinner { display: inline-flex; align-items: center; justify-content: center; height: var(--pill-height); color: var(--glass-ink); }
 .wait-spinner svg { display: block; animation: wait-spin 1s linear infinite; will-change: transform; }
 @keyframes wait-spin { to { transform: rotate(360deg); } }
 /* The waiting pill alone: 60 × 28 where the action pill will stand (anchored), or centred (bottom); a progress sweep after 1.5 s. */
-.wait-pill { position: absolute; top: 0; right: 16px; display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 28px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); overflow: hidden; }
+.wait-pill { position: absolute; top: 0; right: var(--pill-inset); display: inline-flex; align-items: center; justify-content: center; width: var(--wait-pill-width); height: var(--pill-height); border-radius: var(--radius-full); background: var(--glass); color: var(--glass-ink); box-shadow: inset 0 0 0 1px var(--glass-line), var(--shadow-pill); overflow: hidden; }
 .is-pending .glass-body { min-height: 42px; }
-.wait-pill[data-done] { color: #fff; }
+.wait-pill[data-done] { color: var(--signal); }
+.wait-pill[data-done] svg { animation: glass-pop 140ms cubic-bezier(.2,0,0,1) both; }
 .is-bottom .wait-pill { right: auto; left: calc(50% - 30px); }
-.wait-pill[data-slow="true"]::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, transparent, var(--accent-cursor), transparent); animation: wait-sweep 1400ms linear infinite; }
+.wait-pill[data-slow="true"]::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, transparent, var(--signal), transparent); animation: wait-sweep 1400ms linear infinite; }
 @keyframes wait-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes glass-pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
 .wait-inline { display: block; height: var(--copy-line); }
 .wait-inline .wait-spinner { height: var(--copy-line); }
+
 /* The result lands whole: the window is already at its final size, the short glass opens from the
    pill row and the text fades in. Paint only, so the ResizeObserver publishes once; the clip
    reaches past the box to keep the shadow, and holds 65 ms while the native resize lands. */
@@ -63,51 +123,93 @@
 /* The reader band rises 8 px and fades in (220 ms) once the native window rests at the bottom. */
 .is-reader .translation-bubble[data-reveal="true"] { animation: band-in 220ms cubic-bezier(.2,0,0,1) both; }
 @keyframes band-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.scroll-indicator { width: 3px !important; border-radius: 2px; background: rgba(255,255,255,.07); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
+.scroll-indicator { width: 3px !important; border-radius: 2px; background: var(--glass-divider); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
 .reading-area[data-indicator="true"] .scroll-indicator { opacity: 1; }
-.scroll-thumb { border-radius: 2px; background: rgba(255,255,255,.28); transition: background-color 140ms ease; }
+.scroll-thumb { border-radius: 2px; background: var(--glass-scroll-thumb); transition: background-color 140ms ease; }
 .scroll-indicator:hover .scroll-thumb { background: rgba(255,255,255,.34); }
-/* Opaque pill: Copier · (Épingler, reader) · ⋯ · Fermer. */
-.action-pill { position: absolute; top: 0; right: 16px; z-index: 2; display: flex; align-items: center; gap: 0; height: 28px; padding: 0 2px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); }
-.icon-button { appearance: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 12px; color: var(--text-muted); background: transparent; transition: background-color 140ms ease, color 140ms ease; }
-.icon-button:hover:not(:disabled) { color: #fff; background: var(--hover); }
-.icon-button:active:not(:disabled), .icon-button[data-pressed], .icon-button[data-copied] { color: #fff; background: var(--pressed); }
-.icon-button:disabled { cursor: default; color: var(--text-disabled); }
-.icon-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.icon-button svg { width: 15px; height: 15px; }
-.action-glyph { display: grid; place-items: center; width: 15px; height: 15px; }
+
+/* ——— The action pill ——— */
+/* Action label · Copier · (Épingler, reader) · ⋯ · Fermer, biting the upper-right edge. */
+.action-pill { position: absolute; top: 0; right: var(--pill-inset); z-index: 2; display: flex; align-items: center; gap: 0; height: var(--pill-height); padding: 0 var(--space-0-5); border-radius: var(--radius-full); background: var(--glass); box-shadow: inset 0 0 0 1px var(--glass-line), var(--shadow-pill); }
+/* The label says which action produced the text: several shortcuts now coexist, and
+   nothing else told a correction from a translation. No action known, no label. */
+.pill-tag { display: inline-flex; align-items: center; gap: 7px; max-width: 132px; height: 24px; padding: 0 8px 0 9px; color: var(--glass-ink-muted); font: 600 12px/16px var(--font-small); white-space: nowrap; }
+.pill-tag::before { content: ""; flex: none; width: 10px; height: 4px; border-radius: 2px; background: var(--signal); }
+.pill-tag span { overflow: hidden; text-overflow: ellipsis; }
+.pill-rule { flex: none; width: 1px; height: 14px; margin: 0 2px; background: var(--glass-divider); }
+.glass-overlay .icon-button, .capsule .icon-button { appearance: none; width: var(--pill-button); height: var(--pill-button); display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-lg); color: var(--glass-ink-muted); background: transparent; transition: background-color 120ms ease, color 120ms ease; }
+.glass-overlay .icon-button:hover:not(:disabled), .capsule .icon-button:hover:not(:disabled) { color: var(--glass-ink); background: var(--glass-hover); }
+.glass-overlay .icon-button:active:not(:disabled), .glass-overlay .icon-button[data-pressed], .glass-overlay .icon-button[data-copied], .capsule .icon-button:active:not(:disabled) { color: var(--glass-ink); background: var(--glass-pressed); }
+/* Pinned and copied are said by the mark itself, in the only meaningful colour. */
+.glass-overlay .icon-button[data-pressed] svg, .glass-overlay .icon-button[data-copied] svg { color: var(--signal); }
+.glass-overlay .icon-button[data-copied] svg { animation: glass-pop 140ms cubic-bezier(.2,0,0,1) both; }
+.glass-overlay .icon-button:disabled, .capsule .icon-button:disabled { cursor: default; color: var(--glass-ink-disabled); }
+.glass-overlay .icon-button:focus-visible, .capsule .icon-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.glass-overlay .icon-button svg, .capsule .icon-button svg { width: var(--icon-md); height: var(--icon-md); }
+.action-glyph { display: grid; place-items: center; width: var(--icon-md); height: var(--icon-md); }
 .action-glyph > span { grid-area: 1 / 1; display: grid; place-items: center; }
+
+/* ——— The ⋯ menu ——— */
 /* Popper geometry is replaced by an absolute anchor under the pill, no portal; the halo offsets it. Bottom, it opens above the pill. */
-.glass-overlay [data-radix-popper-content-wrapper] { position: absolute !important; top: calc(34px + var(--halo-top)) !important; right: calc(16px + var(--halo-x)) !important; left: auto !important; transform: none !important; min-width: 0 !important; width: 196px !important; z-index: 3; }
+.glass-overlay [data-radix-popper-content-wrapper] { position: absolute !important; top: calc(34px + var(--halo-top)) !important; right: calc(16px + var(--halo-x)) !important; left: auto !important; transform: none !important; min-width: 0 !important; width: var(--menu-width) !important; z-index: 3; }
 .glass-overlay.is-bottom [data-radix-popper-content-wrapper] { top: auto !important; bottom: calc(100% + 6px - var(--halo-top)) !important; }
-/* The menu is the same graphite as the glass: no native blur exists behind a per-pixel window. Its tallest form fits the reserve (src/layout.ts). */
-.more-menu { width: 196px; padding: 4px; border: 1px solid var(--glass-border); border-radius: 16px; color: #f2f3f6; background: var(--menu-bg); box-shadow: 0 12px 32px rgba(0,0,0,.4); outline: none; }
+/* The menu is the same graphite as the glass: no native blur exists behind a per-pixel
+   window. Concentric radii 16/12, entries of exactly 32 px, one separator before Fermer;
+   its tallest form fits the native reserve (src/layout.ts). */
+.more-menu { box-sizing: border-box; width: var(--menu-width); padding: var(--space-1); border: 1px solid var(--glass-line); border-radius: var(--radius-xl); color: var(--glass-ink); background: var(--glass); box-shadow: var(--shadow-menu); outline: none; }
 .menu-slot { display: contents; }
-.menu-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.3; outline: none; cursor: pointer; user-select: none; transition: background-color 120ms ease; }
-.menu-item[data-highlighted] { background: rgba(255,255,255,.08); }
-.menu-item:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.menu-item[data-disabled] { opacity: .38; cursor: default; }
-.menu-separator { display: block; height: 1px; margin: 3px 8px; background: rgba(255,255,255,.08); }
-.menu-close { color: rgba(242,243,246,.75); }
-.menu-close svg { width: 13px; height: 13px; }
+.menu-item { display: flex; align-items: center; gap: 10px; height: var(--control-md); padding: 0 10px; border-radius: var(--radius-lg); font: 400 13px/16px var(--font-sans); text-align: left; outline: none; cursor: pointer; user-select: none; transition: background-color 120ms ease; }
+.menu-item svg { flex: none; color: var(--glass-ink-muted); transition: color 120ms ease; }
+.menu-item[data-highlighted] { background: var(--glass-hover); }
+.menu-item[data-highlighted] svg { color: var(--glass-ink); }
+.menu-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.menu-item[data-disabled] { opacity: var(--opacity-disabled); cursor: default; }
+.menu-hint { margin-left: auto; color: var(--glass-ink-subtle); font: 400 12px/16px var(--font-small); }
+.menu-item[data-highlighted] .menu-hint { color: var(--glass-ink-muted); }
+.menu-separator { display: block; height: 1px; margin: var(--space-1) var(--space-1-5); background: var(--glass-divider); }
+
+/* ——— Notices ——— */
 /* A notice without a glass: one pill, never clickable, centred in the 420 × 64 window Rust places at the bottom of the cursor's screen. */
 .notice-root { display: grid; place-items: center; pointer-events: none; }
 .native-overlay .notice-root { position: fixed; inset: 0; }
 .standalone-demo > .notice-root { position: absolute; inset: auto 0 24px 0; }
-.notice-pill { margin: 0; padding: 7px 14px; border: 1px solid var(--glass-border); border-radius: 16px; color: var(--text); font-size: 13px; line-height: 18px; white-space: nowrap; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
-.compact-feedback { align-self: flex-end; z-index: 2; max-width: calc(100% - 32px); margin: 8px 16px 0 0; padding: 6px 10px; border: 1px solid var(--glass-border); border-radius: 12px; color: var(--error-text); font-size: 12px; line-height: 16px; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.notice-pill { display: inline-flex; align-items: center; gap: var(--space-2); box-sizing: border-box; max-width: 388px; min-height: var(--control-md); margin: 0; padding: 7px 14px 7px 10px; border: 1px solid var(--glass-line); border-radius: var(--radius-full); color: var(--glass-ink); font: 400 13px/16px var(--font-sans); background: var(--glass); box-shadow: var(--shadow-pill); }
+.notice-pill svg { flex: none; color: var(--glass-ink-muted); }
+/* Feedback under the glass (above it at the bottom): the small notice of the design
+   system. A danger tone is an error and never fades on its own. */
+.compact-feedback { align-self: flex-end; z-index: 2; display: inline-flex; align-items: flex-start; gap: var(--space-1-5); box-sizing: border-box; max-width: calc(100% - 32px); min-height: var(--control-sm); margin: var(--space-2) var(--space-4) 0 0; padding: 5px 10px 5px 8px; border: 1px solid var(--glass-line); border-radius: var(--radius-full); color: var(--glass-ink); font: 400 12px/16px var(--font-small); background: var(--glass); box-shadow: var(--shadow-pill); }
+.compact-feedback svg { flex: none; margin-top: 1px; color: var(--glass-ink-muted); }
+.compact-feedback[data-tone="danger"] svg { color: var(--glass-danger); }
+.compact-feedback[data-tone="warning"] svg { color: var(--glass-warning); }
+.compact-feedback[data-tone="success"] svg { color: var(--signal); }
 /* Bottom: the feedback stands above the glass (the window ends 16 px under it). */
-.is-bottom .compact-feedback { order: -1; margin: 0 16px 8px 0; }
+.is-bottom .compact-feedback { order: -1; margin: 0 var(--space-4) var(--space-2) 0; }
 .glass-overlay:has(.more-menu) > .compact-feedback { visibility: hidden; }
-/* The original reads like the translation, one size down, on a lighter field (contrast above 4.5:1 on the glass). */
-.original-copy { margin: 0 0 12px; padding: 9px 11px; border-radius: 12px; color: rgba(250,251,253,.85); font-size: calc(var(--copy-size) - 2px); line-height: 1.45; letter-spacing: 0; background: rgba(255,255,255,.05); white-space: pre-wrap; overflow-wrap: break-word; }
-.original-copy > span { display: block; margin-bottom: 3px; color: rgba(250,251,253,.55); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-.primary-action, .quiet-action { min-height: 30px; border: 0; border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 600; transition: background-color 140ms ease; }
-.primary-action { color: #102344; background: #d8e8ff; }
-.primary-action:hover { background: #edf5ff; }
-.quiet-action { color: #f2f3f5; background: rgba(255,255,255,.11); }
-.subtle-warning { margin: 12px 0 0; color: var(--warning-text); font-size: 12px; line-height: 18px; }
-.error-copy { color: var(--error-text); }
+
+/* ——— The original, the error, the partial result ——— */
+/* The original reads like the result, two pixels down, on a lighter field. tokens.css
+   freezes the shared .original-copy at 14/20, so this override is prefixed. */
+.glass-overlay .original-copy { margin: 0 0 var(--space-3); padding: 10px 12px; border-radius: var(--radius-lg); color: var(--glass-ink-muted); font-size: calc(var(--copy-size) - 2px); line-height: 1.45; letter-spacing: 0; background: var(--glass-raised); white-space: pre-wrap; overflow-wrap: break-word; }
+.glass-overlay .original-copy > span { display: block; margin-bottom: 2px; color: var(--glass-ink-subtle); font: 600 12px/16px var(--font-small); letter-spacing: 0; text-transform: none; }
+/* An error is an icon, one sentence on what happened, one on what to do, and the two
+   commands in line: Réessayer and Réglages no longer hide behind the ⋯ menu. */
+.glass-status { display: grid; grid-template-columns: var(--icon-lg) 1fr; column-gap: 10px; align-items: start; }
+.glass-status > svg { margin-top: 4px; color: var(--glass-danger); }
+.glass-status[data-tone="warning"] > svg { color: var(--glass-warning); }
+.glass-status-title { color: var(--glass-ink); }
+.glass-status-detail { display: block; color: var(--glass-ink-muted); font-size: 14px; line-height: 20px; }
+.glass-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--space-1-5); margin: 10px 0 3px; }
+.glass-overlay .primary-action, .glass-overlay .quiet-action { display: inline-flex; align-items: center; gap: var(--space-1-5); height: var(--control-sm); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-full); font: 600 12px/16px var(--font-small); cursor: pointer; transition: background-color 120ms ease; }
+.glass-overlay .primary-action { color: var(--on-signal); background: var(--signal); }
+.glass-overlay .primary-action:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,.14); }
+.glass-overlay .quiet-action { color: var(--glass-ink); background: var(--glass-hover); }
+.glass-overlay .quiet-action:hover { background: var(--glass-pressed); }
+.glass-overlay .primary-action:focus-visible, .glass-overlay .quiet-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.glass-overlay .primary-action svg, .glass-overlay .quiet-action svg { width: var(--icon-sm); height: var(--icon-sm); }
+/* A result cut short keeps its text; the note says so under it. */
+.partial-note { display: flex; gap: var(--space-2); align-items: center; margin: 10px 0 0; color: var(--glass-ink-muted); font: 400 12px/16px var(--font-small); }
+.partial-note svg { flex: none; color: var(--glass-warning); }
+
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; scroll-behavior: auto !important; } }
 

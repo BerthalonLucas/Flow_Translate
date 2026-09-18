@@ -7,7 +7,7 @@ test('the native reader band measures half the host width from a 1000px host win
   await page.goto('/?window=overlay&demo=1&scenario=long');
   await expect(page.locator('.wait-pill')).toBeVisible();
   await page.locator('.standalone-demo').evaluate(element => { element.className = 'native-overlay'; });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
+  await expect(page.getByRole('button', { name: 'Copier le résultat', exact: true })).toBeEnabled({ timeout: 30000 });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
   await expect(page.locator('.translation-bubble')).toHaveCSS('width', '500px');
   const box = (await page.locator('.translation-bubble').boundingBox());

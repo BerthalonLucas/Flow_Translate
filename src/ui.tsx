@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Switch from '@radix-ui/react-switch';
 import * as ToggleGroup from '@radix-ui/react-toggle-group';
-import { Check, ChevronDown, Clipboard, Copy, Ellipsis, Languages, LoaderCircle, Pin, PinOff, X } from 'lucide-react';
+import { BriefcaseBusiness, Check, ChevronDown, CircleAlert, CircleCheck, ClipboardPaste, Copy, Ellipsis, Eye, EyeOff, History, Info, Keyboard, Languages, LoaderCircle, Pin, PinOff, Plus, Power, RefreshCw, RotateCcw, Server, Settings2, ShieldCheck, SpellCheck, Trash2, TriangleAlert, Type, Wand, X } from 'lucide-react';
 
 // Animate paint, never the dimensions/scale that the native ResizeObserver measures.
 export const motionTokens = { enter: 0.18, feedback: 0.14, exit: 0.1, ease: [0.2, 0, 0, 1] as const };
@@ -27,11 +27,26 @@ export function useRise(y: number, kind: 'surface' | 'feedback' = 'surface', del
   };
 }
 
-const icons = { copy: Copy, more: Ellipsis, close: X, clipboard: Clipboard, check: Check, chevron: ChevronDown, pin: Pin, unpin: PinOff, languages: Languages, spinner: LoaderCircle };
+// The thirty glyphs of the design system (Lucide 1.43, ISC), copied from `lucide-react`
+// under their own names, plus the ten 0.4.0 names kept as aliases while App.tsx and the
+// workbench still call them. The aliases leave with the last 0.4.0 caller.
+const icons = {
+  copy: Copy, check: Check, ellipsis: Ellipsis, x: X, pin: Pin, 'pin-off': PinOff,
+  'loader-circle': LoaderCircle, eye: Eye, 'eye-off': EyeOff, 'clipboard-paste': ClipboardPaste,
+  'rotate-ccw': RotateCcw, 'refresh-cw': RefreshCw, 'settings-2': Settings2, info: Info,
+  'triangle-alert': TriangleAlert, 'circle-alert': CircleAlert, 'circle-check': CircleCheck,
+  languages: Languages, 'spell-check': SpellCheck, 'briefcase-business': BriefcaseBusiness,
+  wand: Wand, plus: Plus, 'trash-2': Trash2, 'chevron-down': ChevronDown, keyboard: Keyboard,
+  server: Server, 'shield-check': ShieldCheck, type: Type, power: Power, history: History,
+  // 0.4.0 aliases.
+  more: Ellipsis, close: X, chevron: ChevronDown, clipboard: ClipboardPaste, unpin: PinOff, spinner: LoaderCircle,
+};
 export type IconName = keyof typeof icons;
+// Stroke 1.75 everywhere, 2.25 for the spinner: an icon never carries the accessible name.
 export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
   const Glyph = icons[name];
-  return <Glyph aria-hidden="true" size={size} strokeWidth={name === 'check' ? 1.9 : name === 'spinner' ? 2.4 : 1.7} />;
+  const spinner = name === 'loader-circle' || name === 'spinner';
+  return <Glyph aria-hidden="true" size={size} strokeWidth={spinner ? 2.25 : 1.75} />;
 }
 
 export function AnimatedIcon({ name }: { name: IconName }) {
@@ -46,7 +61,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   return <button ref={ref} type="button" className={`icon-button ${className}`} aria-label={label} title={label} {...props}>{children}</button>;
 });
 
-export type BubbleMenuAction = { label: string; run: () => void; disabled?: boolean; close?: boolean };
+// One icon per entry, one separator before Fermer, « Échap » as its key hint.
+export type BubbleMenuAction = { label: string; icon: IconName; run: () => void; hint?: string; disabled?: boolean; close?: boolean };
 export function BubbleMenu({ open, onOpenChange, actions, children }: {
   open: boolean; onOpenChange: (open: boolean) => void; actions: BubbleMenuAction[]; children: ReactNode;
 }) {
@@ -55,11 +71,11 @@ export function BubbleMenu({ open, onOpenChange, actions, children }: {
     {children}
     <AnimatePresence>
       {open && <DropdownMenu.Content forceMount asChild loop>
-        <motion.div {...rise} className="more-menu" aria-label="Options de traduction">
+        <motion.div {...rise} className="more-menu" aria-label="Options du résultat">
           {actions.map(action => <span key={action.label} className="menu-slot">
             {action.close && <DropdownMenu.Separator className="menu-separator" />}
             <DropdownMenu.Item className={`menu-item ${action.close ? 'menu-close' : ''}`} disabled={action.disabled} onSelect={action.run}>
-              <span>{action.label}</span>{action.close && <Icon name="close" size={13} />}
+              <Icon name={action.icon} /><span>{action.label}</span>{action.hint && <span className="menu-hint">{action.hint}</span>}
             </DropdownMenu.Item>
           </span>)}
         </motion.div>
@@ -71,7 +87,7 @@ export function BubbleMenu({ open, onOpenChange, actions, children }: {
 export function BubbleMenuTrigger({ onClick, pressed }: { onClick: () => void; pressed: boolean }) {
   // Opening on pointerdown resizes/reanchors the native window before pointerup.
   // Keep Radix keyboard semantics, but let a pointer click finish before opening.
-  return <DropdownMenu.Trigger asChild onPointerDown={event => event.preventDefault()} onClick={onClick}><IconButton label="Plus d’options" data-pressed={pressed || undefined}><Icon name="more" /></IconButton></DropdownMenu.Trigger>;
+  return <DropdownMenu.Trigger asChild onPointerDown={event => event.preventDefault()} onClick={onClick}><IconButton label="Plus d’options" data-pressed={pressed || undefined}><Icon name="ellipsis" /></IconButton></DropdownMenu.Trigger>;
 }
 
 export function SettingSwitch({ label, checked, onCheckedChange }: { label: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {

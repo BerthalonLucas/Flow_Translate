@@ -43,7 +43,7 @@ try {
   // Refuse to capture an arbitrary live translation: the launcher must start an explicit demo.
   // The demo sentence follows the persisted target language (FR by default, EN once Lucas switched).
   await expect(page.locator('.translation-text')).toHaveText(/^(Pourriez-vous envoyer la proposition mise à jour avant jeudi \?|Could you send the updated proposal before Thursday\?)$/);
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copier le résultat', exact: true })).toBeEnabled();
   const info = await page.evaluate(() => ({ userAgent: navigator.userAgent, devicePixelRatio, viewport: { width: innerWidth, height: innerHeight }, nativeBridge: '__TAURI_INTERNALS__' in window }));
   Object.assign(report, info);
   const nativeVisible = label => page.evaluate(label => window.__TAURI_INTERNALS__.invoke('plugin:window|is_visible', { label }), label);
@@ -77,7 +77,7 @@ try {
   };
   for (let cycle = 0; cycle < 3; cycle++) {
   if (cycle > 0) await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('capture_text'));
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copier le résultat', exact: true })).toBeEnabled();
   await expect.poll(() => nativeVisible('overlay')).toBe(true);
   const beforeSize = await nativeSize();
   const result = { cycle: cycle + 1, beforeSize, domClosed: false, nativeHidden: false };

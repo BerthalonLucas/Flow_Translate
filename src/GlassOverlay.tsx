@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
-import { bridge } from './bridge';
+import { overlay, type SettingsTarget } from './overlay-ipc';
 import { anchoredFloor, anchoredReserve, bottomReserve, countWords, decideForm, decidePlacement, dimming, glass, halo, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics, type ShortMetrics } from './layout';
 import { breakable } from './text';
 import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton, motionTokens, useFade, useRise } from './ui';
@@ -12,7 +12,7 @@ const DRAG_THRESHOLD = 4;
 // A press on the glass is not a move yet: the native drag starts after 4 px of travel.
 // Rust compensates the travel measured since the original press before it starts moving.
 export function dragSurface(event: ReactPointerEvent<HTMLElement>, onError?: () => void, onDragChange?: (dragging: boolean) => void) {
-  if (!bridge.native || event.button !== 0 || !event.isPrimary) return;
+  if (!overlay.native || event.button !== 0 || !event.isPrimary) return;
   const target = event.target as HTMLElement;
   if (target.closest('button, input, select, a, [role="menu"], [data-reading-surface]')) return;
   event.preventDefault();
@@ -33,7 +33,7 @@ export function dragSurface(event: ReactPointerEvent<HTMLElement>, onError?: () 
     if (Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) < DRAG_THRESHOLD) return;
     started = true;
     onDragChange?.(true);
-    void bridge.startDrag(origin.x, origin.y).catch(() => { onError?.(); stop(); });
+    void overlay.startDrag(origin.x, origin.y).catch(() => { onError?.(); stop(); });
   };
   try { surface.setPointerCapture(pointerId); } catch { /* capture is a convenience, not a requirement */ }
   surface.addEventListener('pointermove', move);
@@ -48,17 +48,30 @@ const NEAR_MARGIN = 32;
 // The waiting pill shows a progress sweep once the engine has taken longer than this.
 const SLOW_AFTER = 1500;
 
-// Three dots hopping in turn (900 ms cycle, 120 ms apart): the whole result lands at
-// once behind them (deltas are buffered in useTranslation), so the window resizes once.
-// The wait is shadcn's spinner: lucide's LoaderCircle turning once a second, large enough to read at a glance.
+// The whole result lands at once (deltas are buffered in useTranslation), so the window
+// resizes once. The wait is shadcn's spinner: lucide's LoaderCircle turning once a second,
+// large enough to read at a glance; never hand-made dots.
 function WaitSpinner() {
-  return <span className="wait-spinner" aria-hidden="true"><Icon name="spinner" size={18} /></span>;
+  return <span className="wait-spinner" aria-hidden="true"><Icon name="loader-circle" size={18} /></span>;
 }
 // The pill alone: the spinner while the model works; in « replace » mode it also shows
 // the check once the result was pasted, then the glass leaves (0.4.0).
 function WaitPill({ slow, done }: { slow: boolean; done: boolean }) {
-  return <span className="wait-pill" role="img" aria-label={done ? 'Sélection remplacée' : 'Traduction en cours'} data-slow={slow && !done} data-done={done || undefined}>{done ? <Icon name="check" size={16} /> : <WaitSpinner />}</span>;
+  return <span className="wait-pill" role="img" aria-label={done ? 'Sélection remplacée' : 'Traitement en cours'} data-slow={slow && !done} data-done={done || undefined}>{done ? <Icon name="check" size={16} /> : <WaitSpinner />}</span>;
 }
+
+// Rust guarantees « Raison. Quoi faire. »: the first sentence titles the error, the rest
+// is its detail. A message in one sentence keeps an empty detail.
+export function splitReason(message: string): { title: string; detail: string } {
+  const trimmed = message.trim();
+  const match = /^([\s\S]*?[.!?])\s+([\s\S]+)$/.exec(trimmed);
+  return match ? { title: match[1], detail: match[2] } : { title: trimmed, detail: '' };
+}
+
+// An error stays until Escape, Fermer or the next capture: it is never dimmed and never
+// cleared on a timer, because a missed error is a silent failure (UX-SPEC § 9).
+type Feedback = { message: string; tone: 'info' | 'success' | 'danger' };
+const feedbackIcon = { info: 'info', success: 'check', danger: 'circle-alert' } as const;
 
 // Long runs (paths, URLs, identifiers) get a break opportunity after their separators,
 // so the glass wraps them there instead of cutting a word at its rounded edge.
@@ -120,7 +133,7 @@ function ReadingSurface({ children, streaming, onEnter }: {
   const capped = edge !== 'none';
   return <ScrollArea.Root type="always" className="reading-area" data-indicator={capped && (hovered || scrolling)} onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}>
     <ScrollArea.Viewport ref={viewport} className={`translation-copy ${streaming ? 'is-streaming' : ''}`} data-reading-surface data-scroll-edge={edge} data-capped={capped}
-      tabIndex={0} role="document" aria-label="Traduction" aria-busy={streaming}
+      tabIndex={0} role="document" aria-label="Résultat" aria-busy={streaming}
       onKeyDown={event => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); onEnter(); } }}>
       {children}
     </ScrollArea.Viewport>
@@ -140,7 +153,7 @@ export function GlassOverlay({ controller }: { controller: TranslationController
 // seconds later; the browser preview lays it near the bottom of the page.
 function NoticePill({ message }: { message: string }) {
   const fade = useFade('feedback');
-  return <div className="notice-root"><motion.p {...fade} className="notice-pill" role="status">{message}</motion.p></div>;
+  return <div className="notice-root"><motion.p {...fade} className="notice-pill" role="status"><Icon name="info" size={15} /><span>{message}</span></motion.p></div>;
 }
 
 // Entrance travel is paint only: regions use the resting layout.
@@ -178,7 +191,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const menuAtExit = useRef(false);
   useLayoutEffect(() => { if (!closingCaptureId) menuAtExit.current = menuOpen; }, [menuOpen, closingCaptureId]);
   const menuVisible = closingCaptureId ? menuAtExit.current : menuOpen;
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -195,7 +208,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const announce = useCallback((dimming: boolean) => {
     if (announced.current === dimming) return;
     announced.current = dimming;
-    void bridge.dimming(dimming).catch(() => undefined);
+    void overlay.dimming(dimming).catch(() => undefined);
   }, []);
   const root = useRef<HTMLDivElement>(null);
   const previousGeometry = useRef('');
@@ -231,10 +244,14 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     return () => window.clearTimeout(timer);
   }, [streaming, state.requestId]);
   useEffect(() => { setMenuOpen(false); setFeedback(null); setCopied(false); }, [captureId, state.requestId]);
-  // A notice while the glass is open (the shortcut found nothing new) reads as feedback.
-  useEffect(() => { if (notice) setFeedback(notice.message); }, [notice]);
+  // A notice while the glass is open (the shortcut found nothing new) reads as feedback;
+  // a refused paste comes through the same channel and is an error, not an aside.
+  useEffect(() => { if (notice) setFeedback({ message: notice.message, tone: notice.tone ?? 'info' }); }, [notice]);
+  // Three seconds for an aside. A refused paste never fades: this glass holds the only
+  // copy of the result, and its reason has to survive until Escape, Fermer or the next
+  // capture (which clears the feedback through the capture/request effect above).
   useEffect(() => {
-    if (!feedback) return;
+    if (!feedback || feedback.tone === 'danger') return;
     const timer = window.setTimeout(() => setFeedback(null), 3000);
     return () => window.clearTimeout(timer);
   }, [feedback]);
@@ -269,9 +286,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   // tester reports whether the cursor rests within 32 px of a surface (`glass-near`,
   // on change only); the browser preview measures the pointer against the root box.
   useEffect(() => {
-    if (bridge.native) {
+    if (overlay.native) {
       let disposed = false;
-      const listening = bridge.on<{ near: boolean }>('glass-near', ({ near }) => { if (!disposed) setNear(near); });
+      const listening = overlay.on<{ near: boolean }>('glass-near', ({ near }) => { if (!disposed) setNear(near); });
       return () => { disposed = true; void listening.then(unlisten => unlisten()); };
     }
     const move = (event: PointerEvent) => {
@@ -286,7 +303,11 @@ function GlassSession({ controller }: { controller: TranslationController }) {
 
   // Reading budget: estimated on the words, reset by every result; a visit of a second or
   // more then a departure shortens what remains; a click, the wheel or a key restores it.
-  const budget = settled && form !== 'pending' ? readingBudget(countWords(state.result || state.error || ''), form, autoClose) : null;
+  // Errors are outside the budget (decisions of 17/09, Q 6): neither the failed result nor
+  // a refused paste fades or closes on its own, so `dimming` is never announced for them
+  // and Rust keeps its Escape hook armed for as long as the reason is on screen.
+  const failed = state.phase === 'error' || feedback?.tone === 'danger';
+  const budget = settled && form !== 'pending' && !failed ? readingBudget(countWords(state.result || state.error || ''), form, autoClose) : null;
   useEffect(() => { setBudgetEnd(budget === null ? null : performance.now() + budget); setExit('reading'); }, [budget, state.requestId]);
   const present = hovered || near;
   const visitStart = useRef<number | null>(null);
@@ -298,7 +319,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const visit = performance.now() - started;
     setBudgetEnd(end => end === null ? null : performance.now() + remainingAfterLeave(end - performance.now(), visit));
   }, [present]);
-  const held = present || focusWithin || menuOpen || dragging || !settled || Boolean(closingCaptureId) || moving || pinned || form === 'pending';
+  const held = present || focusWithin || menuOpen || dragging || !settled || Boolean(closingCaptureId) || moving || pinned || failed || form === 'pending';
   const restore = useCallback(() => {
     if (exitRef.current !== 'dimming') return;
     exitRef.current = 'reading';
@@ -327,7 +348,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   // The glass never takes focus when it appears. When the native window is focused
   // (a click inside it), the reading surface becomes the keyboard target.
   useEffect(() => {
-    if (!bridge.native) return;
+    if (!overlay.native) return;
     const onFocus = () => {
       if (document.activeElement && document.activeElement !== document.body) return;
       root.current?.querySelector<HTMLElement>('[data-reading-surface]')?.focus({ preventScroll: true });
@@ -342,7 +363,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     let frame = 0;
     let disposed = false;
     const placed = () => { if (!disposed) setMoving(false); };
-    if (!bridge.native) {
+    if (!overlay.native) {
       if (moving) frame = requestAnimationFrame(placed);
       return () => { disposed = true; cancelAnimationFrame(frame); };
     }
@@ -389,9 +410,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
         const signature = JSON.stringify({ width, height, ...geometry });
         if (signature !== previousGeometry.current) {
           previousGeometry.current = signature;
-          void bridge.resize(width, height, geometry).then(placed, () => {
+          void overlay.resize(width, height, geometry).then(placed, () => {
             if (previousGeometry.current === signature) previousGeometry.current = '';
-            if (!disposed) setFeedback('Affichage indisponible. Réessayez.');
+            if (!disposed) setFeedback({ message: 'Affichage indisponible. Réessayez.', tone: 'danger' });
             placed();
           });
         } else placed();
@@ -422,13 +443,21 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const requestId = state.requestId;
     const stillCurrent = () => active.current.requestId === requestId && !active.current.closing;
     try {
-      await (action === 'copy' ? bridge.copy(requestId) : bridge.replace(requestId));
+      await (action === 'copy' ? overlay.copy(requestId) : overlay.replace(requestId));
       if (!stillCurrent()) return;
-      if (action === 'copy') setCopied(true); else setFeedback('Résultat collé dans la sélection.');
+      if (action === 'copy') setCopied(true); else setFeedback({ message: 'Résultat collé dans la sélection.', tone: 'success' });
     } catch (error) {
-      if (stillCurrent()) setFeedback(action === 'copy' ? 'La copie a été refusée.' : typeof error === 'string' ? error : 'Remplacement indisponible; utilisez Copier.');
+      // Rust already writes « Raison. Quoi faire. »; both fallbacks follow the same shape.
+      if (stillCurrent()) setFeedback({ tone: 'danger', message: action === 'copy' ? 'La copie a été refusée. Réessayez.' : typeof error === 'string' ? error : 'Remplacement indisponible. Copiez le résultat.' });
     }
   };
+  const retry = act(() => { if (state.capture) start(state.capture); });
+  const openSettings = (target?: SettingsTarget) => void overlay.openSettings(target).catch(() => setFeedback({ message: 'Réglages indisponibles. Ouvrez-les depuis l’icône FlowTranslate.', tone: 'danger' }));
+  const otherMode = state.mode === 'quality' ? 'fast' : 'quality';
+  // The action label: `ExecutionInfo.actionName` as is. A result shown again from the tray
+  // carries no execution, so it carries no label either, and the pill keeps its width.
+  const actionName = state.capture?.execution?.actionName;
+  const reason = splitReason(state.error ?? '');
   const metrics = isReader ? reader : short;
   const rootStyle = { '--copy-size': `${metrics.fontSize}px`, '--copy-line': `${metrics.lineHeight}px`, width: isReader ? reader.width : glass.shortWidth } as CSSProperties;
   const opacity = closingCaptureId ? 0 : exit === 'dimming' ? dimming.opacity : 1;
@@ -442,40 +471,51 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     transition={{ duration, ease: motionTokens.ease }}
     onAnimationComplete={() => { if (closingCaptureId) completeDismiss(closingCaptureId); }}>
     <BubbleMenu open={menuVisible} onOpenChange={setMenuOpen} actions={[
-      { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: act(() => dispatch({ type: 'TOGGLE_COMPARE' })) },
-      ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
-      ...(state.phase === 'error' ? [{ label: 'Réessayer', run: act(() => { if (state.capture) start(state.capture); }) }] : []),
-      { label: `Relancer en ${state.mode === 'quality' ? 'Rapide' : 'Qualité'}`, disabled: streaming || replacing || Boolean(state.capture?.replay), run: act(() => { if (state.capture) start(state.capture, { mode: state.mode === 'quality' ? 'fast' : 'quality' }); }) },
-      { label: 'Réglages', run: act(() => void bridge.openSettings().catch(() => setFeedback('Ouvrez les réglages depuis l’icône FlowTranslate.'))) },
-      { label: 'Fermer', run: cancelAndDismiss, close: true },
+      { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', icon: state.comparing ? 'eye-off' : 'eye', disabled: !ready, run: act(() => dispatch({ type: 'TOGGLE_COMPARE' })) },
+      ...(state.replacementValid ? [{ label: 'Remplacer', icon: 'clipboard-paste' as const, disabled: !ready, run: () => void invokeResult('replace') }] : []),
+      ...(state.phase === 'error' ? [{ label: 'Réessayer', icon: 'rotate-ccw' as const, run: retry }] : []),
+      { label: `Relancer en ${otherMode === 'quality' ? 'Qualité' : 'Rapide'}`, icon: 'refresh-cw', disabled: streaming || replacing || Boolean(state.capture?.replay), run: act(() => { if (state.capture) start(state.capture, { mode: otherMode }); }) },
+      { label: 'Réglages', icon: 'settings-2', run: act(() => openSettings()) },
+      { label: 'Fermer', icon: 'x', hint: 'Échap', run: cancelAndDismiss, close: true },
     ]}>
       <div className="glass-body">
         {form === 'pending' ? <WaitPill slow={slow} done={state.delivery === 'applied'} /> : <>
           <div className="translation-bubble" style={{ borderRadius: glass.radius, maxHeight: metrics.maxHeight }} data-reveal={state.phase === 'complete' && Boolean(state.result) && !moving}
-            onPointerDown={event => { if (placement === 'anchored') dragSurface(event, () => setFeedback('Déplacement indisponible. Réessayez.'), setDragging); }}>
+            onPointerDown={event => { if (placement === 'anchored') dragSurface(event, () => setFeedback({ message: 'Déplacement indisponible. Réessayez.', tone: 'danger' }), setDragging); }}>
             <ReadingSurface streaming={streaming} onEnter={() => void invokeResult('copy')}>
               <AnimatePresence>{state.comparing && <motion.div key="original" {...fade} className="original-copy"><span>Original</span><Breakable text={state.capture?.text ?? ''} /></motion.div>}</AnimatePresence>
               <span className={`translation-text ${state.result || state.error ? '' : 'is-placeholder'}`}>
-                {state.error && !state.result ? <span className="error-copy">{state.error} Réglages et Réessayer dans le menu&nbsp;⋯.</span>
+                {state.error && !state.result ? <span className="glass-status" role="alert">
+                    <Icon name="circle-alert" size={16} />
+                    <span><span className="glass-status-title">{reason.title}</span>{reason.detail && <span className="glass-status-detail">{reason.detail}</span>}</span>
+                    <span className="glass-actions">
+                      <button type="button" className="primary-action" onClick={retry}><Icon name="rotate-ccw" size={13} />Réessayer</button>
+                      <button type="button" className="quiet-action" onClick={() => openSettings({ page: 'engines', engine: state.mode })}>Réglages</button>
+                    </span>
+                  </span>
                   : state.result ? <span key={state.requestId ?? 'result'} className="reveal"><Breakable text={state.result} /></span>
-                  : <span className="wait-inline" role="img" aria-label="Traduction en cours"><WaitSpinner /></span>}
+                  : <span className="wait-inline" role="img" aria-label="Traitement en cours"><WaitSpinner /></span>}
               </span>
-              {state.error && state.result && <p className="subtle-warning">{state.error}</p>}
+              {state.error && state.result && <p className="partial-note" role="status"><Icon name="triangle-alert" size={13} />{state.error}</p>}
             </ReadingSurface>
           </div>
-          <motion.div {...pillRise} className="action-pill" aria-label="Actions de traduction">
-            <IconButton label="Copier la traduction" disabled={!ready} data-copied={copied || undefined} onClick={() => void invokeResult('copy')}>
+          <motion.div {...pillRise} className="action-pill" role="toolbar" aria-label="Actions du résultat">
+            {actionName && <>
+              <span className="pill-tag" title={`${actionName} · ${state.mode === 'quality' ? 'Qualité' : 'Rapide'}`}><span>{actionName}</span></span>
+              <span className="pill-rule" aria-hidden="true" />
+            </>}
+            <IconButton label={copied ? 'Copié' : 'Copier le résultat'} disabled={!ready} data-copied={copied || undefined} onClick={() => void invokeResult('copy')}>
               <AnimatedIcon name={copied ? 'check' : 'copy'} />
             </IconButton>
-            {isReader && <IconButton label={pinned ? 'Détacher' : 'Épingler'} data-pressed={pinned || undefined} aria-pressed={pinned} onClick={() => setPinned(value => !value)}><Icon name={pinned ? 'unpin' : 'pin'} size={14} /></IconButton>}
+            {isReader && <IconButton label={pinned ? 'Détacher' : 'Épingler'} data-pressed={pinned || undefined} aria-pressed={pinned} onClick={() => setPinned(value => !value)}><Icon name="pin" size={14} /></IconButton>}
             <BubbleMenuTrigger onClick={() => setMenuOpen(value => !value)} pressed={menuVisible} />
-            <IconButton label="Fermer" className="pill-close" onClick={cancelAndDismiss}><Icon name="close" size={13} /></IconButton>
+            <IconButton label="Fermer" className="pill-close" onClick={cancelAndDismiss}><Icon name="x" size={13} /></IconButton>
           </motion.div>
         </>}
       </div>
     </BubbleMenu>
-    <AnimatePresence>{feedback && !menuVisible && form !== 'pending' && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
-    <span className="sr-only" role="status">{streaming ? 'Traduction en cours' : state.delivery === 'applied' ? 'Sélection remplacée' : state.phase === 'complete' && !replacing ? 'Traduction terminée' : copied ? 'Traduction copiée' : ''}</span>
+    <AnimatePresence>{feedback && !menuVisible && form !== 'pending' && <motion.p key={feedback.message} {...fade} className="compact-feedback" data-tone={feedback.tone} role={feedback.tone === 'danger' ? 'alert' : 'status'}><Icon name={feedbackIcon[feedback.tone]} size={13} /><span>{feedback.message}</span></motion.p>}</AnimatePresence>
+    <span className="sr-only" role="status">{streaming ? 'Traitement en cours' : state.delivery === 'applied' ? 'Sélection remplacée' : state.phase === 'complete' && !replacing ? 'Résultat prêt' : copied ? 'Résultat copié' : ''}</span>
   </motion.div>;
 }
 
