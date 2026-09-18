@@ -19,3 +19,5 @@ __pycache__/
 *.key
 *.pem
 .DS_Store
+.claude/worktrees/
+*.zip
