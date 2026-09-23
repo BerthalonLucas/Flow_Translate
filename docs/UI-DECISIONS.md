@@ -22,3 +22,13 @@ Les choix ci-dessus sont validés comme direction. Ils ne décrivent pas des fon
 - Mode « Remplacer la sélection » : la pilule seule pendant le travail, le collage à la fin, la pilule s’efface ; le verre ne s’ouvre qu’en cas d’échec du collage (résultat + Copier).
 - Consignes limpides pour de petits modèles sans réflexion (réflexion coupée par `enable_thinking: false`) ; modèle d’essai Gemma 4 12B QAT avec décodage spéculatif (profil `general` du serveur).
 - L’UI des menus et des Réglages (« à la zeub ») est un autre chantier.
+
+# Décisions de Lucas — 23 septembre 2026
+
+- Direction produit : un raccourci Ctrl+Alt ouvre un petit menu d’actions juste après la sélection (Corriger, Traduire, Professionnaliser…) ; l’action choisie remplace le texte sélectionné.
+- Critère premier : la rapidité. Réponses attendues entre 0,4 s et 4 s au plus.
+- Langue de l’interface : français et anglais complets, anglais préféré (libellés, menus, états).
+- Chargement : un indicateur seul, sans texte, qui n’agrandit pas la pilule à côté de la sélection. Trois points qui sautent de façon fluide suffisent. Le spinner lucide (`WaitSpinner`) et le balayage après 1,5 s (`.wait-pill[data-slow]::after`) sont rejetés.
+- Endpoints : plusieurs modèles avec des paramètres différents (niveaux de réflexion réglables, etc.) devront rester modifiables. Sujet mis de côté pour l’instant.
+- UI jugée brute et peu fluide (couleurs, bulles, interactions). Vocabulaire commun proposé dans le « Lexique visuel » (page publiée, codes A/E/D/T/M) avant de choisir.
+- Le plan d’UI rédigé au travail (GitLab) sera fourni par Lucas avant la refonte.
