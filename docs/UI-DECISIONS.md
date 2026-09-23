@@ -32,3 +32,16 @@ Les choix ci-dessus sont validés comme direction. Ils ne décrivent pas des fon
 - Endpoints : plusieurs modèles avec des paramètres différents (niveaux de réflexion réglables, etc.) devront rester modifiables. Sujet mis de côté pour l’instant.
 - UI jugée brute et peu fluide (couleurs, bulles, interactions). Vocabulaire commun proposé dans le « Lexique visuel » (page publiée, codes A/E/D/T/M) avant de choisir.
 - Le plan d’UI rédigé au travail (GitLab) sera fourni par Lucas avant la refonte.
+
+## Compléments du 23 septembre 2026 (réponses aux questions du labo)
+
+- Diagnostic : l’option Windows « Effets d’animation » était désactivée sur le PC de Lucas. L’app respecte ce réglage (`useReducedMotion`, `glass.css`), donc aucune animation n’était visible. Réglage réactivé ; une option « Animations : suivre Windows / toujours / réduites » est à prévoir.
+- Chargement : préférence pour la « respiration » des trois points, mais chercher plus petit et plus élégant. Piste très appréciée : aucune bulle de chargement, le texte sélectionné lui-même scintille ou s’illumine (façon Writing Tools d’Apple), ou un indicateur minuscule.
+- Menu Ctrl+Alt : le plus d’options possibles dans le moins d’affichage. Au repos, un ou deux éléments au plus ; on découvre le reste en explorant ; champ de consigne libre rapide (« mail pour un collègue, plus sympa »). Pas de listes classiques. Tester 5 à 10 formes vraiment différentes.
+- Déclenchement : raccourci clavier par défaut ; option pour afficher un petit déclencheur à chaque sélection.
+- Actions de démonstration : Corriger, Traduire (FR↔EN en une seule action), Rendre professionnel, Raccourcir, Rédiger un mail, Consigne libre. Icônes seulement si elles sont fines, jolies et immédiatement lisibles ; sinon pas d’icônes.
+- Après remplacement : coche, Annuler et surlignage des mots changés, chacun activable dans les Réglages. Tout doit être personnalisable.
+- Erreurs : visibles et claires. Erreur de configuration (endpoint, clé API, droits, nom du modèle) → bouton qui ouvre directement le bon champ des Réglages ; erreur hors de contrôle → message sans renvoi.
+- La traduction longue en bande de lecture n’est plus centrale. La bulle actuelle est jugée « pâtée », peu jolie.
+- Thème : clair, suit Windows, matière transparente type verre ; référence visuelle Apple Intelligence. Vrai verre (Acrylic Windows) souhaité si fonctionnel et net.
+- Labo : préréglages plus réglages fins (durées, courbes, ralenti, recentrage) ; interface du labo en français ; app par défaut en anglais avec bascule français.
