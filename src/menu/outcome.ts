@@ -26,8 +26,8 @@ export function ilotJourney(settings: Pick<Settings, 'uiVersion'> | null | undef
   return settings?.uiVersion === 'ilot' && Boolean(capture?.menu);
 }
 
-// The frontend's own paste of a retried result; a refusal carries the paste code Rust's words
-// mean (src/result/errors.ts refusedPasteCode: the target moved, keys held, not writable…).
+// The frontend's own paste of a retried result; a refusal carries Rust's code (`replace_result`
+// rejects with `{message, code}`: the target moved, keys held, not writable…).
 export type OwnPaste = { requestId: string; status: 'pending' | 'applied' | 'refused'; code?: ErrorCode };
 
 export type IlotOutcome =

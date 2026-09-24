@@ -22,7 +22,7 @@ type Fixture = {
   deliver: (status: 'applied' | 'fallback', confirmed?: boolean, message?: string, code?: string) => Promise<void>;
   notice: (message: string, code?: string) => Promise<void>;
   invalidate: (anchorLost?: boolean) => Promise<void>;
-  refuseReplace: (message?: string | null) => void;
+  refuseReplace: (message?: string | null, code?: string) => void;
   requestId: () => string;
   workAreaAt: (x: number, y: number, width: number, height: number) => void;
 };
@@ -230,19 +230,21 @@ test('transient: Try again runs the same action on the same capture once, back t
 
 test('transient: a retried result the paste refuses says why with Copy result; a dropped selection is never pasted over', async ({ page }) => {
   await openIlot(page);
-  // replace_result refuses with Rust's French words: the pill says the cause they mean (the
-  // source window changed, keys held, the paste blocked), always with Copy result.
+  // replace_result refuses with `{message, code}`: the code alone says the cause (the source
+  // window changed, keys held, the paste blocked), always with Copy result. The French message is
+  // for the 0.4 glass: here it even says something else, and is never read nor shown.
   const causes = [
-    ['La fenêtre source a changé; remplacement refusé.', 'target_changed', 'Text changed — not replaced'],
-    ['Relâchez les touches du raccourci, puis réessayez depuis la bulle.', 'keys_held', 'Keys held down, not replaced'],
-    ['Le collage a été bloqué par Windows ou par l’application; utilisez Copier.', 'paste_blocked', 'Can’t edit this app’s text'],
+    ['target_changed', 'Text changed — not replaced'],
+    ['keys_held', 'Keys held down, not replaced'],
+    ['paste_blocked', 'Can’t edit this app’s text'],
+    ['not_editable', 'Read-only text, not replaced'],
   ] as const;
-  for (const [index, [refusal, code, text]] of causes.entries()) {
+  for (const [index, [code, text]] of causes.entries()) {
     const id = `refused-${code}`;
     await chooseAndWork(page, id);
     await on(page, f => f.error('timeout'));
     await expect(page.getByRole('alert')).toHaveText('Server took too long');
-    await page.evaluate(refusal => (window as unknown as { nativeFixture: Fixture }).nativeFixture.refuseReplace(refusal), refusal);
+    await page.evaluate(code => (window as unknown as { nativeFixture: Fixture }).nativeFixture.refuseReplace('Relâchez les touches du raccourci; remplacement refusé.', code), code);
     await page.getByRole('button', { name: 'Try again' }).click();
     await expect.poll(() => translations(page, id)).toHaveLength(2);
     await on(page, f => f.done('Synthetic result'));
@@ -389,22 +391,31 @@ test('a capture Rust refuses under the Îlot reads as its error pill, in the int
   // Rust shows it alone and hides it: no geometry asked, never clickable.
   expect((await calls(page, 'resize_overlay')).length).toBe(resizes);
   await expect(notice).toHaveCSS('pointer-events', 'none');
-  // no_selection also covers two situations where selecting text would not help: a shortcut
-  // pressed while the Settings window is in front, the tray's « Revoir » with nothing recent.
-  // Rust's words tell them apart; they are never shown.
+  // Two situations where selecting text would not help have their own codes: a shortcut pressed
+  // while the Settings window is in front, the tray's « Revoir » with nothing recent. Only the
+  // code decides: Rust's words are never read (the same words under no_selection say no_selection).
+  await on(page, f => f.notice('Fermez les réglages avant d’utiliser un raccourci.', 'settings_open'));
+  await expect(page.locator('.notice-root[data-notice="settings_open"]').getByRole('alert')).toHaveText('Close Settings first');
+  await on(page, f => f.notice('Aucune traduction récente.', 'nothing_recent'));
+  await expect(page.locator('.notice-root[data-notice="nothing_recent"]').getByRole('alert')).toHaveText('No recent translation');
+  await expect(page.locator('.notice-root button')).toHaveCount(0);
   await on(page, f => f.notice('Fermez les réglages avant d’utiliser un raccourci.', 'no_selection'));
-  await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Close Settings first');
-  await on(page, f => f.notice('Aucune traduction récente.', 'no_selection'));
-  await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('No recent translation');
+  await expect(page.locator('.notice-root[data-notice="no_selection"]').getByRole('alert')).toHaveText('Select some text first');
   await expect(page.locator('body')).not.toContainText('Aucune traduction');
+  await expect(page.locator('body')).not.toContainText('Fermez les réglages');
+  // A code this front does not know reads as internal, never a blank page.
+  await on(page, f => f.notice('Rien.', 'teapot'));
+  await expect(page.locator('.notice-root[data-notice="internal"]').getByRole('alert')).toHaveText('Something went wrong');
   // A paste code at the capture: the source window changed before anything was tried, nothing
   // was read, nothing to copy.
   await on(page, f => f.settings({ language: 'fr' }));
   await on(page, f => f.notice('La fenêtre source a changé pendant la capture. Réessayez.', 'target_changed'));
   await expect(page.locator('.notice-root[data-notice="target_changed"]').getByRole('alert')).toHaveText('Fenêtre changée, réessayez');
   await expect(page.locator('.notice-root button')).toHaveCount(0);
-  await on(page, f => f.notice('Fermez les réglages avant d’utiliser un raccourci.', 'no_selection'));
+  await on(page, f => f.notice('Fermez les réglages avant d’utiliser un raccourci.', 'settings_open'));
   await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Fermez d’abord les Réglages');
+  await on(page, f => f.notice('Aucune traduction récente.', 'nothing_recent'));
+  await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Aucune traduction récente');
   await on(page, f => f.notice('La capture est refusée dans un champ protégé.', 'protected_field'));
   await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Champ protégé, rien lu');
 

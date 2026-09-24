@@ -4,6 +4,7 @@ import { initialTranslationState, translationReducer } from './reducer';
 import { t } from './i18n';
 import { defaultActionId } from './actionDefaults';
 import { ilotJourney } from './menu/outcome';
+import { errorCodeOf } from './result/errors';
 import type { Capture, CaptureNotice, CaptureTarget, ErrorCode, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
@@ -153,7 +154,8 @@ export function useTranslation(readyOnMount = false) {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       }),
       bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
-      bridge.on<CaptureNotice>('capture-notice', ({ message, code }) => showNotice(message, code)),
+      // A code this front does not know reads as internal (src/result/errors.ts errorCodeOf).
+      bridge.on<CaptureNotice>('capture-notice', ({ message, code }) => showNotice(message, code === undefined ? undefined : errorCodeOf(code))),
       bridge.on<ResultDelivery>('result-delivery', event => {
         if (event.requestId !== requestRef.current || closingRef.current) return;
         dispatch({ type: 'DELIVERY', event });

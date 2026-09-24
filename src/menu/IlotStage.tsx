@@ -7,7 +7,7 @@ import { ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, type
 import { indicatorOf } from '../loaders/pill';
 import { useMotionPreset, useReducedMotionSetting } from '../motion/MotionPreferences';
 import { animateSlide } from '../motion/surface';
-import { noticeCause, refusedPasteCode, type ErrorAction } from '../result/errors';
+import { refusalCode, type ErrorAction } from '../result/errors';
 import { resultContent, type ActionAnswer, type ResultStage } from '../result/ResultPill';
 import type { ActionDefinition, Capture, ErrorCode, HitRegion, Presentation, Settings } from '../types';
 import type { TranslationController } from '../useTranslation';
@@ -43,8 +43,8 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  *   buttons   configuration → open_settings on the request's field, then the Îlot leaves;
  *             transient → Try again: the same action on the same capture (useTranslation.start,
  *             the v4 relaunch), whose result the Îlot pastes itself (replace_result, once: Rust
- *             delivers a capture's first request only; a refusal reads as the paste code its words
- *             mean, src/result/errors.ts refusedPasteCode); paste → Copy result (copy_result), nothing
+ *             delivers a capture's first request only; a refusal reads as its code, `{message,
+ *             code}`, src/result/errors.ts refusalCode); paste → Copy result (copy_result), nothing
  *             replaced; content → ✕ only; cancelled → the Îlot leaves. ✕ and Escape close.
  *   Undo      bridge.undoResult (lot 9, native side): null today, so the check stays alone 1.1 s;
  *             once it exists, the button, its ring and its pauses are ResultPill's DoneContent.
@@ -222,10 +222,10 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     if (state.phase !== 'complete' || state.delivery !== null || !requestId || closingRef.current) return;
     if (paste?.requestId === requestId || ownPasteRefusal(state)) return;
     setPaste({ requestId, status: 'pending' });
-    bridge.replace(requestId).then(
+    bridge.replaceResult(requestId).then(
       () => { if (alive.current) setPaste(current => current?.requestId === requestId ? { requestId, status: 'applied' } : current); },
-      // Rust refuses with its French words: which paste code they mean (never shown).
-      reason => { if (alive.current) setPaste(current => current?.requestId === requestId ? { requestId, status: 'refused', code: refusedPasteCode(reason) } : current); });
+      // Rust refuses with `{message, code}`: the code says why (its French message is never read).
+      reason => { if (alive.current) setPaste(current => current?.requestId === requestId ? { requestId, status: 'refused', code: refusalCode(reason) } : current); });
   }, [state, requestId, paste]);
 
   // The surface leaves once: at the end of the check, on ✕, Escape, Copied, a link to the Settings,
@@ -340,14 +340,13 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
 }
 
 // A capture Rust refused under the Îlot (`capture-notice` with its code: nothing selected, a
-// protected field, too long…): the error pill of the same family of shapes, its text in the
-// interface language, without a button (nothing was read, nothing can be retried or copied) and
-// without ✕: Rust shows it alone, never clickable, in its 420 × 64 window at the bottom of the
-// cursor's screen, and hides it four seconds later. `message` (Rust's French words, never shown)
-// tells the situations one code covers apart: the Settings in front, nothing recent to show again
-// (src/result/errors.ts, noticeCause).
-export function IlotNotice({ code, message }: { code: ErrorCode; message?: string }) {
-  const content = resultContent({ stage: 'error', error: code, source: 'capture', cause: noticeCause(code, message) });
+// protected field, too long, the Settings in front, nothing recent to show again…): the error pill
+// of the same family of shapes, its text in the interface language, without a button (nothing was
+// read, nothing can be retried or copied) and without ✕: Rust shows it alone, never clickable, in
+// its 420 × 64 window at the bottom of the cursor's screen, and hides it four seconds later. The
+// code alone decides the text; Rust's French message is never read.
+export function IlotNotice({ code }: { code: ErrorCode }) {
+  const content = resultContent({ stage: 'error', error: code, source: 'capture' });
   if (!content) return null;
   return <div className="notice-root" data-notice={code}>
     <MorphSurface contentKey={content.key} size={content.size} origin="bottom" originX="50%">{content.node}</MorphSurface>

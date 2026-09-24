@@ -17,8 +17,9 @@ let heldCopy = false;
 let failSettings = new URLSearchParams(location.search).has('settingsError');
 let connected = false;
 let refuseShortcut = false;
-// Rust's refusal of the next `replace_result` (its French words; lot 10 gives the command no code).
-let refuseReplace: string | null = null;
+// Rust's refusal of the next `replace_result`: `{message, code}` (Refusal) since the review of
+// da-ilot, the French message for the 0.4 glass, the code for the Îlot.
+let refuseReplace: { message: string; code: ErrorCode } | null = null;
 let resolveCopy: (() => void) | undefined;
 // Rust's reading of « Effets d'animation »: unknown until a test sets it.
 let windowsMotion: { reduced: boolean } | null = null;
@@ -94,7 +95,7 @@ Object.assign(window, { nativeFixture: {
   recoverSettings: () => { failSettings = false; },
   connect: () => { connected = true; },
   refuseShortcut: () => { refuseShortcut = true; },
-  refuseReplace: (message: string | null = 'La fenêtre source a changé; remplacement refusé.') => { refuseReplace = message; },
+  refuseReplace: (message: string | null = 'La fenêtre source a changé; remplacement refusé.', code: ErrorCode = 'target_changed') => { refuseReplace = message === null ? null : { message, code }; },
   // A failed request; lot 10 sends its code beside the French message (none: a 0.4 error).
   error: (code?: ErrorCode, message = 'Serveur indisponible.') => emit('translation', { requestId: request.id, kind: 'error', message, ...(code ? { code } : {}) }),
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },

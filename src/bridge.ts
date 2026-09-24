@@ -200,7 +200,8 @@ export const bridge = {
   // until the front handles those outcomes. Then: `(requestId: string) => command<UndoOutcome>('undo_result', { requestId })`.
   undoResult: null as ((requestId: string) => Promise<UndoOutcome>) | null,
   // `replace_result` with its refusal as Rust sends it, `{message, code}` (Refusal): the code says
-  // why (target_changed, keys_held, not_editable, paste_blocked); `replace` keeps the message only.
+  // why (target_changed, keys_held, not_editable, paste_blocked); `replace` keeps the message only,
+  // for the glass of 0.4. The Îlot's own paste of a retried result reads the code (IlotStage).
   replaceResult: (requestId: string) => command<void>('replace_result', { requestId }),
 };
 

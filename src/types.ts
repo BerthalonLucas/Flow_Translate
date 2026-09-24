@@ -80,13 +80,16 @@ export type ExecutionInfo = { actionId: string; actionName: string; outputMode: 
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
 export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string; code?: ErrorCode; pastedRects?: Rect[]; undoable?: boolean };
 // Lot 10: what failed, beside the French message of 0.4 (translation error, result-delivery
-// fallback, capture-notice, target-invalidated, check_connection). The one list of the codes Rust
-// sends (error.rs); src/result/errors.ts gives each its family, button and texts, and reads an
-// unknown code as 'internal'. Never any text of the server or of the user.
+// fallback, capture-notice, target-invalidated, check_connection, the refusals of replace_result
+// and undo_result). The one list of the codes Rust sends (error.rs, in its order);
+// src/result/errors.ts gives each its family, button and texts, and reads an unknown code as
+// 'internal'. Never any text of the server or of the user. settings_open (a shortcut pressed
+// while the Settings window is in front) and nothing_recent (the tray's « Revoir » with nothing
+// recent) are capture notices since the review of da-ilot.
 export const errorCodes = [
   'unreachable', 'timeout', 'unauthorized', 'model_not_found', 'bad_endpoint', 'busy', 'length', 'stream_broken',
   'paste_blocked', 'target_changed', 'not_editable', 'too_long', 'cancelled',
-  'server_error', 'no_selection', 'protected_field', 'keys_held', 'internal',
+  'server_error', 'no_selection', 'protected_field', 'keys_held', 'settings_open', 'nothing_recent', 'internal',
 ] as const;
 export type ErrorCode = typeof errorCodes[number];
 // Lot 10: whether each binding's chord works (`shortcut_status`, event `shortcut-status`); taken: another application holds it.
