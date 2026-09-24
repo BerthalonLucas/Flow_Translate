@@ -20,7 +20,7 @@ export function useDocumentPreferences(settings: Settings | null) {
   useEffect(() => {
     root.lang = language;
     setLanguage(language);
-    root.dataset.ui = settings?.uiVersion ?? 'v4';
+    root.dataset.ui = settings?.uiVersion ?? 'ilot';
   }, [root, language, settings?.uiVersion]);
   useEffect(() => applyTheme(theme, root, systemTheme), [root, theme]);
   useEffect(() => applyMotion(motion, root), [root, motion]);

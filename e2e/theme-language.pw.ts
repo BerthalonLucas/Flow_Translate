@@ -112,14 +112,21 @@ test('the theme follows the system scheme live, and a forced theme wins over it'
   expect(await unreloaded(page)).toBe(true);
 });
 
-for (const colorScheme of ['light', 'dark'] as const) {
-  test(`the ${colorScheme} material paints every surface, and every icon is a thin Lucide of 14 to 16 px`, async ({ page }) => {
+// The waiting pill of each journey: the Îlot's working pill (the preview's default, as the app's)
+// and, asked for (`&ui=v4`), the 0.4 spinner pill.
+const waitingPills = [
+  { name: 'Îlot', query: '', pill: '.working-pill' },
+  { name: '0.4', query: '&ui=v4', pill: '.wait-pill' },
+] as const;
+
+for (const colorScheme of ['light', 'dark'] as const) for (const { name, query, pill: waiting } of waitingPills) {
+  test(`the ${colorScheme} material paints every surface, and every icon is a thin Lucide of 14 to 16 px (${name})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
-    await page.goto('/?window=overlay&demo=1&scenario=long');
-    await expect(page.locator('.wait-pill')).toBeVisible();
+    await page.goto(`/?window=overlay&demo=1&scenario=long${query}`);
+    await expect(page.locator(waiting)).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('data-theme', colorScheme);
     const paint = (selector: string) => page.locator(selector).evaluate(el => ({ image: getComputedStyle(el).backgroundImage, color: getComputedStyle(el).backgroundColor, shadow: getComputedStyle(el).boxShadow }));
-    const pill = await paint('.wait-pill');
+    const pill = await paint(waiting);
     expect(pill.shadow).toContain('0.5px');
     await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled({ timeout: 30000 });
     await page.getByRole('button', { name: 'More options', exact: true }).click();

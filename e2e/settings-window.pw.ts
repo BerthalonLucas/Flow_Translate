@@ -23,9 +23,10 @@ async function openSettings(page: Page, query = '') {
 const call = <T,>(page: Page, run: (f: Fixture) => T) => page.evaluate(`(${run.toString()})(window.nativeFixture)`) as Promise<Awaited<T>>;
 const saved = (page: Page) => call(page, f => f.calls.filter(c => c.command === 'save_settings').at(-1)?.args?.settings as Settings | undefined);
 const saveCount = (page: Page) => call(page, f => f.calls.filter(c => c.command === 'save_settings').length);
-// The fixture starts under uiVersion « v4 »; Rust sends `settings-changed` when it changes.
+// The fixture starts in the Îlot, as Rust does (the 0.4 journey is asked for, `uiVersion: 'v4'`);
+// the test's own settings arrive as Rust sends them, by `settings-changed`.
 async function ilot(page: Page, next: Partial<Settings> = {}) {
-  await page.evaluate(n => (window as unknown as { nativeFixture: Fixture }).nativeFixture.settings({ uiVersion: 'ilot', ...n }), next);
+  await page.evaluate(n => (window as unknown as { nativeFixture: Fixture }).nativeFixture.settings(n), next);
   await expect(page.getByRole('heading', { name: 'After replacing', exact: true })).toBeVisible();
 }
 const headings = (page: Page, level: 2 | 3) => page.locator(`.settings-body h${level}`).allTextContents();
@@ -33,14 +34,18 @@ const headings = (page: Page, level: 2 | 3) => page.locator(`.settings-body h${l
 test('every section of the Îlot, in English and French, light and dark; the hidden switches never show', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await openSettings(page);
-  // The 0.4 journey (uiVersion « v4 ») has no grid and nothing after a replacement to set.
-  expect(await headings(page, 2)).toEqual(['Menu', 'Actions', 'Appearance', 'Result bubble', 'Connection', 'On this device']);
-  await expect(page.getByRole('list', { name: 'Menu actions' })).toHaveCount(0);
+  // The Îlot, from the start.
   await ilot(page);
   expect(await headings(page, 2)).toEqual(['Menu', 'Actions', 'After replacing', 'Appearance', 'Result bubble', 'Connection', 'On this device']);
   expect(await headings(page, 3)).toEqual(['In the menu', 'Instructions', 'Direct shortcuts']);
   await expect(page.locator('.settings-body')).not.toContainText(/ui ?version|glass ?material|acrylic|painted/i);
   await page.screenshot({ path: 'test-results/lot13-settings-en-light.png' });
+  // The 0.4 journey, asked for (uiVersion « v4 »), has no grid and nothing after a replacement to set.
+  await call(page, f => f.settings({ uiVersion: 'v4' }));
+  await expect(page.getByRole('heading', { name: 'After replacing', exact: true })).toHaveCount(0);
+  expect(await headings(page, 2)).toEqual(['Menu', 'Actions', 'Appearance', 'Result bubble', 'Connection', 'On this device']);
+  await expect(page.getByRole('list', { name: 'Menu actions' })).toHaveCount(0);
+  await ilot(page, { uiVersion: 'ilot' });
 
   await page.getByRole('radio', { name: 'Français', exact: true }).click();
   await page.getByRole('radio', { name: 'Sombre', exact: true }).click();

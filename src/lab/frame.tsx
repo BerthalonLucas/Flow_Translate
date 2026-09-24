@@ -24,10 +24,10 @@ const theme = params.get('theme') === 'light' ? 'light' : 'dark';
 // motion=reduce|full forces the setting « Animations »; without it the frame follows the system.
 const motion: MotionPreference = params.get('motion') === 'reduce' ? 'reduced' : params.get('motion') === 'full' ? 'full' : 'system';
 const preset: MotionPreset = params.get('preset') === 'bouncy' ? 'bouncy' : 'smooth';
-// working-<indicator>: the Îlot's working pill (lot 8) on a request that never answers.
-// ui=ilot shows any other scenario (the settings window included) in the Îlot journey.
+// Every scenario opens in the Îlot journey, the app's default; ui=v4 asks for the 0.4 journey
+// (read by the preview bridge, src/bridge.ts). working-<indicator>: the Îlot's working pill
+// (lot 8) on a request that never answers, in the Îlot whatever the URL says.
 const indicator = scenario.startsWith('working-') ? indicatorOf(scenario.slice('working-'.length)) : null;
-const ilot = indicator !== null || params.get('ui') === 'ilot';
 
 function OverlayFixture() {
   const controller = useTranslation();
@@ -98,7 +98,7 @@ async function mount() {
     return;
   }
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
-  if (ilot) await bridge.saveSettings({ ...await bridge.getSettings(), uiVersion: 'ilot', ...(indicator ? { indicator } : {}) });
+  if (indicator) await bridge.saveSettings({ ...await bridge.getSettings(), uiVersion: 'ilot', indicator });
   if (scenario === 'history') {
     await bridge.saveSettings({ ...await bridge.getSettings(), historyEnabled: true });
     const observer = new MutationObserver(() => {

@@ -27,7 +27,9 @@ async function openIlot(page: Page, next: Partial<Settings>) {
   });
   await page.goto('/?window=overlay&fixture=1');
   await expect(page.locator('.glass-overlay')).toBeVisible();
-  await page.evaluate(next => (window as any).nativeFixture.settings({ uiVersion: 'ilot', ...next }), next);
+  // The Îlot is the fixture's default, as it is Rust's: only the test's own settings are sent.
+  await expect(page.locator('html')).toHaveAttribute('data-ui', 'ilot');
+  await page.evaluate(next => (window as any).nativeFixture.settings(next), next);
 }
 const lastGeometry = (page: Page) => page.evaluate(() => (window as any).nativeFixture.calls.filter((call: any) => call.command === 'resize_overlay').at(-1)?.args);
 
@@ -244,11 +246,12 @@ test('the loops rest while the page is hidden and run again when it shows', asyn
 test('the 0.4 journey keeps its spinner pill', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.setViewportSize({ width: 640, height: 480 });
-  await page.route('**/?window=overlay&fixture=1', async route => {
+  await page.route('**/?window=overlay&fixture=1*', async route => {
     const response = await route.fetch();
     await route.fulfill({ response, body: (await response.text()).replace('/src/main.tsx', '/e2e/native-fixture.ts') });
   });
-  await page.goto('/?window=overlay&fixture=1');
+  await page.goto('/?window=overlay&fixture=1&ui=v4');
+  await expect(page.locator('html')).toHaveAttribute('data-ui', 'v4');
   await expect(page.locator('.wait-pill')).toBeVisible();
   await page.waitForTimeout(400);
   await expect(page.locator('.working-pill')).toHaveCount(0);
@@ -258,11 +261,13 @@ test('the 0.4 journey keeps its spinner pill', async ({ page }) => {
 });
 
 test('Settings: the indicator row shows in the Îlot journey only and saves the choice', async ({ page }) => {
-  await page.goto('/lab-frame.html?scenario=settings&theme=light&motion=reduce');
+  // The 0.4 journey, asked for: its spinner has no indicator to choose.
+  await page.goto('/lab-frame.html?scenario=settings&theme=light&motion=reduce&ui=v4');
   await expect(page.getByRole('radiogroup', { name: 'Theme', exact: true })).toBeVisible();
   await expect(page.getByRole('radiogroup', { name: 'Indicator', exact: true })).toHaveCount(0);
 
-  await page.goto('/lab-frame.html?scenario=settings&theme=light&motion=reduce&ui=ilot');
+  // The Îlot, the lab's default as it is the app's.
+  await page.goto('/lab-frame.html?scenario=settings&theme=light&motion=reduce');
   const row = page.getByRole('radiogroup', { name: 'Indicator', exact: true });
   await expect(row).toBeVisible();
   // In the Appearance section, between Theme and Animations (plan, lot 13).

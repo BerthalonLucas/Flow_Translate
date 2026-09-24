@@ -8,7 +8,7 @@ type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invali
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
+  mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'ilot', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -16,7 +16,9 @@ const native = '__TAURI_INTERNALS__' in window;
 let demoCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 830, y: 410, width: 360, height: 24 } };
 type DemoScenario = 'normal' | 'error' | 'long' | 'very-long' | 'pending' | 'partial';
 let demoScenario: DemoScenario = 'normal';
-let demoSettings = structuredClone(defaultSettings);
+// The preview starts where the app does, in the Îlot (Rust's default since 0.5.0); `?ui=v4` asks
+// for the 0.4 journey, as the tests and the lab's 0.4 states do.
+let demoSettings: Settings = { ...structuredClone(defaultSettings), uiVersion: new URLSearchParams(location.search).get('ui') === 'v4' ? 'v4' : 'ilot' };
 let activeTimer: number | undefined;
 let activeDemoRequest: string | undefined;
 let demoHistory: HistoryEntry[] = [{ id: 'demo-history', sourceText: 'Could you send the updated proposal?', translatedText: 'Pourriez-vous envoyer la proposition mise à jour ?', actionName: 'Traduire en français', mode: 'quality', createdAt: '2026-09-08T10:24:00Z' }];

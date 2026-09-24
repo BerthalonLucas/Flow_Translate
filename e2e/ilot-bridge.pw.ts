@@ -48,7 +48,8 @@ async function openIlot(page: Page) {
   });
   await page.goto('/?window=overlay&fixture=1');
   await expect(page.locator('.glass-overlay')).toBeVisible();
-  await on(page, f => f.settings({ uiVersion: 'ilot' }));
+  // The Îlot is the fixture's default, as it is Rust's: nothing to switch on.
+  await expect(page.locator('html')).toHaveAttribute('data-ui', 'ilot');
 }
 // The Îlot at rest: entered, its shape settled.
 async function settled(page: Page, shape: 'menu' | 'pill' = 'menu') {
@@ -522,6 +523,9 @@ test('Îlot window: reserved once below the selection, the region follows each s
 
 test('Îlot window: above the selection it grows up from the strip; without an anchor it rests at the bottom', async ({ page }) => {
   await openIlot(page);
+  // The fixture's first capture, a direct one, already read the window's position for its working
+  // pill's side (GlassOverlay readPillSide): only the menu captures below are counted.
+  const positionsBefore = (await calls(page, 'plugin:window|inner_position')).length;
   // Rust put the strip 8 px over the selection (anchor 300 high, strip 32, 104 above in the window).
   await on(page, f => { f.windowAt(205, 300 - 8 - 32 - 104); return f.captureMenu('above', 'correct'); });
   await settled(page);
@@ -548,7 +552,7 @@ test('Îlot window: above the selection it grows up from the strip; without an a
   expect((await geometries(page, 'clipboard')).at(-1)?.regions).toEqual([ilotRegion('bottom', 'above', low)]);
   // The window position and the work area are only read for an anchored capture, at the anchor's
   // centre (the screen Rust placed it on).
-  expect((await calls(page, 'plugin:window|inner_position')).length).toBe(1);
+  expect((await calls(page, 'plugin:window|inner_position')).length - positionsBefore).toBe(1);
   expect(await calls(page, 'plugin:window|monitor_from_point')).toEqual([{ x: 460, y: 309 }]);
 });
 

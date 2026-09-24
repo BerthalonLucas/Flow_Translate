@@ -39,7 +39,9 @@ async function openIlot(page: Page, settings: Record<string, unknown> = {}) {
   });
   await page.goto('/?window=overlay&fixture=1');
   await expect(page.locator('.glass-overlay')).toBeVisible();
-  await page.evaluate(next => (window as unknown as { nativeFixture: Fixture }).nativeFixture.settings({ uiVersion: 'ilot', ...next }), settings);
+  // The Îlot is the fixture's default, as it is Rust's: only the test's own settings are sent.
+  await expect(page.locator('html')).toHaveAttribute('data-ui', 'ilot');
+  await page.evaluate(next => (window as unknown as { nativeFixture: Fixture }).nativeFixture.settings(next), settings);
 }
 async function settled(page: Page) {
   await expect.poll(async () => { const a = await box(page); await page.waitForTimeout(80); const b = await box(page); return JSON.stringify(a) === JSON.stringify(b); }).toBe(true);

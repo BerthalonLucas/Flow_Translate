@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { bridge } from './bridge';
 
 // The browser preview (no Tauri): the Îlot commands answer without a native window.
@@ -14,5 +14,23 @@ describe('bridge preview', () => {
     expect(settings.defaultActionId).toBe('correct');
     expect(settings.menuActionIds).toEqual(['correct', 'translate', 'professionalize', 'shorten', 'email']);
     expect(settings.shortcutBindings.map(binding => [binding.kind, binding.shortcut])).toEqual([['menu', 'Ctrl+Alt+Space']]);
+    // The Îlot, as Rust's UiVersion::Ilot.
+    expect(settings.uiVersion).toBe('ilot');
+  });
+  it('asks for the 0.4 journey with ?ui=v4 only', async () => {
+    const at = location.href;
+    const loaded = async (search: string) => {
+      history.replaceState(null, '', `/${search}`);
+      vi.resetModules();
+      return (await (await import('./bridge')).bridge.getSettings()).uiVersion;
+    };
+    try {
+      expect(await loaded('?ui=v4')).toBe('v4');
+      expect(await loaded('?ui=v5')).toBe('ilot');
+      expect(await loaded('')).toBe('ilot');
+    } finally {
+      history.replaceState(null, '', at);
+      vi.resetModules();
+    }
   });
 });
