@@ -3,21 +3,27 @@ import { AnimatePresence } from 'motion/react';
 import { bridge } from '../bridge';
 import { defaultActionId, instructionActionId } from '../actionDefaults';
 import { useT } from '../i18n';
-import { ilotBox, ilotRegion, ilotReserve, ilotSide, type IlotSide } from '../layout';
-import { WorkingContent } from '../loaders/WorkingPill';
-import { indicatorOf, workingPillShape } from '../loaders/pill';
-import type { ActionDefinition, Capture, HitRegion, Presentation, Settings } from '../types';
+import { ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, type IlotRoom, type IlotShapeBox, type IlotSide } from '../layout';
+import { indicatorOf } from '../loaders/pill';
+import { useMotionPreset, useReducedMotionSetting } from '../motion/MotionPreferences';
+import { animateSlide } from '../motion/surface';
+import { noticeCause, refusedPasteCode, type ErrorAction } from '../result/errors';
+import { resultContent, type ActionAnswer, type ResultStage } from '../result/ResultPill';
+import type { ActionDefinition, Capture, ErrorCode, HitRegion, Presentation, Settings } from '../types';
 import type { TranslationController } from '../useTranslation';
 import { Ilot, type IlotHandle, type IlotKeyboard } from './Ilot';
 import { maxTiles } from './keys';
 import { ilotMetrics } from './metrics';
-import type { ShapeChange } from './MorphSurface';
+import { MorphSurface, type ShapeChange, type SurfaceSize } from './MorphSurface';
+import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } from './outcome';
 
 /*
  * The Îlot in the overlay (lot 7, uiVersion 'ilot'): a menu capture (`capture.menu`, no execution
  * yet) opens the Îlot by its selection; the choice goes through `choose_action` once
- * (useTranslation.choose), then the same surface springs to the work pill of lot 8 while the
- * translation runs and Rust pastes it, as a direct « replace » capture does. docs/BRIDGE.md, Îlot.
+ * (useTranslation.choose), then the same surface, never unmounted, carries the whole result
+ * (lots 8 to 10, src/result/ResultPill.tsx resultContent): the work pill while the model works and
+ * Rust pastes; the check once pasted, then it leaves; or the error pill, its one button after the
+ * code's family (src/result/errors.ts). The glass never opens for this journey. docs/BRIDGE.md, Îlot.
  *   keyboard  `focus_overlay` once: true, the WebView has the keys; false, Rust forwards them as
  *             `menu-key` (Îlot 'injected' mode), kept by useTranslation until the Îlot shows. The
  *             last of the two signals wins.
@@ -25,7 +31,19 @@ import type { ShapeChange } from './MorphSurface';
  *             the hit-test region, published at the start of a change on both shapes and at its
  *             end on the new one; the window never resizes while the surface springs.
  *   side      read back from where Rust put the window (ilotSide), before the Îlot shows.
- * GlassSession renders it while the form is pending; a fallback or an error then opens the glass.
+ *   slide     read at the same time: the room between the strip's corner and the work area's
+ *             edges (ilotRoom, the anchor screen's work area). A shape wider than the room on the
+ *             left (the error pill, near the screen's left edge) slides right by what it
+ *             overhangs, on the shape's own spring (ilotShift); the region follows.
+ *   outcome   src/menu/outcome.ts: the stage the surface shows, derived from the translation.
+ *   buttons   configuration → open_settings on the request's field, then the Îlot leaves;
+ *             transient → Try again: the same action on the same capture (useTranslation.start,
+ *             the v4 relaunch), whose result the Îlot pastes itself (replace_result, once: Rust
+ *             delivers a capture's first request only; a refusal reads as the paste code its words
+ *             mean, src/result/errors.ts refusedPasteCode); paste → Copy result (copy_result), nothing
+ *             replaced; content → ✕ only; cancelled → the Îlot leaves. ✕ and Escape close.
+ *   Undo      bridge.undoResult (lot 9, native side): null today, so the check stays alone 1.1 s;
+ *             once it exists, the button, its ring and its pauses are ResultPill's DoneContent.
  */
 
 // How long the Îlot waits for Rust's placement before it opens anyway (below the selection).
@@ -40,7 +58,7 @@ export function menuActions(settings: Settings | null): ActionDefinition[] {
 }
 
 export function IlotStage({ controller, capture }: { controller: TranslationController; capture: Capture }) {
-  const { state, settings, screen, choose, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
+  const { state, settings, screen, choose, start, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
   const t = useT();
   const captureId = capture.id;
   const presentation: Presentation = capture.anchor ? 'anchored' : 'bottom';
@@ -57,6 +75,10 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   // Unknown until Rust placed and showed the window, so the entrance plays where it is seen; the
   // browser preview has no window. Without an anchor the Îlot grows up from the bottom.
   const [side, setSide] = useState<IlotSide | null>(() => bridge.native ? null : presentation === 'bottom' ? 'above' : 'below');
+  // Read with the side (anchored, native only): the room around the strip's corner (ilotRoom).
+  const [room, setRoom] = useState<IlotRoom | null>(null);
+  const roomNow = useRef(room);
+  roomNow.current = room;
   // The keyboard: focus_overlay's answer, unless Rust forwarded a key since (the source is in
   // front then). Derived in the same render as the key, so the key meets the right mode.
   const forwarded = menuKeys.captureId === captureId ? menuKeys.count : 0;
@@ -82,28 +104,67 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   }, [captureId, presentation, reserve]);
 
   // The first geometry places and shows the window with the strip as its region; the window's
-  // position then tells the side, read once.
+  // position then tells the side and, with the work area, the room, read once.
   const sideAsked = useRef(false);
   useLayoutEffect(() => {
     if (!bridge.native) return;
     const anchor = capture.anchor;
     const scale = capture.screen?.scale ?? screen?.scale ?? 1;
-    const placed = last.current?.placed ?? publish(ilotRegion(presentation, 'below', { width: ilotBox.width, height: ilotMetrics.compactHeight }));
+    const placed = last.current?.placed ?? publish(ilotRegion(presentation, 'below', { width: ilotStrip, height: ilotMetrics.compactHeight }));
     const fallback: IlotSide = anchor ? 'below' : 'above';
     if (!sideAsked.current) {
       sideAsked.current = true;
-      void placed.then(() => anchor ? bridge.windowPosition() : null).catch(() => null).then(position => {
-        if (alive.current) setSide(known => known ?? (anchor && position ? ilotSide(position.y, scale, anchor) : fallback));
+      // Rust places a capture on the screen of its anchor's centre (host::monitor_at).
+      const work = anchor ? bridge.workAreaAt(anchor.x + anchor.width / 2, anchor.y + anchor.height / 2).catch(() => null) : Promise.resolve(null);
+      void placed.then(() => anchor ? bridge.windowPosition() : null).catch(() => null).then(async position => {
+        const area = await work;
+        if (!alive.current) return;
+        if (anchor && position && area) setRoom(ilotRoom(position.x, scale, area));
+        setSide(known => known ?? (anchor && position ? ilotSide(position.y, scale, anchor) : fallback));
       });
     }
     const timer = window.setTimeout(() => setSide(known => known ?? fallback), SIDE_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per capture: GlassSession is keyed by it
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per capture: GlassOverlay keys it by capture
 
+  // The corner slides with a shape the room on its left cannot hold (ilotShift): on the shape's
+  // spring when it changes, at once for the first shape; the region covers both positions.
+  const tokens = useMotionPreset();
+  const reduced = useReducedMotionSetting();
+  const motionNow = useRef({ tokens, reduced });
+  motionNow.current = { tokens, reduced };
+  const cornerRef = useRef<HTMLDivElement>(null);
+  const slid = useRef(0);
+  const shapeNow = useRef<SurfaceSize | null>(null);
+  const boxOf = useCallback((size: SurfaceSize): IlotShapeBox => presentation === 'anchored' ? { ...size, shift: ilotShift(size.width, roomNow.current) } : size, [presentation]);
+  const slide = useCallback((x: number, instant: boolean) => {
+    if (x === slid.current && !instant) return;
+    slid.current = x;
+    if (cornerRef.current) animateSlide(cornerRef.current, x, motionNow.current.tokens, motionNow.current.reduced, instant);
+  }, []);
   const onShapeChange = useCallback((change: ShapeChange) => {
     if (!side) return;
-    void publish(change.phase === 'start' && change.from ? ilotRegion(presentation, side, change.from, change.to) : ilotRegion(presentation, side, change.to));
-  }, [presentation, side, publish]);
+    shapeNow.current = change.to;
+    const to = boxOf(change.to);
+    if (change.phase === 'start' && change.from) {
+      const from = { ...change.from, shift: slid.current };
+      slide(to.shift ?? 0, false);
+      void publish(ilotRegion(presentation, side, from, to));
+      return;
+    }
+    if (!change.from) slide(to.shift ?? 0, true);
+    void publish(ilotRegion(presentation, side, to));
+  }, [presentation, side, publish, boxOf, slide]);
+  // The room learnt after the Îlot showed (Rust's placement answered late): the shape in place
+  // takes its slide at once.
+  useEffect(() => {
+    const size = shapeNow.current;
+    if (!side || !size) return;
+    const to = boxOf(size);
+    if ((to.shift ?? 0) === slid.current) return;
+    slide(to.shift ?? 0, true);
+    void publish(ilotRegion(presentation, side, to));
+  }, [room]); // eslint-disable-line react-hooks/exhaustive-deps -- only when the room arrives
 
   // The keyboard, asked once; a capture already chosen (double press) never takes it.
   const asked = useRef(false);
@@ -133,25 +194,110 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     });
   };
 
+  // What the surface shows (src/menu/outcome.ts), and the frontend's own paste of a retry.
+  const [paste, setPaste] = useState<OwnPaste | null>(null);
+  const [undone, setUndone] = useState(false);
+  const outcome = ilotOutcome(state, { chosen: choosing, paste, undone });
+  const requestId = state.requestId;
+  useEffect(() => {
+    if (state.phase !== 'complete' || state.delivery !== null || !requestId || closingRef.current) return;
+    if (paste?.requestId === requestId || ownPasteRefusal(state)) return;
+    setPaste({ requestId, status: 'pending' });
+    bridge.replace(requestId).then(
+      () => { if (alive.current) setPaste(current => current?.requestId === requestId ? { requestId, status: 'applied' } : current); },
+      // Rust refuses with its French words: which paste code they mean (never shown).
+      reason => { if (alive.current) setPaste(current => current?.requestId === requestId ? { requestId, status: 'refused', code: refusedPasteCode(reason) } : current); });
+  }, [state, requestId, paste]);
+
+  // The surface leaves once: at the end of the check, on ✕, Escape, Copied, a link to the Settings,
+  // or at once when there is nothing to show (cancelled; the check turned off).
+  const leaving = useRef(false);
+  const leave = useCallback(() => {
+    if (leaving.current || closingRef.current) return;
+    leaving.current = true;
+    cancelAndDismiss();
+  }, [cancelAndDismiss]);
+  // Try again: the same action on the same capture, once per failed request.
+  const retried = useRef<string | null>(null);
+  const retry = () => {
+    const chosen = state.capture;
+    if (state.phase !== 'error' || !chosen?.execution || retried.current === requestId || closingRef.current) return;
+    retried.current = requestId;
+    setPaste(null);
+    start(chosen);
+  };
+  const onAction = (action: ErrorAction): ActionAnswer => {
+    if (action.type === 'retry') { retry(); return; }
+    if (action.type === 'copy') return requestId ? bridge.copy(requestId).then(() => true, () => false) : false;
+    // The Settings take the foreground on the request's field; the pill has said what it had to.
+    return bridge.openSettings(action.field).then(() => { leave(); return true; }, () => false);
+  };
+  const undo = bridge.undoResult;
+  const afterReplace = effectiveAfterReplace(settings?.afterReplace, Boolean(undo));
+  const stage: ResultStage | null = outcome.stage === 'working' ? { stage: 'working', indicator }
+    : outcome.stage === 'done' ? { stage: 'done', afterReplace }
+    : outcome.stage === 'undone' ? { stage: 'undone' }
+    : outcome.stage === 'error' ? { stage: 'error', error: outcome.code, mode: state.mode, model: settings?.profiles[state.mode]?.model }
+    : null;
+  const content = stage && resultContent(stage, {
+    onExpire: leave, onDismiss: leave, onAction,
+    onUndo: undo && requestId ? () => { void undo(requestId).then(() => { if (alive.current) setUndone(true); }, () => undefined); } : undefined,
+  });
+  // Nothing to show once chosen (cancelled, or pasted with the check turned off): the surface
+  // leaves after the lab's 60 ms (Simulator.jsx:154), keeping its last content while it goes
+  // (Simulator.jsx:299-302), as it does when it closes.
+  const empty = outcome.stage !== 'menu' && !content;
+  const lastContent = useRef(content);
+  if (content && !closing) lastContent.current = content;
+  const pill = closing || !content ? lastContent.current : content;
+  useEffect(() => {
+    if (!empty) return;
+    const timer = window.setTimeout(leave, 60);
+    return () => window.clearTimeout(timer);
+  }, [empty, leave]);
+  // Escape once chosen (the menu handles its own): the pill, the check or the error leave.
+  useEffect(() => {
+    if (outcome.stage === 'menu') return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); leave(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [outcome.stage, leave]);
+
   // Closed before it ever showed: nothing to animate out.
   useEffect(() => { if (closing && side === null) completeDismiss(captureId); }, [closing, side, captureId, completeDismiss]);
 
-  const shape = capture.execution || choosing ? 'pill' : 'menu';
-  const done = state.delivery === 'applied';
+  const shape = outcome.stage === 'menu' ? 'menu' : 'pill';
   const { frame } = reserve;
   const right = reserve.width - frame.x - frame.width;
   const corner: CSSProperties = presentation === 'bottom' ? { left: 0, right: 0, bottom: reserve.height - frame.y - frame.height }
     : side === 'above' ? { right, bottom: reserve.height - frame.y - frame.height } : { right, top: frame.y };
-  return <div className="ilot-stage" style={{ width: reserve.width, height: reserve.height }} data-capture-id={captureId} data-presentation={presentation} data-side={side ?? undefined} data-closing={closing}>
-    <div className="ilot-corner" style={corner}>
+  const status = outcome.stage === 'working' ? t('pill.working') : outcome.stage === 'done' ? t('glass.replaced') : '';
+  return <div className="ilot-stage" style={{ width: reserve.width, height: reserve.height }} data-capture-id={captureId} data-presentation={presentation} data-side={side ?? undefined}
+    data-closing={closing} data-stage={outcome.stage} data-error={outcome.stage === 'error' ? outcome.code : undefined}>
+    <div ref={cornerRef} className="ilot-corner" style={corner}>
       <AnimatePresence onExitComplete={() => completeDismiss(captureId)}>
         {shown && <Ilot key={captureId} ref={handle} actions={actions} knownActions={settings?.actions} lastActionId={lastActionId}
           origin={presentation === 'bottom' || side === 'above' ? 'bottom' : 'top'} originX={presentation === 'bottom' ? '50%' : '100%'}
-          keyboard={keyboard} shape={shape} pill={<WorkingContent indicator={indicator} done={done} />} pillSize={workingPillShape(indicator)}
+          keyboard={keyboard} shape={shape} pill={pill}
           onChoose={actionId => run(actionId)} onInstruction={text => run(instructionActionId, text)} onClose={cancelAndDismiss} onShapeChange={onShapeChange} />}
       </AnimatePresence>
     </div>
-    <span className="sr-only" role="status">{state.phase === 'streaming' ? t('pill.working') : done ? t('glass.replaced') : ''}</span>
+    <span className="sr-only" role="status">{status}</span>
     {refusal && <span className="sr-only" role="alert">{refusal}</span>}
+  </div>;
+}
+
+// A capture Rust refused under the Îlot (`capture-notice` with its code: nothing selected, a
+// protected field, too long…): the error pill of the same family of shapes, its text in the
+// interface language, without a button (nothing was read, nothing can be retried or copied) and
+// without ✕: Rust shows it alone, never clickable, in its 420 × 64 window at the bottom of the
+// cursor's screen, and hides it four seconds later. `message` (Rust's French words, never shown)
+// tells the situations one code covers apart: the Settings in front, nothing recent to show again
+// (src/result/errors.ts, noticeCause).
+export function IlotNotice({ code, message }: { code: ErrorCode; message?: string }) {
+  const content = resultContent({ stage: 'error', error: code, source: 'capture', cause: noticeCause(code, message) });
+  if (!content) return null;
+  return <div className="notice-root" data-notice={code}>
+    <MorphSurface contentKey={content.key} size={content.size} origin="bottom" originX="50%">{content.node}</MorphSurface>
   </div>;
 }

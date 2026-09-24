@@ -23,17 +23,17 @@ export function usePageHidden(): boolean {
 // 14, that holds the chosen indicator while the model works. Nothing textual; the pill never
 // grows: the slot reserves the indicator's box from the start, and the orb only shows after
 // 250 ms, so a faster answer shows the empty pill alone, without a flash. The content sits on a
-// layer centred in the pill (plan §4.3, glass.css .shape-layer), so the Îlot can spring its own
-// surface to this shape (src/menu/Ilot.tsx, shape 'pill') around the same content, WorkingContent,
-// without moving or scaling it.
+// layer centred in the pill (plan §4.3, glass.css .shape-layer). The Îlot's journey springs its
+// own surface to this shape around the same content without a surface (src/result/ResultPill.tsx
+// WorkingContent); this pill is the glass's, for a direct capture under the Îlot.
 // The loops run only while the content is mounted; they rest under reduced motion (loaders.css)
 // and while the page is hidden.
 // `done`: the result was pasted (0.4 replace mode); the check stands in for the orb until lot 9
 // draws its own.
 type WorkingProps = { indicator: Indicator; done?: boolean; delayMs?: number };
 
-// What the pill and the Îlot's pill share: the orb's delay, the page's visibility, and the label
-// and state attributes the tests and assistive technologies read.
+// The orb's delay, the page's visibility, and the label and state attributes the tests and
+// assistive technologies read.
 function useWorking({ indicator, done = false, delayMs = ORB_DELAY_MS }: WorkingProps) {
   const t = useT();
   const hidden = usePageHidden();
@@ -58,11 +58,4 @@ export function WorkingPill({ grow = 'up', ...props }: WorkingProps & { grow?: G
   return <motion.span {...enter} className="working-pill" style={style} {...attributes}>
     <span className="shape-clip"><span className="shape-layer working-layer">{content}</span></span>
   </motion.span>;
-}
-
-// The same content without a surface of its own: the Îlot's surface takes the pill's shape
-// (workingPillShape) around it.
-export function WorkingContent(props: WorkingProps) {
-  const { attributes, content } = useWorking(props);
-  return <span className="working-content" {...attributes}>{content}</span>;
 }

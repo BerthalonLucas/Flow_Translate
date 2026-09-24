@@ -80,10 +80,15 @@ export type ExecutionInfo = { actionId: string; actionName: string; outputMode: 
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
 export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string; code?: ErrorCode };
 // Lot 10: what failed, beside the French message of 0.4 (translation error, result-delivery
-// fallback, capture-notice, target-invalidated, check_connection). The list of src/result/errors.ts;
-// an unknown code reads as 'internal'. Never any text of the server or of the user.
-export type ErrorCode = 'unreachable' | 'timeout' | 'unauthorized' | 'model_not_found' | 'bad_endpoint' | 'busy' | 'length' | 'stream_broken'
-  | 'paste_blocked' | 'target_changed' | 'not_editable' | 'too_long' | 'cancelled' | 'server_error' | 'no_selection' | 'protected_field' | 'keys_held' | 'internal';
+// fallback, capture-notice, target-invalidated, check_connection). The one list of the codes Rust
+// sends (error.rs); src/result/errors.ts gives each its family, button and texts, and reads an
+// unknown code as 'internal'. Never any text of the server or of the user.
+export const errorCodes = [
+  'unreachable', 'timeout', 'unauthorized', 'model_not_found', 'bad_endpoint', 'busy', 'length', 'stream_broken',
+  'paste_blocked', 'target_changed', 'not_editable', 'too_long', 'cancelled',
+  'server_error', 'no_selection', 'protected_field', 'keys_held', 'internal',
+] as const;
+export type ErrorCode = typeof errorCodes[number];
 // Lot 10: whether each binding's chord works (`shortcut_status`, event `shortcut-status`); taken: another application holds it.
 export type BindingState = 'registered' | 'taken' | 'failed' | 'disabled';
 export type ShortcutStatus = { bindingId: string; shortcut: string; state: BindingState };

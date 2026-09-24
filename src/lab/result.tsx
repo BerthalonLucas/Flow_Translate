@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence } from 'motion/react';
 import type { ShapeChange } from '../menu/MorphSurface';
 import { indicatorOf } from '../loaders/pill';
-import { errorFamily, errorKindOf, errorKinds, type ErrorAction, type ErrorKind } from '../result/errors';
+import { errorFamily, errorCodeOf, type ErrorAction } from '../result/errors';
 import { changedHighlight, changedRanges, type ChangedRanges } from '../result/highlight';
 import { ResultPill, showsResultPill, type ResultStage } from '../result/ResultPill';
-import type { AfterReplace, Mode } from '../types';
+import { errorCodes, type AfterReplace, type ErrorCode, type Mode } from '../types';
 import type { ResultScenario } from './scenarios';
 import './result.css';
 
@@ -20,7 +20,7 @@ type ResultEntry = { type: 'expire' | 'undo' | 'dismiss' | 'open' } | { type: 'a
 type ResultEvent = ResultEntry & { t: number };
 declare global { interface Window { __resultEvents?: ResultEvent[]; __resultShapes?: ShapeChange[] } }
 
-const scenarioKind: Partial<Record<ResultScenario, ErrorKind>> = {
+const scenarioKind: Partial<Record<ResultScenario, ErrorCode>> = {
   'result-error-config': 'unauthorized',
   'result-error-transient': 'busy',
   'result-error-paste': 'target_changed',
@@ -48,7 +48,7 @@ function PillFixture({ scenario, params }: { scenario: ResultScenario; params: U
     check: params.get('check') !== '0', undo: params.get('undo') !== '0',
     undoSeconds: Math.min(20, Math.max(2, Number(params.get('seconds') ?? 8) || 8)), changedWords: true,
   });
-  const [kind, setKind] = useState<ErrorKind>(params.get('kind') ? errorKindOf(params.get('kind')) : scenarioKind[scenario] ?? 'unauthorized');
+  const [kind, setKind] = useState<ErrorCode>(params.get('kind') ? errorCodeOf(params.get('kind')) : scenarioKind[scenario] ?? 'unauthorized');
   const failing = scenario !== 'result-done';
   const outcome = (): ResultStage => failing ? { stage: 'error', error: kind, mode, model: kind === 'model_not_found' ? 'gemma-4-12b' : undefined } : { stage: 'done', afterReplace: after };
   const first = params.get('stage');
@@ -110,8 +110,8 @@ function PillFixture({ scenario, params }: { scenario: ResultScenario; params: U
       <button type="button" onClick={() => start(true)}>Rejouer</button>
       <button type="button" onClick={() => { setOpen(true); setStage({ stage: 'working', indicator }); }}>Travail</button>
       <button type="button" onClick={() => { setOpen(true); setStage(latest.current()); }}>{failing ? 'Erreur' : 'Coche + Annuler'}</button>
-      {failing ? <label>Code<select value={kind} onChange={event => { const next = errorKindOf(event.target.value); setKind(next); if (stage.stage === 'error') setStage({ stage: 'error', error: next, mode, model: next === 'model_not_found' ? 'gemma-4-12b' : undefined }); }}>
-        {errorKinds.map(code => <option key={code} value={code}>{code} · {familyLabel[errorFamily(code)]}</option>)}
+      {failing ? <label>Code<select value={kind} onChange={event => { const next = errorCodeOf(event.target.value); setKind(next); if (stage.stage === 'error') setStage({ stage: 'error', error: next, mode, model: next === 'model_not_found' ? 'gemma-4-12b' : undefined }); }}>
+        {errorCodes.map(code => <option key={code} value={code}>{code} · {familyLabel[errorFamily(code)]}</option>)}
       </select></label> : <>
         <label><input type="checkbox" checked={after.check} onChange={event => setAfter({ ...after, check: event.target.checked })} />Coche</label>
         <label><input type="checkbox" checked={after.undo} onChange={event => setAfter({ ...after, undo: event.target.checked })} />Annuler</label>

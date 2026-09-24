@@ -85,6 +85,20 @@ describe('translationReducer', () => {
     // A relaunch with the other profile shows its result: no second delivery.
     expect(translationReducer(state, { type: 'START', requestId: 'r2', mode: 'fast' }).delivery).toBeNull();
   });
+  it('keeps the code of lot 10 beside the message, an unknown one read as internal, none as null', () => {
+    const replace = { ...selected, execution: { actionId: 'correct', actionName: 'Corriger', outputMode: 'replace' as const, mode: 'quality' as const } };
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: replace });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });
+    expect(translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'Clé refusée.', code: 'unauthorized' } })).toMatchObject({ phase: 'error', error: 'Clé refusée.', code: 'unauthorized' });
+    expect(translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'x', code: 'teapot' as never } }).code).toBe('internal');
+    expect(translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'x' } }).code).toBeNull();
+    const done = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done', text: 'Bonjour' } });
+    expect(translationReducer(done, { type: 'DELIVERY', event: { requestId: 'r1', status: 'fallback', confirmed: false, message: 'x', code: 'target_changed' } }).code).toBe('target_changed');
+    expect(translationReducer(done, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '' } }).code).toBeNull();
+    // A relaunch starts clean.
+    const failed = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'x', code: 'busy' } });
+    expect(translationReducer(failed, { type: 'START', requestId: 'r2', mode: 'quality' }).code).toBeNull();
+  });
   it('keeps a target that arrives before the result for the done event', () => {
     let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { ...selected, canReplace: false } });
     state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });

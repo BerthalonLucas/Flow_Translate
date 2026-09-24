@@ -10,6 +10,7 @@ type Fixture = {
   settings: (next: Partial<Settings>) => Promise<void>;
   focusField: (field: string) => Promise<void>;
   refuseShortcut: () => void;
+  shortcutStates: (states: Record<string, string>, emitNow?: boolean) => Promise<void> | undefined;
 };
 async function openSettings(page: Page, query = '') {
   await page.route('**/?window=settings&fixture=1*', async route => {
@@ -168,6 +169,50 @@ test('the recorder warns when Ctrl+Alt+key is also AltGr here, and says a taken 
   await expect(page.getByRole('alert')).toHaveText('Une autre application utilise déjà ce raccourci, ou Windows l’a refusé. Choisissez-en un autre.');
   await expect(menu.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Space']);
   await expect(page.locator('.save-status')).toHaveText('Enregistré');
+});
+
+test('a chord another application holds is said on its row, in English and French, without blocking the recorder; the state follows shortcut-status', async ({ page }) => {
+  // Before the window opens, Windows gave Ctrl+Alt+Space to another application (the case
+  // measured on the development PC): the window asks `shortcut_status` as it opens.
+  await openSettings(page, '&shortcutTaken=menu');
+  const menu = page.locator('[data-field="menuShortcut"]');
+  const taken = menu.locator('[data-warning="taken"]');
+  await expect(taken).toHaveText('Another app is already using Ctrl+Alt+Space, so Windows did not give it to FlowTranslate. Record another combination, or close that app.');
+  await expect(taken).toHaveAttribute('role', 'status');
+  expect(await call(page, f => f.calls.filter(c => c.command === 'shortcut_status').length)).toBeGreaterThanOrEqual(1);
+  await expect(menu.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Space']);
+  await page.getByRole('radio', { name: 'Français', exact: true }).click();
+  await expect(taken).toHaveText('Une autre application utilise déjà Ctrl+Alt+Space : Windows ne l’a pas donné à FlowTranslate. Enregistrez une autre combinaison, ou fermez cette application.');
+  await page.getByRole('radio', { name: 'English', exact: true }).click();
+
+  // The recorder stays free: while it listens the warning steps aside, and the new chord is saved.
+  const change = menu.getByRole('button', { name: 'Change', exact: true });
+  await expect(change).toBeEnabled();
+  await change.click();
+  await expect(taken).toHaveCount(0);
+  await page.keyboard.press('Control+Shift+Space');
+  await expect.poll(() => saved(page)).toMatchObject({ shortcutBindings: [expect.objectContaining({ kind: 'menu', shortcut: 'Ctrl+Shift+Space', enabled: true })] });
+  // Rust registered it and said so after the save: no warning left.
+  await expect(page.getByRole('status').filter({ hasText: 'Shortcut saved.' })).toBeVisible();
+  await expect(menu.locator('[data-warning]')).toHaveCount(0);
+
+  // Later the event alone moves it: taken again, then released by the other application.
+  await call(page, f => f.shortcutStates({ menu: 'taken' }));
+  await expect(menu.locator('[data-warning="taken"]')).toContainText('Ctrl+Shift+Space');
+  await call(page, f => f.shortcutStates({}));
+  await expect(menu.locator('[data-warning]')).toHaveCount(0);
+
+  // A direct shortcut Windows refused for another reason says it on its card; a disabled one says nothing.
+  await call(page, f => f.settings({ shortcutBindings: [
+    { id: 'menu', kind: 'menu', shortcut: 'Ctrl+Shift+Space', actionId: 'correct', outputMode: 'replace', enabled: true },
+    { id: 'direct', kind: 'action', shortcut: 'Ctrl+Alt+T', actionId: 'translate', outputMode: 'display', enabled: true },
+    { id: 'off', kind: 'action', shortcut: 'Ctrl+Alt+O', actionId: 'correct', outputMode: 'display', enabled: false },
+  ] }));
+  await call(page, f => f.shortcutStates({ direct: 'failed', off: 'taken' }));
+  const cards = page.locator('.shortcut-card');
+  await expect(cards.nth(0).locator('[data-warning="failed"]')).toHaveText('Windows refused Ctrl+Alt+T: it does nothing for now. Record another combination.');
+  await expect(cards.nth(1).locator('[data-warning]')).toHaveCount(0);
+  await expect(menu.locator('[data-warning]')).toHaveCount(0);
 });
 
 test('a 0.4 file whose Ctrl+Alt+Space runs an action directly gets a menu shortcut from the Menu row', async ({ page }) => {

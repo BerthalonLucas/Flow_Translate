@@ -1,7 +1,7 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Rect, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TranslationRequest } from './types';
 
 type Unlisten = () => void;
 type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status';
@@ -146,6 +146,17 @@ export const bridge = {
     const position = await getCurrentWindow().innerPosition();
     return { x: position.x, y: position.y };
   },
+  // The work area (physical pixels) of the screen holding a point: Rust places a capture on the
+  // screen of its anchor's centre (host::monitor_at, rcWork), the Îlot keeps its widest shape on
+  // it (src/layout.ts ilotShift). null outside the native app, or off every screen.
+  workAreaAt: async (x: number, y: number): Promise<Rect | null> => {
+    if (!native) return null;
+    const { monitorFromPoint } = await import('@tauri-apps/api/window');
+    const monitor = await monitorFromPoint(x, y);
+    if (!monitor) return null;
+    const { position, size } = monitor.workArea;
+    return { x: position.x, y: position.y, width: size.width, height: size.height };
+  },
   // Lot 4, for the shortcut recorder (wired in lot 13): is this chord AltGr + a key here?
   shortcutConflict: (shortcut: string) => command<ShortcutConflict>('shortcut_conflict', { shortcut }),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
@@ -168,5 +179,9 @@ export const bridge = {
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
   // Lot 10: the state of every binding (a chord another application holds is 'taken').
   shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
+  // Lot 9 (native side, not in the contract yet): undo a pasted result, after revalidation. null
+  // while Rust offers nothing: the Îlot then shows the check alone. When the command lands, this
+  // is the one line to change, e.g. `(requestId: string) => command<void>('undo_result', { requestId })`.
+  undoResult: null as ((requestId: string) => Promise<void>) | null,
 };
 

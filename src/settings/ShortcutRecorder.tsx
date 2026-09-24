@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { bridge } from '../bridge';
 import { useT, type MessageKey } from '../i18n';
-import type { ShortcutConflict } from '../types';
+import type { BindingState, ShortcutConflict } from '../types';
 import { describeRefusal } from './messages';
 
 // The keys of a keydown the recorder reads (a React or a DOM KeyboardEvent).
@@ -52,11 +52,15 @@ type Props = {
   busy: boolean;
   // Saves the chord (enabling its binding); null once saved, else Rust's refusal.
   record: (shortcut: string) => Promise<string | null>;
+  // What Windows answered for this chord (lot 10, `shortcut_status`): 'taken' when another
+  // application holds it, 'failed' for any other refusal. Unknown: nothing is said.
+  registration?: BindingState;
 };
-// The keycaps, the Change button, then what happened: saved, refused (translated), and the
-// AltGr warning while the saved chord is also an AltGr key here. A warning, never a refusal.
+// The keycaps, the Change button, then what happened: saved, refused (translated), whether
+// Windows could register the saved chord, and the AltGr warning while the saved chord is also an
+// AltGr key here. Warnings, never a refusal: the recorder stays free to take another chord.
 // Rendered as siblings: the parent row or card lays them out.
-export function ShortcutRecorder({ shortcut, enabled, label, busy, record }: Props) {
+export function ShortcutRecorder({ shortcut, enabled, label, busy, record, registration }: Props) {
   const t = useT();
   const [capturing, setCapturing] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -87,6 +91,7 @@ export function ShortcutRecorder({ shortcut, enabled, label, busy, record }: Pro
       <button type="button" className="text-button" disabled={busy} onMouseDown={event => { if (capturing) event.preventDefault(); }} onClick={() => { setNotice(null); setCapturing(current => !current); }}>{t(capturing ? 'shortcuts.cancel' : 'shortcuts.change')}</button>
     </div>
     {noticeText && <p className="row-warning shortcut-notice" data-ok={saved || undefined} role={saved ? 'status' : 'alert'}>{noticeText}</p>}
+    {enabled && shortcut && !capturing && (registration === 'taken' || registration === 'failed') && <p className="row-warning shortcut-notice" data-warning={registration} role="status">{t(registration === 'taken' ? 'shortcuts.stateTaken' : 'shortcuts.stateFailed', { shortcut })}</p>}
     {conflict && !capturing && <p className="row-warning shortcut-notice" data-warning="altgr" role="status">{conflict.character ? t('shortcuts.altGrConflict', { shortcut, key, character: conflict.character }) : t('shortcuts.altGrConflictKey', { shortcut, key })}</p>}
   </>;
 }

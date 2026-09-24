@@ -73,6 +73,12 @@ const dictionary = {
   'result.error.no_selection': { en: 'Select some text first', fr: 'Sélectionnez d’abord du texte' },
   'result.error.protected_field': { en: 'Protected field, not read', fr: 'Champ protégé, rien lu' },
   'result.error.cancelled': { en: 'Cancelled', fr: 'Annulé' },
+  // A capture Rust refused (capture-notice), where the request's words would mislead: the source
+  // window changed during the capture (nothing was tried), the Settings window was in front, the
+  // tray's « Revoir » found nothing recent (src/result/errors.ts, noticeCause).
+  'result.notice.target_changed': { en: 'Window changed — try again', fr: 'Fenêtre changée, réessayez' },
+  'result.notice.settings_open': { en: 'Close Settings first', fr: 'Fermez d’abord les Réglages' },
+  'result.notice.nothing_recent': { en: 'No recent translation', fr: 'Aucune traduction récente' },
   'init.connection': { en: 'The connection to FlowTranslate is unavailable.', fr: 'La connexion à FlowTranslate est indisponible.' },
   'init.close': { en: 'Closing failed. Try again.', fr: 'La fermeture a échoué. Réessayez.' },
   'init.restart': { en: 'Restart the app if the problem persists.', fr: 'Relancez l’application si le problème persiste.' },
@@ -252,6 +258,9 @@ const dictionary = {
   'shortcuts.none': { en: 'No direct shortcut.', fr: 'Aucun raccourci direct.' },
   'shortcuts.opensMenu': { en: 'Opens the menu.', fr: 'Ouvre le menu.' },
   'shortcuts.taken': { en: 'Another app already uses this shortcut, or Windows refused it. Choose another one.', fr: 'Une autre application utilise déjà ce raccourci, ou Windows l’a refusé. Choisissez-en un autre.' },
+  // Lot 10: what Windows answered for a saved chord (`shortcut_status`), under its row.
+  'shortcuts.stateTaken': { en: 'Another app is already using {shortcut}, so Windows did not give it to FlowTranslate. Record another combination, or close that app.', fr: 'Une autre application utilise déjà {shortcut} : Windows ne l’a pas donné à FlowTranslate. Enregistrez une autre combinaison, ou fermez cette application.' },
+  'shortcuts.stateFailed': { en: 'Windows refused {shortcut}: it does nothing for now. Record another combination.', fr: 'Windows a refusé {shortcut} : il ne fait rien pour l’instant. Enregistrez une autre combinaison.' },
   'shortcuts.duplicate': { en: 'Another FlowTranslate shortcut already uses this combination.', fr: 'Un autre raccourci de FlowTranslate utilise déjà cette combinaison.' },
   'shortcuts.unknown': { en: 'This combination is not recognized.', fr: 'Cette combinaison n’est pas reconnue.' },
   'shortcuts.altGrConflict': { en: '{shortcut} is also AltGr+{key} on this keyboard: you could no longer type {character}.', fr: '{shortcut} est aussi AltGr+{key} sur ce clavier : vous ne pourriez plus taper {character}.' },
