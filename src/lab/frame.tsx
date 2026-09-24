@@ -62,13 +62,13 @@ async function mount() {
   document.documentElement.dataset.labScenario = scenario;
   applyMotion(motion);
   applyMotionPreset(preset);
-  const ilot = ilotScenarioFrom(params.get('scenario'));
-  if (ilot) {
+  const ilotScenario = ilotScenarioFrom(params.get('scenario'));
+  if (ilotScenario) {
     // The Îlot alone (lot 7), on the overlay's page style.
-    document.documentElement.dataset.labScenario = ilot.id;
+    document.documentElement.dataset.labScenario = ilotScenario.id;
     setLanguage(params.get('lang') === 'fr' ? 'fr' : 'en');
     document.body.className = 'flowtranslate-window flowtranslate-overlay';
-    createRoot(document.getElementById('root')!).render(<StrictMode><MotionPreferences motion={motion} preset={preset}><div className="standalone-demo" data-preview-background={theme}><IlotFixture scenario={ilot.id} params={params}/></div></MotionPreferences></StrictMode>);
+    createRoot(document.getElementById('root')!).render(<StrictMode><MotionPreferences motion={motion} preset={preset}><div className="standalone-demo" data-preview-background={theme}><IlotFixture scenario={ilotScenario.id} params={params}/></div></MotionPreferences></StrictMode>);
     return;
   }
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
