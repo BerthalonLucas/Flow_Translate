@@ -27,3 +27,16 @@ export const ilotScenarios = [
 ] as const;
 export type IlotScenario = typeof ilotScenarios[number]['id'];
 export function ilotScenarioFrom(value: string | null) { return ilotScenarios.find(item => item.id === value); }
+
+// The result pill (lots 9 and 10), apart as well: coche + Annuler, each family of errors, and
+// what the halo will mark. Theme, preset and motion are parameters of the frame.
+export const resultScenarios = [
+  { id: 'result-done', label: 'Coche et Annuler', issue: 'Lot 9', expected: 'Pilule de travail 44 × 28 (Perle après 250 ms), puis sur la même surface la coche tracée (260 ms après 80 ms) et Annuler avec son anneau de 8 s, en pause au survol et au focus ; à la fin la pilule part (les mots changés avec elle). Annuler : « Annulé » 0,9 s. Réduit : fondus seuls, coche d’un coup, anneau par pas d’une seconde.' },
+  { id: 'result-error-config', label: 'Erreur de configuration', issue: 'Lot 10', expected: 'Pilule d’erreur de 30 px : triangle rouge (#D14343, #FF8A80 en sombre), six mots au plus, un bouton qui ouvre le champ exact des Réglages (clé, adresse ou modèle), ✕. Même surface et même mouvement que la pilule de travail, sans secousse.' },
+  { id: 'result-error-transient', label: 'Erreur passagère', issue: 'Lot 10', expected: 'Serveur occupé, délai dépassé, erreur du serveur, réponse coupée : Réessayer relance le travail sur la même surface.' },
+  { id: 'result-error-paste', label: 'Collage refusé', issue: 'Lot 10', expected: 'Rien n’est remplacé : Copier le résultat, puis « Copié » à la même place, sans que la pilule grandisse, et elle part après 0,9 s.' },
+  { id: 'result-error-content', label: 'Sélection inutilisable', issue: 'Lot 10', expected: 'Sélection trop longue, rien de sélectionné, champ protégé : le message et ✕, aucun bouton.' },
+  { id: 'result-diff', label: 'Mots changés (calcul)', issue: 'Lot 9', expected: 'Ce que le halo marquera : mot à mot pour Corriger, Pro et Raccourcir, bloc entier pour Traduire, Mail et la consigne libre, décidé par le diff pour une action créée. Bleu rgba(141,159,255,.32), 260 ms, tenu 8 s, fondu 900 ms.' },
+] as const;
+export type ResultScenario = typeof resultScenarios[number]['id'];
+export function resultScenarioFrom(value: string | null) { return resultScenarios.find(item => item.id === value); }
