@@ -280,7 +280,7 @@ test('IPC fixture: choices save immediately, checks never save, typing saves aft
   await openSettingsFixture(page);
   expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'check_connection'))).toBe(false);
   await expect(page.locator('.save-status')).toHaveText('Saved');
-  await page.getByRole('radio', { name: 'Fast', exact: true }).first().click();
+  await page.getByRole('radiogroup', { name: 'Default profile', exact: true }).getByRole('radio', { name: 'Fast', exact: true }).click();
   await expect(page.locator('.save-status')).toHaveText('Saved just now');
   await page.getByRole('radio', { name: 'Large', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length)).toBe(2);
@@ -313,7 +313,8 @@ test('IPC fixture: a refused shortcut keeps the previous combination and explain
   await page.evaluate(() => window.nativeFixture.refuseShortcut());
   await page.getByRole('button', { name: 'Change', exact: true }).click();
   await page.keyboard.press('Control+Alt+Y');
-  await expect(page.getByRole('alert')).toHaveText('Le raccourci est déjà utilisé ou indisponible.');
+  // Rust's French refusal, said in the interface's language (lot 13).
+  await expect(page.getByRole('alert')).toHaveText('Another app already uses this shortcut, or Windows refused it. Choose another one.');
   await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Space']);
   await expect(page.locator('.save-status')).toHaveText('Saved');
 });

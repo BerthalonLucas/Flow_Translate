@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Switch from '@radix-ui/react-switch';
 import * as ToggleGroup from '@radix-ui/react-toggle-group';
-import { BriefcaseBusiness, Check, ChevronDown, Clipboard, Copy, Cpu, Ellipsis, FoldVertical, KeyRound, Languages, LoaderCircle, Mail, Pin, PinOff, Server, Settings2, SpellCheck, TriangleAlert, Undo2, WandSparkles, X } from 'lucide-react';
+import { BriefcaseBusiness, Check, ChevronDown, ChevronUp, Clipboard, Copy, Cpu, Ellipsis, FoldVertical, KeyRound, Languages, LoaderCircle, Mail, Pin, PinOff, Server, Settings2, SpellCheck, TriangleAlert, Undo2, WandSparkles, X } from 'lucide-react';
 import { useT } from './i18n';
 import { useContentPresence, useStateTransition, useSurfacePresence } from './motion/MotionPreferences';
 import type { Grow } from './motion/presence';
@@ -17,7 +17,7 @@ import type { Grow } from './motion/presence';
 const icons = {
   fix: SpellCheck, translate: Languages, professional: BriefcaseBusiness, shorten: FoldVertical, email: Mail, custom: WandSparkles,
   undo: Undo2, settings: Settings2, error: TriangleAlert, key: KeyRound, server: Server, model: Cpu,
-  copy: Copy, more: Ellipsis, close: X, clipboard: Clipboard, check: Check, chevron: ChevronDown, pin: Pin, unpin: PinOff, languages: Languages, spinner: LoaderCircle,
+  copy: Copy, more: Ellipsis, close: X, clipboard: Clipboard, check: Check, chevron: ChevronDown, up: ChevronUp, pin: Pin, unpin: PinOff, languages: Languages, spinner: LoaderCircle,
 };
 export type IconName = keyof typeof icons;
 export const iconStroke = 1.5;

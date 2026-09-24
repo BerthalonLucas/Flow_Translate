@@ -57,6 +57,10 @@
   --primary-hover: #2a55c9;
   --primary-text: #fff;
   --quiet-bg: rgb(var(--ink-rgb) / .08);
+  /* A field reached by a direct link (lab: .s-field.is-target, design-lab/src/app.css). */
+  --target-bg: rgb(255 186 113 / .18);
+  --target-ring: rgb(255 120 80 / .55);
+  --target-glow: rgb(255 120 80 / .25);
 }
 
 /* Dark: the same recipe on a dark tint; written twice, for the system and for the choice. */
@@ -96,6 +100,9 @@
     --primary-hover: #edf5ff;
     --primary-text: #102344;
     --quiet-bg: rgb(var(--ink-rgb) / .11);
+    --target-bg: rgb(255 186 113 / .16);
+    --target-ring: rgb(255 150 110 / .7);
+    --target-glow: rgb(255 150 110 / .3);
   }
 }
 :root[data-theme="dark"] {
@@ -133,6 +140,9 @@
   --primary-hover: #edf5ff;
   --primary-text: #102344;
   --quiet-bg: rgb(var(--ink-rgb) / .11);
+  --target-bg: rgb(255 186 113 / .16);
+  --target-ring: rgb(255 150 110 / .7);
+  --target-glow: rgb(255 150 110 / .3);
 }
 
 /* One painted material for every floating surface: sheen over the fill, rim over the shadow.

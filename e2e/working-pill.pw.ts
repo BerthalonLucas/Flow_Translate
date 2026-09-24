@@ -266,7 +266,7 @@ test('Settings: the indicator row shows in the Îlot journey only and saves the 
   const row = page.getByRole('radiogroup', { name: 'Indicator', exact: true });
   await expect(row).toBeVisible();
   // In the Appearance section, between Theme and Animations (plan, lot 13).
-  expect(await page.locator('.appearance-settings .segmented').evaluateAll(els => els.map(el => el.getAttribute('aria-label')))).toEqual(['Language', 'Theme', 'Indicator', 'Animations']);
+  expect(await page.locator('.appearance-settings .segmented').evaluateAll(els => els.map(el => el.getAttribute('aria-label')))).toEqual(['Language', 'Theme', 'Indicator', 'Animations', 'Motion style']);
   expect(await row.getByRole('radio').allTextContents()).toEqual(['Perle', 'Nebula', 'Ribbon']);
   await expect(row.getByRole('radio', { name: 'Perle', exact: true })).toHaveAttribute('aria-checked', 'true');
   await row.getByRole('radio', { name: 'Nebula', exact: true }).click();

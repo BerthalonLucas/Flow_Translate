@@ -12,9 +12,13 @@ import { useTranslation } from './useTranslation';
 import { shareSettings, useSettings } from './useSettings';
 import { useDocumentPreferences } from './preferences';
 import { locales, t as tNow, useLanguage, useT, type MessageKey } from './i18n';
-import { MotionPreferences, useContentPresence } from './motion/MotionPreferences';
+import { MotionPreferences, useContentPresence, useReducedMotionSetting } from './motion/MotionPreferences';
 import { indicatorOf } from './loaders/pill';
-import type { AutoClose, Capture, HistoryEntry, Indicator, Language, Mode, Settings, TextSize, Theme } from './types';
+import { MenuSettings } from './settings/MenuSettings';
+import { AfterReplaceSettings } from './settings/AfterReplace';
+import { describeRefusal } from './settings/messages';
+import { fieldFromLocation, isProfileField, resolveField, revealField } from './settings/fields';
+import type { AutoClose, Capture, HistoryEntry, Indicator, Language, Mode, MotionPreset, Settings, SettingsFocus, ShortcutBinding, TextSize, Theme } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Alex,\n\nThank you for your feedback. The updated proposal includes the delivery timeline, responsibilities, and payment terms. Could you confirm these details before Thursday?\n\nWe have kept the total budget unchanged and clarified the review process. Please check the dates and amounts before we share the final version with the team.\n\nBest regards,\nMarie' };
@@ -39,56 +43,104 @@ export function Capsule() {
 }
 
 type SaveStatus = 'saved' | 'just-saved' | 'saving' | 'error';
+// Why a save failed: one of our messages, or Rust's refusal (shown translated when known).
+type SaveProblem = { key: MessageKey } | { text: string };
 type Connection = { state: 'ok' | 'unknown' | 'error' | 'checking'; latencyMs?: number; message?: string };
 const modeKey = (mode: Mode): MessageKey => mode === 'quality' ? 'mode.quality' : 'mode.fast';
+const menuBindingId = (bindings: ShortcutBinding[]) => ['menu', ...bindings.map((_, n) => `menu-${n + 2}`)].find(id => bindings.every(b => b.id !== id))!;
 export function SettingsWindow() {
   const t = useT();
   const language = useLanguage();
+  const reduced = useReducedMotionSetting();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
-  const [saveError, setSaveError] = useState('');
+  const [saveError, setSaveError] = useState<SaveProblem | null>(null);
+  const [recording, setRecording] = useState(false);
   const [connections, setConnections] = useState<Record<Mode, Connection>>({ fast: { state: 'unknown' }, quality: { state: 'unknown' } });
+  // A direct link to a field (lot 10): asked by the URL at opening, or by an event later.
+  const [fieldRequest, setFieldRequest] = useState<{ field: string } | null>(() => { const field = fieldFromLocation(location.search); return field ? { field } : null; });
+  const clearHighlight = useRef<(() => void) | null>(null);
   const latest = useRef<Settings | null>(null);
+  // What Rust is known to hold: loaded, adopted from `settings-changed`, or saved by us.
+  const synced = useRef<Settings | null>(null);
   const saveTimer = useRef(0);
+  const inFlight = useRef(0);
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const lastError = useRef('');
+  const lastError = useRef<SaveProblem>({ key: 'settings.notSaved' });
   const settledTimer = useRef(0);
   // The window's own copy feeds its document preferences (language, theme) at once.
   const show = (next: Settings) => { latest.current = next; setSettings(next); shareSettings(next); };
-  const loadSettings = () => { setLoadError(false); void bridge.getSettings().then(show).catch(() => setLoadError(true)); };
+  const adopt = (next: Settings) => { synced.current = next; show(next); };
+  const loadSettings = () => { setLoadError(false); void bridge.getSettings().then(adopt).catch(() => setLoadError(true)); };
   useEffect(() => { loadSettings(); void bridge.getHistory().then(setHistory).catch(() => undefined); }, []);
   useEffect(() => { void bridge.setSettingsTitle(t('settings.windowTitle')).catch(() => undefined); }, [t]);
-  useEffect(() => () => { window.clearTimeout(saveTimer.current); window.clearTimeout(settledTimer.current); }, []);
+  useEffect(() => () => { window.clearTimeout(saveTimer.current); window.clearTimeout(settledTimer.current); clearHighlight.current?.(); }, []);
+  // The window stays alive while hidden: settings changed elsewhere (another window, the tray,
+  // a later lot) must replace its copy, or its next save would write the old values back.
+  // Adopted only when nothing is being typed or saved here: a pending edit wins, and is saved.
+  useEffect(() => {
+    let live = true;
+    const offs: Array<() => void> = [];
+    const keep = (off: () => void) => { if (live) offs.push(off); else off(); };
+    void bridge.on<Settings>('settings-changed', incoming => {
+      const current = latest.current;
+      if (current === null) { setLoadError(false); adopt(incoming); return; }
+      const editing = saveTimer.current !== 0 || inFlight.current > 0 || current !== synced.current;
+      // Our own echo, or a change we are about to overwrite: the window's copy stays the reference.
+      if (editing) { shareSettings(current); return; }
+      if (JSON.stringify(incoming) === JSON.stringify(current)) { synced.current = current; return; }
+      adopt(incoming);
+    }).then(keep);
+    void bridge.on<SettingsFocus>('settings-focus-field', ({ field }) => setFieldRequest({ field })).then(keep);
+    return () => { live = false; offs.forEach(off => off()); };
+  }, []);
   const commit = async (next: Settings): Promise<boolean> => {
     setSaveStatus('saving');
+    inFlight.current += 1;
     try {
       for (const action of next.actions) {
-        if (promptError(action.promptTemplate)) throw tNow('actions.promptInvalid');
+        if (promptError(action.promptTemplate)) throw { key: 'actions.promptInvalid' } satisfies SaveProblem;
       }
       const pending = saveQueue.current.then(() => bridge.saveSettings(next));
       saveQueue.current = pending.catch(() => undefined);
       await pending;
+      synced.current = next;
       if (latest.current !== next) return true;
       setSaveStatus('just-saved');
       window.clearTimeout(settledTimer.current);
       settledTimer.current = window.setTimeout(() => setSaveStatus(status => status === 'just-saved' ? 'saved' : status), 3000);
       return true;
     } catch (error) {
-      lastError.current = typeof error === 'string' ? error : tNow('settings.notSaved');
+      lastError.current = typeof error === 'string' ? { text: error } : error && typeof error === 'object' && 'key' in error ? error as SaveProblem : { key: 'settings.notSaved' };
       if (latest.current === next) { setSaveError(lastError.current); setSaveStatus('error'); }
       return false;
+    } finally {
+      inFlight.current -= 1;
     }
   };
   // Every change is saved: immediately for switches and segments, 300 ms after typing.
   const persist = (next: Settings, immediate: boolean) => {
     show(next);
     window.clearTimeout(saveTimer.current);
+    saveTimer.current = 0;
     if (immediate) void commit(next);
-    else saveTimer.current = window.setTimeout(() => { if (latest.current) void commit(latest.current); }, 300);
+    else saveTimer.current = window.setTimeout(() => { saveTimer.current = 0; if (latest.current) void commit(latest.current); }, 300);
   };
   const retry = () => { if (latest.current) void commit(latest.current); };
+  const problemText = (problem: SaveProblem) => 'key' in problem ? t(problem.key) : describeRefusal(problem.text, t);
+  // Opens the connection details if needed, then scrolls to the field, focuses it and makes it
+  // pulse (lab: MockSettings). An unknown field is ignored.
+  useEffect(() => {
+    if (!fieldRequest || !settings) return;
+    const id = resolveField(fieldRequest.field, settings.mode);
+    if (id && isProfileField(id) && !settings.connectionExpanded) { persist({ ...settings, connectionExpanded: true }, true); return; }
+    setFieldRequest(null);
+    if (!id) return;
+    clearHighlight.current?.();
+    clearHighlight.current = revealField(document, id, reduced);
+  }, [fieldRequest, settings]);
 
   if (!settings) return <main className="settings-window settings-loading"><h1>{t('settings.title')}</h1><p role={loadError ? 'alert' : 'status'}>{t(loadError ? 'settings.loadError' : 'settings.loading')}</p>{loadError && <button className="primary-action" onClick={loadSettings}>{t('common.retry')}</button>} <button className="quiet-action" onClick={() => void bridge.closeSettings()}>{t('common.close')}</button></main>;
 
@@ -97,17 +149,34 @@ export function SettingsWindow() {
     setConnections(previous => ({ ...previous, [mode]: { state: 'unknown' } }));
     persist({ ...settings, profiles: { ...settings.profiles, [mode]: { ...settings.profiles[mode], [key]: value } } }, false);
   };
-  const recordShortcut = async (id: string, shortcut: string): Promise<string | null> => {
+  // A chord is saved at once and enables its binding; refused, the previous one comes back.
+  // id null: the menu has no binding yet (a 0.4 file whose Ctrl+Alt+Space was taken), one is added.
+  const recordShortcut = async (id: string | null, shortcut: string): Promise<string | null> => {
     window.clearTimeout(saveTimer.current);
+    saveTimer.current = 0;
     const previous = latest.current!;
-    const next = { ...previous, shortcutBindings: previous.shortcutBindings.map(b => b.id === id ? { ...b, shortcut, enabled: true } : b) };
+    const bindings: ShortcutBinding[] = id === null
+      ? [...previous.shortcutBindings, { id: menuBindingId(previous.shortcutBindings), kind: 'menu', shortcut, actionId: previous.defaultActionId, outputMode: 'replace', enabled: true }]
+      : previous.shortcutBindings.map(b => b.id === id ? { ...b, shortcut, enabled: true } : b);
+    const next = { ...previous, shortcutBindings: bindings };
+    setRecording(true);
     show(next);
-    if (await commit(next)) return null;
-    if (latest.current === next) { show(previous); setSaveStatus('saved'); }
-    return lastError.current;
+    try {
+      if (await commit(next)) return null;
+      if (latest.current === next) {
+        show(previous);
+        // An edit typed just before stays to be saved; otherwise nothing changed.
+        if (previous !== synced.current) persist(previous, false);
+        else { setSaveStatus('saved'); setSaveError(null); }
+      }
+      return 'key' in lastError.current ? tNow(lastError.current.key) : lastError.current.text;
+    } finally {
+      setRecording(false);
+    }
   };
   const closeSettings = async () => {
     window.clearTimeout(saveTimer.current);
+    saveTimer.current = 0;
     if (latest.current && !await commit(latest.current)) return;
     await bridge.closeSettings();
   };
@@ -121,7 +190,7 @@ export function SettingsWindow() {
       setConnections(previous => ({ ...previous, [mode]: { state: 'error', message: tNow('settings.checkImpossible') } }));
     }
   };
-  const removeHistory = async (id: string | null) => { try { await bridge.deleteHistory(id); setHistory(await bridge.getHistory()); } catch { setSaveError(tNow('settings.deleteFailed')); setSaveStatus('error'); } };
+  const removeHistory = async (id: string | null) => { try { await bridge.deleteHistory(id); setHistory(await bridge.getHistory()); } catch { setSaveError({ key: 'settings.deleteFailed' }); setSaveStatus('error'); } };
   // Absolute dates in the interface's locale: the lab references must not drift day to day.
   const historyDate = (value: string) => {
     const date = new Date(value);
@@ -141,6 +210,12 @@ export function SettingsWindow() {
       <button className="close-settings" onClick={() => void closeSettings()} aria-label={t('settings.close')}><Icon name="close" /></button>
     </header>
     <ScrollArea.Root className="settings-scroll" type="always"><ScrollArea.Viewport className="settings-scroll-viewport"><div className="settings-body">
+      {/* The sections of lot 13: Menu, Actions, After replacing, Appearance, then the result
+          bubble, Connection and this device. What only the Îlot uses (grid, After replacing,
+          indicator) shows under uiVersion « ilot » only; uiVersion and glassMaterial never show. */}
+      <MenuSettings settings={settings} persist={persist} record={recordShortcut} busy={recording} />
+      <ActionSettings settings={settings} persist={persist} record={recordShortcut} busy={recording} />
+      {settings.uiVersion === 'ilot' && <AfterReplaceSettings settings={settings} persist={persist} />}
       <section className="appearance-settings">
         <h2>{t('settings.appearance')}</h2>
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.language')}</strong><small>{t('settings.languageHelp')}</small></div>
@@ -151,17 +226,29 @@ export function SettingsWindow() {
         {settings.uiVersion === 'ilot' && <div className="setting-row"><div className="setting-copy"><strong>{t('settings.indicator')}</strong><small>{t('settings.indicatorHelp')}</small></div>
           <Segmented<Indicator> label={t('settings.indicator')} value={indicatorOf(settings.indicator)} options={[{ value: 'perle', label: t('settings.indicatorPerle') }, { value: 'nebuleuse', label: t('settings.indicatorNebula') }, { value: 'ruban', label: t('settings.indicatorRibbon') }]} onChange={value => update('indicator', value)} /></div>}
         <AnimationsSetting value={settings.motion} onChange={value => update('motion', value)} />
+        <div className="setting-row"><div className="setting-copy"><strong>{t('settings.motionPreset')}</strong><small>{t('settings.motionPresetHelp')}</small></div>
+          <Segmented<MotionPreset> label={t('settings.motionPreset')} value={settings.motionPreset} options={[{ value: 'smooth', label: t('settings.motionSmooth') }, { value: 'bouncy', label: t('settings.motionBouncy') }]} onChange={value => update('motionPreset', value)} /></div>
       </section>
-      <section>
-        <h2>{t('settings.translation')}</h2>
-        <div className="setting-row"><div className="setting-copy"><strong>{t('settings.defaultProfile')}</strong><small>{t('settings.defaultProfileHelp')}</small></div>
-          <Segmented<Mode> label={t('settings.defaultProfile')} value={settings.mode} options={[{ value: 'quality', label: t('mode.quality') }, { value: 'fast', label: t('mode.fast') }]} onChange={value => update('mode', value)} /></div>
+      <section className="bubble-settings">
+        <div className="section-heading"><div><h2>{t('settings.bubble')}</h2><p>{t('settings.bubbleIntro')}</p></div></div>
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.textSize')}</strong><small>{t('settings.textSizeHelp')}</small></div>
           <Segmented<TextSize> label={t('settings.textSize')} value={settings.textSize} options={[{ value: 'normal', label: t('settings.textNormal') }, { value: 'large', label: t('settings.textLarge') }, { value: 'xlarge', label: t('settings.textXLarge') }]} onChange={value => update('textSize', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.autoClose')}</strong><small>{t('settings.autoCloseHelp')}</small></div>
           <Segmented<AutoClose> label={t('settings.autoClose')} value={settings.autoClose} options={[{ value: 'fast', label: t('settings.closeFast') }, { value: 'normal', label: t('settings.closeNormal') }, { value: 'slow', label: t('settings.closeSlow') }, { value: 'never', label: t('settings.closeNever') }]} onChange={value => update('autoClose', value)} /></div>
       </section>
-      <ActionSettings settings={settings} persist={persist} record={recordShortcut} />
+      <section className="connection">
+        <button className="section-toggle" onClick={() => update('connectionExpanded', !settings.connectionExpanded)} aria-expanded={settings.connectionExpanded} aria-controls="connection-profiles"><h2>{t('settings.connection')}</h2><Icon name="chevron" size={14} /></button>
+        <div className="setting-row"><div className="setting-copy"><strong>{t('settings.defaultProfile')}</strong><small>{t('settings.defaultProfileHelp')}</small></div>
+          <Segmented<Mode> label={t('settings.defaultProfile')} value={settings.mode} options={[{ value: 'quality', label: t('mode.quality') }, { value: 'fast', label: t('mode.fast') }]} onChange={value => update('mode', value)} /></div>
+        {/* data-field: the stable identifiers the errors of lot 10 link to (src/settings/fields.ts). */}
+        <div id="connection-profiles" className="profiles">{settings.connectionExpanded && (['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}>
+          <div className="profile-heading"><strong>{t(modeKey(mode))}</strong><span className="connection-state" data-state={connections[mode].state} role="status"><i aria-hidden="true" />{statusLine(mode)}</span><button className="text-button" onClick={() => void check(mode)} disabled={connections[mode].state === 'checking'}>{t('settings.check')}</button></div>
+          <div className="field-grid"><label data-field={`${mode}.endpoint`}>{t('settings.endpoint')}<input type="url" placeholder={mode === 'quality' ? 'http://127.0.0.1:8002/v1' : 'http://127.0.0.1:8001/v1'} value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label data-field={`${mode}.model`}>{t('settings.model')}<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label></div>
+          <div className="secret" data-field={`${mode}.apiKey`}><label>{t('settings.apiKey')}<input type="password" autoComplete="new-password" placeholder={t('settings.apiKeyPlaceholder')} value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label><small aria-hidden="true">{t('settings.apiKeyProtected')}</small></div>
+          {connections[mode].state === 'error' && connections[mode].message && <p className="row-warning">{connections[mode].message}</p>}
+        </div>)}</div>
+        {!bridge.native && settings.connectionExpanded && <small className="preview-note">{t('settings.previewConnection')}</small>}
+      </section>
       <section>
         <h2>{t('settings.device')}</h2>
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.history')}</strong><small>{t('settings.historyHelp')}</small></div>
@@ -173,25 +260,15 @@ export function SettingsWindow() {
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.autostart')}</strong><small>{t('settings.autostartHelp')}</small></div>
           <SettingSwitch label={t('settings.autostart')} checked={settings.autostart} onCheckedChange={checked => update('autostart', checked)} /></div>
       </section>
-      <section className="connection">
-        <button className="section-toggle" onClick={() => update('connectionExpanded', !settings.connectionExpanded)} aria-expanded={settings.connectionExpanded}><h2>{t('settings.connection')}</h2><Icon name="chevron" size={14} /></button>
-        {settings.connectionExpanded && (['quality', 'fast'] as Mode[]).map(mode => <div className="profile" key={mode}>
-          <div className="profile-heading"><strong>{t(modeKey(mode))}</strong><span className="connection-state" data-state={connections[mode].state} role="status"><i aria-hidden="true" />{statusLine(mode)}</span><button className="text-button" onClick={() => void check(mode)} disabled={connections[mode].state === 'checking'}>{t('settings.check')}</button></div>
-          <div className="field-grid"><label>{t('settings.endpoint')}<input type="url" placeholder={mode === 'quality' ? 'http://127.0.0.1:8002/v1' : 'http://127.0.0.1:8001/v1'} value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label>{t('settings.model')}<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label></div>
-          <div className="secret"><label>{t('settings.apiKey')}<input type="password" autoComplete="new-password" placeholder={t('settings.apiKeyPlaceholder')} value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label><small aria-hidden="true">{t('settings.apiKeyProtected')}</small></div>
-          {connections[mode].state === 'error' && connections[mode].message && <p className="row-warning">{connections[mode].message}</p>}
-        </div>)}
-        {!bridge.native && settings.connectionExpanded && <small className="preview-note">{t('settings.previewConnection')}</small>}
-      </section>
     </div></ScrollArea.Viewport><ScrollArea.Scrollbar className="settings-scrollbar" orientation="vertical"><ScrollArea.Thumb className="settings-scroll-thumb" /></ScrollArea.Scrollbar></ScrollArea.Root>
     <footer>
       <span className="save-status" data-status={saveStatus} aria-live="polite">
-        {saveStatus === 'error' ? <button className="text-button retry" onClick={retry} title={saveError}>{t('settings.saveRetry')}</button> : <><Icon name="check" size={14} />{t(saveStatus === 'just-saved' ? 'settings.savedNow' : saveStatus === 'saving' ? 'settings.saving' : 'settings.saved')}</>}
+        {saveStatus === 'error' ? <button className="text-button retry" onClick={retry} title={saveError ? problemText(saveError) : undefined}>{t('settings.saveRetry')}</button> : <><Icon name="check" size={14} />{t(saveStatus === 'just-saved' ? 'settings.savedNow' : saveStatus === 'saving' ? 'settings.saving' : 'settings.saved')}</>}
       </span>
       <span className="settings-meta">{__APP_VERSION__} · <button className="text-button" onClick={() => void bridge.quit()}>{t('settings.quit')}</button></span>
     </footer>
-    {saveStatus === 'error' && <p className="save-error-detail" role="alert">{saveError}</p>}
-    {bridge.native && <button className="settings-resize-grip" aria-label={t('settings.resize')} title={t('settings.resizeHint')} onPointerDown={event => { if (event.button === 0) { event.preventDefault(); void bridge.resizeSettingsCorner().catch(() => { setSaveError(tNow('settings.resizeUnavailable')); setSaveStatus('error'); }); } }}>◢</button>}
+    {saveStatus === 'error' && saveError && <p className="save-error-detail" role="alert">{problemText(saveError)}</p>}
+    {bridge.native && <button className="settings-resize-grip" aria-label={t('settings.resize')} title={t('settings.resizeHint')} onPointerDown={event => { if (event.button === 0) { event.preventDefault(); void bridge.resizeSettingsCorner().catch(() => { setSaveError({ key: 'settings.resizeUnavailable' }); setSaveStatus('error'); }); } }}>◢</button>}
   </main>;
 }
 

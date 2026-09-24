@@ -17,6 +17,21 @@ export const defaultActions: ActionDefinition[] = [
   { id: 'shorten', name: 'Shorten', key: 'S', shortName: 'Shorten', icon: 'FoldVertical', promptTemplate: instruction('You are an editor. Shorten the text to about half its length, in the same language: keep the key information, names, numbers and facts, drop repetitions and filler. Keep its tone.') },
   { id: 'email', name: 'Write email', key: 'E', shortName: 'Email', icon: 'Mail', promptTemplate: instruction('You are an assistant who writes emails. Turn the text (notes, a draft or a request) into a clear, courteous email in the same language, with a greeting, a short body and a closing. Do not add a subject line. Do not invent facts, names, dates or commitments that are not in the text.') },
 ];
+// The actions 0.3 and 0.4 shipped and a migrated file keeps (mirrors legacy_defaults in
+// actions.rs; correct and professionalize share the current instructions there). They are no
+// longer created, but they remain built-in: « Restore » brings back the instruction they were
+// shipped with, and nothing ever renames them.
+export const legacyActions: ActionDefinition[] = [
+  { id: 'translate-fr', name: 'Traduire en français', promptTemplate: instruction('You are a professional translator. Translate the text into French. Detect the source language yourself; if the text is already in French, return it unchanged. Keep names, numbers, formatting and tone.') },
+  { id: 'translate-en', name: 'Traduire en anglais', promptTemplate: instruction('You are a professional translator. Translate the text into English. Detect the source language yourself; if the text is already in English, return it unchanged. Keep names, numbers, formatting and tone.') },
+];
+// The built-in instruction of an action id: the current default's, else the former default's,
+// else none (a custom action). Restore puts back this instruction only.
+export function shippedInstruction(id: string): string | undefined {
+  return (defaultActions.find(action => action.id === id) ?? legacyActions.find(action => action.id === id))?.promptTemplate;
+}
+// Current defaults cannot be deleted; former ones can once nothing uses them.
+export const isCurrentDefault = (id: string) => defaultActions.some(action => action.id === id);
 export const defaultActionId = 'correct';
 export const defaultMenuActionIds = defaultActions.map(action => action.id);
 export const menuShortcut = 'Ctrl+Alt+Space';
