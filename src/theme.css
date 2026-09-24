@@ -35,6 +35,8 @@
   --ok: #1f8a5b;
   --pending: #b4541a;
   --fail: #d14343;
+  /* The error pill's icon (lot 10; design-lab/src/app.css:170-171). */
+  --error-icon: #d14343;
   /* The settings window is opaque: one plain fill, rows and fields on it. */
   --settings-scheme: light;
   --settings-bg: rgb(245 245 247);
@@ -81,6 +83,7 @@
     --ok: #7fd3a3;
     --pending: #f0c27a;
     --fail: #ff9c8f;
+    --error-icon: #ff8a80;
     --settings-scheme: dark;
     --settings-bg: rgb(28 30 34);
     --settings-field: rgb(42 45 51);
@@ -121,6 +124,7 @@
   --ok: #7fd3a3;
   --pending: #f0c27a;
   --fail: #ff9c8f;
+  --error-icon: #ff8a80;
   --settings-scheme: dark;
   --settings-bg: rgb(28 30 34);
   --settings-field: rgb(42 45 51);
