@@ -42,7 +42,8 @@ test('IPC fixture: an Îlot capture waits for its choice, takes the keyboard, an
   await expect.poll(() => translations(page, 'menu')).toEqual([expect.objectContaining({ captureId: 'menu', actionId: 'correct' })]);
   // Chosen: the probe leaves, the pill waits for the native paste; a second Enter chooses nothing.
   await expect(page.locator('[data-menu-probe]')).toHaveCount(0);
-  await expect(page.locator('.wait-pill')).toBeVisible();
+  // Under the Îlot the waiting pill is the working pill of lot 8 (orb after 250 ms).
+  await expect(page.locator('.working-pill')).toBeVisible();
   await page.keyboard.press('Enter');
   expect(await calls(page, 'choose_action')).toHaveLength(1);
 });
