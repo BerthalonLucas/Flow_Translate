@@ -1,5 +1,6 @@
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { ActionSettings } from './ActionSettings';
+import { AnimationsSetting } from './AnimationsSetting';
 import { promptError } from './actionDefaults';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
@@ -133,6 +134,10 @@ export function SettingsWindow() {
       <button className="close-settings" onClick={() => void closeSettings()} aria-label="Fermer"><Icon name="close" /></button>
     </header>
     <ScrollArea.Root className="settings-scroll" type="always"><ScrollArea.Viewport className="settings-scroll-viewport"><div className="settings-body">
+      <section className="appearance-settings">
+        <h2>Apparence</h2>
+        <AnimationsSetting value={settings.motion} onChange={value => update('motion', value)} />
+      </section>
       <section>
         <h2>Traduction</h2>
         <div className="setting-row"><div className="setting-copy"><strong>Profil par défaut</strong><small>Qualité : plus lent, meilleures tournures. Changeable depuis le menu de la bulle.</small></div>

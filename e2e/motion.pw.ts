@@ -147,3 +147,43 @@ test('animateSurface changes the shape around a centred layer that never scales'
   expect(result.reduced).toMatchObject({ width: '218px', height: '116px', radius: '16px' });
   expect(result.reduced.elapsed).toBeLessThan(100);
 });
+
+// DA-PLAN lot 2, « Accroc »: Lucas had « Effets d'animation » off without knowing it.
+test('the Settings say when Windows is the one reducing animations', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/?window=settings&demo=1');
+  const notice = page.getByText('Windows demande de réduire les animations.', { exact: true });
+  await expect(page.getByRole('radio', { name: 'Suivre Windows', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(notice).toBeVisible();
+  await page.getByRole('radio', { name: 'Toujours', exact: true }).click();
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-motion', 'full');
+  await page.getByRole('radio', { name: 'Suivre Windows', exact: true }).click();
+  await expect(notice).toBeVisible();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-motion', 'full');
+});
+
+// In the app, Rust's reading of « Effets d'animation » wins over WebView2's media query, which
+// nobody has shown to follow that switch.
+test('IPC fixture: « suivre Windows » believes Rust, live, over prefers-reduced-motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.route('**/?window=settings&fixture=1', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: (await response.text()).replace('/src/main.tsx', '/e2e/native-fixture.ts') });
+  });
+  await page.goto('/?window=settings&fixture=1');
+  const html = page.locator('html');
+  const notice = page.getByText('Windows demande de réduire les animations.', { exact: true });
+  await expect(page.getByRole('radio', { name: 'Suivre Windows', exact: true })).toBeVisible();
+  await expect(html).toHaveAttribute('data-motion', 'full');
+  await expect(notice).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as { nativeFixture: { systemMotion: (reduced: boolean) => Promise<void> } }).nativeFixture.systemMotion(true));
+  await expect(html).toHaveAttribute('data-motion', 'reduced');
+  await expect(notice).toBeVisible();
+  await page.evaluate(() => (window as unknown as { nativeFixture: { systemMotion: (reduced: boolean) => Promise<void> } }).nativeFixture.systemMotion(false));
+  await expect(html).toHaveAttribute('data-motion', 'full');
+  await expect(notice).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { nativeFixture: { calls: Array<{ command: string }> } }).nativeFixture.calls.some(call => call.command === 'system_motion'))).toBe(true);
+});
