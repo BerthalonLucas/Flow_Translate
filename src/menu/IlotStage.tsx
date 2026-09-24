@@ -53,11 +53,13 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
 // How long the Îlot waits for Rust's placement before it opens anyway (below the selection).
 const SIDE_WAIT_MS = 400;
 
-// The menu's actions, in the user's order (settings.menuActionIds, else the first six). A grid
+// The menu's actions, in the user's order (settings.menuActionIds). An empty list is the user's
+// choice (the Settings say « only the free instruction »): no action tile, only « Ask ». Only a
+// settings object without the field (a preview, a fixture) falls back to the first six. A grid
 // action without a letter keeps none: Rust assigns the letters at the migration.
 export function menuActions(settings: Settings | null): ActionDefinition[] {
   const actions = settings?.actions ?? [];
-  const ids = settings?.menuActionIds?.length ? settings.menuActionIds : actions.slice(0, maxTiles).map(action => action.id);
+  const ids = settings?.menuActionIds ?? actions.slice(0, maxTiles).map(action => action.id);
   return ids.map(id => actions.find(action => action.id === id)).filter((action): action is ActionDefinition => Boolean(action)).slice(0, maxTiles);
 }
 

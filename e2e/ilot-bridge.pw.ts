@@ -352,6 +352,28 @@ test('Îlot: the browser\'s shortcuts do nothing in the menu or its field; editi
   expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
 });
 
+// Review of bc57857, findings 4 and 6: with every action removed from the grid in the Settings
+// (« only the free instruction »), the Îlot still showed the first six, launchable by digit.
+test('Îlot: an emptied grid shows only « Ask »; the compact state still offers the last action', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.settings({ menuActionIds: [] }));
+  await on(page, f => f.captureMenu('empty-grid', 'shorten'));
+  const ilot = page.locator('[data-ilot]');
+  await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Shorten');
+  await page.keyboard.press('Tab');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  expect(await page.locator('[data-ilot] [data-tile]').evaluateAll(tiles => tiles.map(tile => tile.getAttribute('data-tile')))).toEqual(['ask']);
+  // No letter either: « f » opens the field with it, and 1 is the « Ask » tile.
+  await page.keyboard.press('f');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  await expect(field).toHaveValue('f');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('1');
+  await expect(field).toHaveValue('');
+  expect(await chosen(page, 'empty-grid')).toHaveLength(0);
+});
+
 test('Îlot: a refused choice gives the menu back, and the next choice goes through', async ({ page }) => {
   await openIlot(page);
   await on(page, f => { f.refuseChoice(); return f.captureMenu('refused', 'translate'); });
