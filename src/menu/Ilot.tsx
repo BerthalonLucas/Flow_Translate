@@ -35,6 +35,9 @@ import './ilot.css';
  *                  and moves the focus (roving focus). 'injected': Rust forwards the menu keys
  *                  (`menu-key`, KeyboardEvent.key) through the handle's press(); the free
  *                  instruction is unavailable then (pastille and tile dimmed, Space ignored).
+ *   onRequestKeyboard()  'injected' only: the pastille or the « Ask » tile clicked asks for the
+ *                  keyboard; the field opens once the promise answers true (the parent then
+ *                  passes keyboard 'focused').
  *   ref            IlotHandle: press(key, { shiftKey }) → whether the menu used the key.
  *   initialMode    'compact' by default (the lab scenarios open on 'grid' or 'prompt').
  *   shape          'menu' (default) or 'pill': the same surface, never unmounted, springs to the
@@ -63,6 +66,7 @@ export type IlotProps = {
   origin?: SurfaceOrigin;
   originX?: string;
   keyboard?: IlotKeyboard;
+  onRequestKeyboard?: () => Promise<boolean>;
   initialMode?: IlotMode;
   shape?: IlotShape;
   pill?: PillContent | null;
@@ -89,7 +93,7 @@ function ActionIcon({ action, size }: { action: IlotAction; size: 14 | 16 }) {
   return name ? <Icon name={name} size={size} /> : null;
 }
 
-export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', initialMode = 'compact', shape = 'menu', pill, onShapeChange, ref }: IlotProps) {
+export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', onRequestKeyboard, initialMode = 'compact', shape = 'menu', pill, onShapeChange, ref }: IlotProps) {
   const t = useT();
   const promptAvailable = keyboard !== 'injected';
   const context = useMemo(() => ilotKeyContext(actions, lastActionId, promptAvailable, knownActions), [actions, lastActionId, promptAvailable, knownActions]);
@@ -172,7 +176,15 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
   useEffect(() => stopHover, []);
   useEffect(() => { if (mode !== 'compact' || shape !== 'menu') stopHover(); }, [mode, shape]);
 
-  const pick = (tile: IlotTile) => apply(tileCommand(tile, promptAvailable));
+  // The field from the pointer: at once with the keyboard; without it, once the keyboard is
+  // granted, if the menu still shows.
+  const shapeNow = useRef(shape);
+  shapeNow.current = shape;
+  const openField = () => {
+    if (promptAvailable) { apply({ type: 'prompt', seed: '' }); return; }
+    void onRequestKeyboard?.().then(granted => { if (granted && shapeNow.current === 'menu') apply({ type: 'prompt', seed: '' }); }, () => undefined);
+  };
+  const pick = (tile: IlotTile) => tile.kind === 'ask' ? openField() : apply(tileCommand(tile, promptAvailable));
   const describe = t('ilot.describe');
   const unavailable = promptAvailable ? undefined : t('ilot.unavailable');
 
@@ -211,7 +223,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
       {last && <span className="ilot-sep" aria-hidden="true" />}
       <button role="menuitem" type="button" tabIndex={focusable === 'ask' ? 0 : -1} className="ilot-btn ilot-ask" data-item="ask"
         ref={element => { compactItems.current.ask = element; }} aria-label={describe} aria-keyshortcuts="Space /" aria-disabled={promptAvailable ? undefined : true} aria-description={unavailable}
-        onClick={() => { if (promptAvailable) apply({ type: 'prompt', seed: '' }); }}>
+        onClick={openField}>
         <span className="ilot-dot" />
       </button>
     </div>;

@@ -16,6 +16,7 @@ type Fixture = {
   unanchoredMenu: (id: string, lastActionId?: string | null) => Promise<void>;
   capture: (id: string) => Promise<void>;
   refuseFocus: () => void;
+  grantFocus: () => void;
   refuseChoice: () => void;
   holdChoice: () => void;
   releaseChoice: () => void;
@@ -177,6 +178,50 @@ test('Îlot: without the foreground it reads the native menu-key events, kept un
   await expect.poll(() => translations(page, 'fallback')).toEqual([expect.objectContaining({ actionId: 'translate' })]);
   await expect(ilot).toHaveAttribute('data-shape', 'pill');
   expect(await calls(page, 'focus_overlay')).toHaveLength(1);
+});
+
+// Review of bc57857, finding 3: once in 'injected' mode the Îlot never took the keyboard back, even
+// when its window held it (a click on it in the fallback): the ✦ stayed dimmed, the keys did nothing.
+test('Îlot: in the fallback, the window\'s focus or a click on the ✦ gives the keyboard back to the Îlot', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => { f.refuseFocus(); return f.captureMenu('regain', 'correct'); });
+  const ilot = page.locator('[data-ilot]');
+  const ask = page.locator('[data-item="ask"]');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await settled(page);
+  // Windows activated the overlay (a click on it): the Îlot reads the window's own keys.
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent('focus')));
+  await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
+  await expect(ask).not.toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Tab');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  await page.keyboard.press('Space');
+  await expect(field).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+
+  // Rust forwards a key again: the source is in front, the keys are Rust's.
+  await on(page, f => f.menuKey('Tab'));
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  await on(page, f => f.menuKey('Escape'));
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  // The dimmed ✦ clicked asks for the keyboard again: refused, nothing opens; granted, the field.
+  await ask.click({ force: true });
+  await expect.poll(() => calls(page, 'focus_overlay')).toHaveLength(2);
+  await page.waitForTimeout(100);
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await expect(field).toHaveCount(0);
+  await on(page, f => f.grantFocus());
+  await ask.click({ force: true });
+  await expect.poll(() => calls(page, 'focus_overlay')).toHaveLength(3);
+  await expect(field).toBeFocused();
+  await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
+  expect(await chosen(page, 'regain')).toHaveLength(0);
 });
 
 test('Îlot: a double press runs the application\'s last action once; before the Îlot shows, it is born a pill', async ({ page }) => {

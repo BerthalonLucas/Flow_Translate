@@ -26,7 +26,9 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  * code's family (src/result/errors.ts). The glass never opens for this journey. docs/BRIDGE.md, Îlot.
  *   keyboard  `focus_overlay` once: true, the WebView has the keys; false, Rust forwards them as
  *             `menu-key` (Îlot 'injected' mode), kept by useTranslation until the Îlot shows. The
- *             last of the two signals wins. The browser's own shortcuts (F5, Ctrl+R, Ctrl+P,
+ *             window's own focus (a click on the Îlot) also gives the keys to the WebView, and the
+ *             ✦ clicked in 'injected' mode asks `focus_overlay` again. The last signal wins, a
+ *             forwarded key saying the source is in front. The browser's own shortcuts (F5, Ctrl+R, Ctrl+P,
  *             Ctrl+F, zoom, Alt+←) and Ctrl + wheel do nothing (keys.ts browserShortcut).
  *   window    reserved once for the largest shape (src/layout.ts, ilotReserve): shapes only change
  *             the hit-test region, published at the start of a change on both shapes and at its
@@ -60,7 +62,7 @@ export function menuActions(settings: Settings | null): ActionDefinition[] {
 }
 
 export function IlotStage({ controller, capture }: { controller: TranslationController; capture: Capture }) {
-  const { state, settings, screen, choose, choosingCaptureId, start, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
+  const { state, settings, screen, choose, choosingCaptureId, start, menuKeys, takeMenuKeys, forwardedKeys, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
   const t = useT();
   const captureId = capture.id;
   const presentation: Presentation = capture.anchor ? 'anchored' : 'bottom';
@@ -81,11 +83,11 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   const [room, setRoom] = useState<IlotRoom | null>(null);
   const roomNow = useRef(room);
   roomNow.current = room;
-  // The keyboard: focus_overlay's answer, unless Rust forwarded a key since (the source is in
-  // front then). Derived in the same render as the key, so the key meets the right mode.
+  // The keyboard: the last answer that the window has it or not (focus_overlay, or the window's
+  // own focus), unless Rust forwarded a key since (the source is in front then). Derived in the
+  // same render as the key, so the key meets the right mode. `after` is the live count of the keys
+  // received when the answer came (useTranslation.forwardedKeys), not the last render's.
   const forwarded = menuKeys.captureId === captureId ? menuKeys.count : 0;
-  const forwardedNow = useRef(forwarded);
-  forwardedNow.current = forwarded;
   const [focus, setFocus] = useState<{ keyboard: IlotKeyboard; after: number }>({ keyboard: 'focused', after: 0 });
   const keyboard: IlotKeyboard = forwarded > focus.after ? 'injected' : focus.keyboard;
   const [choosing, setChoosing] = useState(false);
@@ -173,7 +175,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   useEffect(() => {
     if (asked.current || capture.execution || closingRef.current) return;
     asked.current = true;
-    const answer = (mode: IlotKeyboard) => { if (alive.current) setFocus({ keyboard: mode, after: forwardedNow.current }); };
+    const answer = (mode: IlotKeyboard) => { if (alive.current) setFocus({ keyboard: mode, after: forwardedKeys(captureId) }); };
     void bridge.focusOverlay().then(focused => answer(focused ? 'focused' : 'injected'), () => answer('injected'));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per capture
 
@@ -239,6 +241,31 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   useEffect(() => {
     if (state.invalidated && outcome.stage === 'menu' && !choiceOnItsWay) leave();
   }, [state.invalidated, outcome.stage, choiceOnItsWay, leave]);
+
+  // The window gets the keyboard after all while the menu waits (a click on the Îlot in the
+  // fallback, an activation Windows let through late): the Îlot takes the keys itself, field
+  // included, until Rust forwards another one. Only the window's focus says so, never a pointer
+  // press alone (review of bc57857, finding 3).
+  const menuWaits = outcome.stage === 'menu' && !closing;
+  useEffect(() => {
+    if (!menuWaits) return;
+    const onFocus = () => {
+      if (!document.hasFocus() || !alive.current) return;
+      const after = forwardedKeys(captureId);
+      setFocus(current => current.keyboard === 'focused' && current.after === after ? current : { keyboard: 'focused', after });
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [menuWaits, captureId, forwardedKeys]);
+  // The ✦ or the « Ask » tile clicked while the keys come from Rust: the keyboard is asked for
+  // again, and the field opens only if the window really holds it.
+  const takeKeyboard = useCallback(async () => {
+    if (closingRef.current) return false;
+    const focused = await bridge.focusOverlay().catch(() => false);
+    if (!focused || !alive.current || closingRef.current) return false;
+    setFocus({ keyboard: 'focused', after: forwardedKeys(captureId) });
+    return true;
+  }, [captureId, forwardedKeys]);
   // Try again: the same action on the same capture, once per failed request.
   const retried = useRef<string | null>(null);
   const retry = () => {
@@ -300,7 +327,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
       <AnimatePresence onExitComplete={() => completeDismiss(captureId)}>
         {shown && <Ilot key={captureId} ref={handle} actions={actions} knownActions={settings?.actions} lastActionId={lastActionId}
           origin={presentation === 'bottom' || side === 'above' ? 'bottom' : 'top'} originX={presentation === 'bottom' ? '50%' : '100%'}
-          keyboard={keyboard} shape={shape} pill={pill}
+          keyboard={keyboard} onRequestKeyboard={takeKeyboard} shape={shape} pill={pill}
           onChoose={actionId => run(actionId)} onInstruction={text => run(instructionActionId, text)} onClose={cancelAndDismiss} onShapeChange={onShapeChange} />}
       </AnimatePresence>
     </div>

@@ -100,6 +100,24 @@ describe('Ilot', () => {
     expect(calls.onChoose).toHaveBeenCalledWith('translate');
   });
 
+  // Review of bc57857, finding 3: the dimmed ✦ and « Ask » did nothing once the keys came from Rust.
+  it('asks for the keyboard when the pastille or the « Ask » tile is clicked without it, and opens the field once granted', async () => {
+    const onRequestKeyboard = vi.fn(async () => false);
+    const { mode, present, press, render } = await mount({ keyboard: 'injected', onRequestKeyboard });
+    await act(async () => { present().querySelector<HTMLButtonElement>('[data-item="ask"]')!.click(); });
+    expect(onRequestKeyboard).toHaveBeenCalledTimes(1);
+    expect(mode()).toBe('compact');
+    expect(present().querySelector('input')).toBeNull();
+    // Granted from the grid's « Ask » tile: the parent then passes the keyboard it holds.
+    onRequestKeyboard.mockResolvedValue(true);
+    expect(await press('Tab')).toBe(true);
+    await act(async () => { present().querySelector<HTMLButtonElement>('[data-tile="ask"]')!.click(); });
+    expect(onRequestKeyboard).toHaveBeenCalledTimes(2);
+    await render({ keyboard: 'focused', onRequestKeyboard });
+    expect(mode()).toBe('prompt');
+    expect(document.activeElement).toBe(present().querySelector('input'));
+  });
+
   it('becomes the pill on the same surface, ignores the menu keys there, and starts over compact', async () => {
     const { press, mode, render } = await mount({ initialMode: 'grid' });
     const surface = host!.querySelector('[data-ilot-shape]');

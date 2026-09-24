@@ -123,6 +123,7 @@ Object.assign(window, { nativeFixture: {
   // A `menu` capture under the Îlot: no execution until choose_action.
   captureMenu: (id: string, lastActionId: string | null = null, text?: string) => { currentCapture = { ...capture(id, text), canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   refuseFocus: () => { overlayFocus = false; },
+  grantFocus: () => { overlayFocus = true; },
   refuseChoice: () => { refuseChoice = true; },
   holdChoice: () => { holdChoice = true; },
   releaseChoice: () => { releaseChoice?.(); releaseChoice = undefined; },
