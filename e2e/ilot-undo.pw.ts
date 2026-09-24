@@ -113,6 +113,8 @@ test('Undo: one click asks undo_result once, the button waits meanwhile; « Undo
   await on(page, f => f.releaseUndo());
   await expect(stage(page)).toHaveAttribute('data-stage', 'undone');
   await expect(page.locator('[data-result-content="undone"]')).toHaveText('Undone');
+  // Said once: the stage's status, not a second live region on the pill.
+  expect(await page.locator('[role="status"], [role="alert"], [aria-live]').filter({ hasText: 'Undone' }).count()).toBe(1);
   expect(await sameSurface(page)).toBe(true);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   expect(await calls(page, 'undo_result')).toHaveLength(1);
@@ -222,7 +224,7 @@ test('undo-state for a key or the caret: the check alone leaves within the lab�
   expect(await calls(page, 'undo_result')).toHaveLength(0);
 });
 
-test('the user’s own Ctrl+Z in the source (undo-state undo_key): « Undone » 0.9 s, then the Îlot leaves; nothing asked of Rust', async ({ page }) => {
+test('the user’s own Ctrl+Z in the source (undo-state undo_key): « Undone », said once, 0.9 s, then the Îlot leaves; nothing asked of Rust', async ({ page }) => {
   await page.clock.install();
   await openIlot(page);
   await pasteThrough(page, 'ctrl-z', {}, async () => { await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50)); });
@@ -231,6 +233,7 @@ test('the user’s own Ctrl+Z in the source (undo-state undo_key): « Undone » 
   await on(page, f => f.undoState('undo_key'));
   await expect(stage(page)).toHaveAttribute('data-stage', 'undone');
   await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="undone"]')).toHaveText('Undone');
+  expect(await page.locator('[role="status"], [role="alert"], [aria-live]').filter({ hasText: 'Undone' }).count()).toBe(1);
   expect(await sameSurface(page)).toBe(true);
   await page.clock.runFor(800);
   expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);

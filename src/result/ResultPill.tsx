@@ -177,7 +177,8 @@ export function DoneContent({ check, undo, durationMs, clock: shared, busy = fal
   </div>;
 }
 
-// After Undo (Simulator.jsx:285): « Undone », then onExpire after 0.9 s.
+// After Undo (Simulator.jsx:285): « Undone », then onExpire after 0.9 s. Not a live region of its
+// own: its host announces it once (the Îlot's status, src/menu/IlotStage.tsx).
 export function UndoneContent({ onExpire }: { onExpire?: () => void }) {
   const t = useT();
   const latest = useRef(onExpire);
@@ -186,7 +187,7 @@ export function UndoneContent({ onExpire }: { onExpire?: () => void }) {
     const timer = window.setTimeout(() => latest.current?.(), undoneMs);
     return () => window.clearTimeout(timer);
   }, []);
-  return <div className="result-undone" role="status" data-result-content="undone">
+  return <div className="result-undone" data-result-content="undone">
     <Undo2 size={13} strokeWidth={iconStroke} aria-hidden="true" /><span className="result-label">{t('result.undone')}</span>
   </div>;
 }

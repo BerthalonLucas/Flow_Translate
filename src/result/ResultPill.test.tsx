@@ -144,6 +144,8 @@ describe('UndoneContent', () => {
     const onExpire = vi.fn();
     await mount(<UndoneContent onExpire={onExpire} />);
     expect(host!.textContent).toBe('Undone');
+    // Its host announces it (the Îlot's status): no second live region here.
+    expect(host!.querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull();
     await advance(899);
     expect(onExpire).not.toHaveBeenCalled();
     await advance(1);
