@@ -3,15 +3,15 @@ import { AnimatePresence } from 'motion/react';
 import { bridge } from '../bridge';
 import { defaultActionId, instructionActionId } from '../actionDefaults';
 import { useT } from '../i18n';
-import { ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, type IlotRoom, type IlotShapeBox, type IlotSide } from '../layout';
+import { ilotFits, ilotPlace, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, placeX, type IlotPlace, type IlotRoom, type IlotShapeBox, type IlotSide } from '../layout';
 import { indicatorOf } from '../loaders/pill';
 import { useMotionPreset, useReducedMotionSetting } from '../motion/MotionPreferences';
-import { animateSlide } from '../motion/surface';
+import { animateCorner, fadeCorner, type CornerMove, type CornerOffset } from '../motion/surface';
 import { Countdown, resultTiming } from '../result/countdown';
 import { errorCodeOf, refusalCode, type ErrorAction } from '../result/errors';
 import { changedRanges } from '../result/highlight';
 import { resultContent, type ActionAnswer, type ResultStage } from '../result/ResultPill';
-import type { ActionDefinition, Capture, ErrorCode, HitRegion, Presentation, Settings } from '../types';
+import type { ActionDefinition, Capture, ErrorCode, HitRegion, PillTarget, Presentation, Settings } from '../types';
 import type { TranslationController } from '../useTranslation';
 import { Ilot, type IlotHandle, type IlotKeyboard } from './Ilot';
 import { browserShortcut, keyInputOf, maxTiles, type KeyInput } from './keys';
@@ -61,6 +61,15 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *             once per replacement with `highlight_changes` while Undo is offered, cleared once
  *             with `clear_highlight` at the countdown's end (Rust clears them itself on Undo, a
  *             withdrawal or a dismissal).
+ *   place     lot 9: after Rust's own paste (anchored), the pill goes where Rust puts it, never over
+ *             the new text: `result_pill` once, for the size of the check's pill, at the start of
+ *             its shape. Inside the window: the corner glides there in the DOM (surfaceMove, the
+ *             lab's 420 ms move), the region holding every position on the way. Outside: once the
+ *             shape rests, the corner fades out, `move_overlay` moves the window (never while
+ *             anything animates), `result_pill` answers again for the moved window, and the pill
+ *             fades back in at its place. A refusal leaves it where it is. Later shapes (the check
+ *             alone, « Undone », an Undo's error) keep that place's corner (the left edge in the
+ *             margin) and stay in the window.
  */
 
 // How long the Îlot waits for Rust's placement before it opens anyway (below the selection); the
@@ -149,43 +158,83 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     return () => window.clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per capture: GlassOverlay keys it by capture
 
-  // The corner slides with a shape the room on its left cannot hold (ilotShift): on the shape's
-  // spring when it changes, at once for the first shape; the region covers both positions.
+  // The corner moves with a shape the room on its left cannot hold (ilotShift): on the shape's
+  // spring when it changes, at once for the first shape. After Rust's paste it goes to the pill's
+  // place (lot 9, `place` above). The region holds every box painted since the surface last
+  // rested (its shapes at each of their positions), then the box at rest.
   const tokens = useMotionPreset();
   const reduced = useReducedMotionSetting();
   const motionNow = useRef({ tokens, reduced });
   motionNow.current = { tokens, reduced };
   const cornerRef = useRef<HTMLDivElement>(null);
-  const slid = useRef(0);
+  const cornerAt = useRef<CornerOffset>({ x: 0, y: 0 });
   const shapeNow = useRef<SurfaceSize | null>(null);
-  const boxOf = useCallback((size: SurfaceSize): IlotShapeBox => presentation === 'anchored' ? { ...size, shift: ilotShift(size.width, roomNow.current) } : size, [presentation]);
-  const slide = useCallback((x: number, instant: boolean) => {
-    if (x === slid.current && !instant) return;
-    slid.current = x;
-    if (cornerRef.current) animateSlide(cornerRef.current, x, motionNow.current.tokens, motionNow.current.reduced, instant);
+  // The pill's place after the paste (null: the strip's corner), and how far the window moved
+  // since the room was read: the room moves with it.
+  const placed = useRef<IlotPlace | null>(null);
+  const windowShift = useRef(0);
+  const boxOf = useCallback((size: SurfaceSize): IlotShapeBox => {
+    if (presentation !== 'anchored') return size;
+    const room = roomNow.current && { left: roomNow.current.left + windowShift.current, right: roomNow.current.right - windowShift.current };
+    return { ...size, shift: ilotShift(size.width, room, placeX(placed.current, size.width)), dy: placed.current?.y ?? 0 };
+  }, [presentation]);
+  const span = useRef<IlotShapeBox[]>([]);
+  const springing = useRef(false);
+  const gliding = useRef(false);
+  const cornerRun = useRef(0);
+  // After the surface rests: the window's move waiting for it (place, below).
+  const windowMoveRef = useRef<() => void>(() => undefined);
+  const placeRef = useRef<(size: SurfaceSize) => void>(() => undefined);
+  // At rest (no spring, no glide): the box in place alone. The window moves only then.
+  const settle = useCallback(() => {
+    const size = shapeNow.current;
+    if (!side || !size || springing.current || gliding.current) return;
+    const box = boxOf(size);
+    span.current = [box];
+    void publish(ilotRegion(presentation, side, box));
+    windowMoveRef.current();
+  }, [presentation, side, publish, boxOf]);
+  const settleRef = useRef(settle);
+  settleRef.current = settle;
+  const moveCorner = useCallback((to: CornerOffset, how: CornerMove) => {
+    if (to.x === cornerAt.current.x && to.y === cornerAt.current.y && how !== 'instant') return;
+    cornerAt.current = to;
+    const run = ++cornerRun.current;
+    gliding.current = false;
+    const element = cornerRef.current;
+    if (!element) return;
+    const controls = animateCorner(element, to, motionNow.current.tokens, motionNow.current.reduced, how);
+    if (how !== 'move' || motionNow.current.reduced) return;
+    // The glide ends: the surface may rest.
+    gliding.current = true;
+    void controls.then(() => { if (cornerRun.current !== run) return; gliding.current = false; settleRef.current(); });
   }, []);
   const onShapeChange = useCallback((change: ShapeChange) => {
     if (!side) return;
     shapeNow.current = change.to;
     const to = boxOf(change.to);
     if (change.phase === 'start' && change.from) {
-      const from = { ...change.from, shift: slid.current };
-      slide(to.shift ?? 0, false);
-      void publish(ilotRegion(presentation, side, from, to));
+      const from = { ...change.from, shift: cornerAt.current.x, dy: cornerAt.current.y };
+      springing.current = true;
+      span.current = [...span.current, from, to];
+      moveCorner({ x: to.shift ?? 0, y: to.dy ?? 0 }, 'morph');
+      void publish(ilotRegion(presentation, side, ...span.current));
+      placeRef.current(change.to);
       return;
     }
-    if (!change.from) slide(to.shift ?? 0, true);
-    void publish(ilotRegion(presentation, side, to));
-  }, [presentation, side, publish, boxOf, slide]);
+    if (!change.from) moveCorner({ x: to.shift ?? 0, y: to.dy ?? 0 }, 'instant');
+    springing.current = false;
+    settle();
+  }, [presentation, side, publish, boxOf, moveCorner, settle]);
   // The room learnt after the Îlot showed (Rust's placement answered late): the shape in place
   // takes its slide at once.
   useEffect(() => {
     const size = shapeNow.current;
     if (!side || !size) return;
     const to = boxOf(size);
-    if ((to.shift ?? 0) === slid.current) return;
-    slide(to.shift ?? 0, true);
-    void publish(ilotRegion(presentation, side, to));
+    if ((to.shift ?? 0) === cornerAt.current.x && (to.dy ?? 0) === cornerAt.current.y) return;
+    moveCorner({ x: to.shift ?? 0, y: to.dy ?? 0 }, 'instant');
+    settle();
   }, [room]); // eslint-disable-line react-hooks/exhaustive-deps -- only when the room arrives
 
   // The keyboard, asked once; a capture already chosen (double press) never takes it.
@@ -367,6 +416,71 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     }, () => { if (alive.current) setUndo({ status: 'refused', code: 'internal' }); });
   };
 
+  // Lot 9: the pill's place after Rust's own paste (anchored: a bottom form stays docked), asked
+  // once per replacement with the size of the check's pill, at the start of its shape (place).
+  const placing = useRef<{ requestId: string | null; open: boolean }>({ requestId: null, open: false });
+  const askedPlace = useRef<string | null>(null);
+  const stillPlacing = (id: string) => alive.current && !closingRef.current && placing.current.open && placing.current.requestId === id;
+  const windowMove = useRef<{ requestId: string; place: IlotPlace } | null>(null);
+  const usable = (target: PillTarget | null | undefined): target is PillTarget => typeof target === 'object' && target !== null && Number.isFinite(target.x) && Number.isFinite(target.y);
+  placeRef.current = size => {
+    const id = placing.current.requestId;
+    if (!placing.current.open || !id || askedPlace.current === id || closingRef.current || !side) return;
+    askedPlace.current = id;
+    const growth = side;
+    bridge.resultPill(id, size.width, size.height).then(target => {
+      if (!stillPlacing(id) || !usable(target)) return;
+      const place = ilotPlace(target, size, growth);
+      if (target.inside && ilotFits(target, size)) { glideTo(place); return; }
+      windowMove.current = { requestId: id, place };
+      windowMoveRef.current();
+    }, () => undefined);
+  };
+  // Inside the window: the corner glides to its place; the region holds the boxes painted so far
+  // and each of them at the new place.
+  const glideTo = (place: IlotPlace) => {
+    const size = shapeNow.current;
+    if (!side || !size) return;
+    placed.current = place;
+    const box = boxOf(size);
+    const to = { x: box.shift ?? 0, y: box.dy ?? 0 };
+    if (to.x === cornerAt.current.x && to.y === cornerAt.current.y) return;
+    span.current = [...span.current, ...span.current.map(shape => boxOf(shape)), box];
+    void publish(ilotRegion(presentation, side, ...span.current));
+    moveCorner(to, 'move');
+    if (!gliding.current) settle();
+  };
+  // Outside: at rest only, faded out, the window moves so the pill lands on its place, then Rust
+  // answers again for the moved window; the pill fades back in. A refused move: back in, in place.
+  windowMoveRef.current = () => {
+    const pending = windowMove.current;
+    const element = cornerRef.current;
+    if (!pending || springing.current || gliding.current || !side) return;
+    windowMove.current = null;
+    const size = shapeNow.current;
+    if (!element || !size || !stillPlacing(pending.requestId)) return;
+    const dx = Math.round(placeX(pending.place, size.width) - cornerAt.current.x);
+    const dy = Math.round(pending.place.y - cornerAt.current.y);
+    if (!dx && !dy) return;
+    const growth = side;
+    void (async () => {
+      await fadeCorner(element, false, motionNow.current.tokens, motionNow.current.reduced);
+      if (!alive.current || closingRef.current) return;
+      const moved = await bridge.moveOverlay(captureId, dx, dy).then(() => true, () => false);
+      if (moved && alive.current) {
+        windowShift.current += dx;
+        // The pill now stands where it was meant to; Rust's answer for the moved window refines it.
+        placed.current = { x: cornerAt.current.x, y: cornerAt.current.y, width: size.width, keepLeft: pending.place.keepLeft };
+        const again = await bridge.resultPill(pending.requestId, size.width, size.height).catch(() => null);
+        if (usable(again) && again.inside && ilotFits(again, size) && alive.current) placed.current = ilotPlace(again, size, growth);
+        const box = boxOf(shapeNow.current ?? size);
+        moveCorner({ x: box.shift ?? 0, y: box.dy ?? 0 }, 'instant');
+        settleRef.current();
+      }
+      if (alive.current && !closingRef.current) void fadeCorner(element, true, motionNow.current.tokens, motionNow.current.reduced);
+    })();
+  };
+
   const stage: ResultStage | null = outcome.stage === 'working' ? { stage: 'working', indicator }
     : outcome.stage === 'done' ? { stage: 'done', afterReplace, clock: clock?.clock, busy, drawn: Boolean(clock?.withUndo) && !afterReplace.undo }
     : outcome.stage === 'undone' ? { stage: 'undone' }
@@ -379,6 +493,10 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   // leaves after the lab's 60 ms (Simulator.jsx:154), keeping its last content while it goes
   // (Simulator.jsx:299-302), as it does when it closes.
   const empty = outcome.stage !== 'menu' && !content;
+  placing.current = { requestId, open: outcome.stage === 'done' && !empty && rustPasted && presentation === 'anchored' };
+  // The check's pill may keep the work pill's size (the check alone, 44 × 28): no shape change
+  // then, so the place is asked here (once: a change of shape asked first).
+  useEffect(() => { const size = shapeNow.current; if (placing.current.open && size) placeRef.current(size); }, [outcome.stage, empty, rustPasted, requestId, side]);
   const lastContent = useRef(content);
   if (content && !closing) lastContent.current = content;
   const pill = closing || !content ? lastContent.current : content;

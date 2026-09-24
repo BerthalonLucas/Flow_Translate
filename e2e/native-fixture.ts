@@ -2,7 +2,8 @@ import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds,
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
-import type { BindingState, Capture, ErrorCode, ExecutionInfo, HaloEvent, Rect, Settings, ShortcutStatus, TranslationRequest, UndoLoss, UndoOutcome } from '../src/types';
+import type { BindingState, Capture, ErrorCode, ExecutionInfo, HaloEvent, PillTarget, Rect, Settings, ShortcutStatus, TranslationRequest, UndoLoss, UndoOutcome } from '../src/types';
+import { ilotReserve } from '../src/layout';
 
 let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
@@ -27,6 +28,32 @@ let undoAnswer: { outcome?: Partial<UndoOutcome>; reject?: string } = {};
 let holdUndo = false;
 let releaseUndo: (() => void) | undefined;
 let resolveCopy: (() => void) | undefined;
+// Lot 9: the new text's lines Rust found after its own paste (`pastedRects`, physical); none when
+// it was not found. What the next `result_pill` calls answer instead of Rust's place ('refuse':
+// rejected), in order. The next `move_overlay` refused. Each `move_overlay`, with what the page
+// showed at that moment: the corner's opacity and the shape's box.
+let pastedLines: Rect[] = [];
+let pillAnswers: Array<Partial<PillTarget> | 'refuse'> = [];
+let refuseMove = false;
+const moves: Array<{ dx: number; dy: number; at: number; opacity: string; shape: { width: number; height: number } | null }> = [];
+// Where Rust puts the pill (docs/BRIDGE.md « The pill's place »), at scale 1: 8 px under the new
+// text's last line, its right edge on that line's end, kept in the work area; above the first line
+// when the work area has no room below; right of the widest line, level with the last one, for
+// pillPlacement 'margin'. Not found: the selection itself (estimated). Relative to the window as it
+// stands now; `inside` when the pill fits in it.
+const pillPlace = (width: number, height: number): PillTarget => {
+  const lines = pastedLines.length ? pastedLines : currentCapture.anchor ? [currentCapture.anchor] : [];
+  const first = lines[0], last = lines.at(-1)!;
+  const window = windowNow(), reserve = ilotReserve('anchored');
+  const at = (x: number, y: number, side: PillTarget['side']): PillTarget => {
+    const left = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - width)) - window.x, top = y - window.y;
+    return { x: left, y: top, side, inside: left >= 0 && top >= 0 && left + width <= reserve.width && top + height <= reserve.height, estimated: !pastedLines.length, clear: true };
+  };
+  if (settings.pillPlacement === 'margin') return at(Math.max(...lines.map(line => line.x + line.width)) + 8, last.y, 'margin');
+  const below = last.y + last.height + 8;
+  if (below + height <= workArea.y + workArea.height) return at(last.x + last.width - width, below, 'below');
+  return at(first.x + first.width - width, first.y - 8 - height, 'above');
+};
 // Rust's reading of « Effets d'animation »: unknown until a test sets it.
 let windowsMotion: { reduced: boolean } | null = null;
 // Îlot (lots 3–4): whether the overlay gets the foreground, and the menu capture's choice.
@@ -36,6 +63,10 @@ const chosen = new Set<string>();
 // fixture's anchor, the Îlot's strip 8 px under the selection, its right edge (149 + 283 in the
 // window) on the selection's end (src/layout.ts, ilotReserve).
 let overlayPosition = { x: 400 + 120 - 432, y: 300 + 18 + 8 - 104 };
+// Lot 9: how far `move_overlay` moved the window since the capture (Rust resets it at the next one).
+let moved = { x: 0, y: 0 };
+let movedFor: string | undefined;
+const windowNow = () => ({ x: overlayPosition.x + moved.x, y: overlayPosition.y + moved.y });
 // The next read of that position answers only once released: the Îlot waits for its side.
 let holdPosition = false;
 let releasePosition: (() => void) | undefined;
@@ -57,6 +88,8 @@ if (takenAtStart) shortcutStates[takenAtStart] = 'taken';
 const shortcutStatus = (): ShortcutStatus[] => settings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: shortcutStates[b.id] ?? (b.enabled ? 'registered' : 'disabled') }));
 mockIPC((command, args) => {
   calls.push({ command, args, at: performance.now() });
+  // Rust places each capture afresh: the previous capture's move is forgotten.
+  if (command === 'resize_overlay' && (args as { captureId?: string } | undefined)?.captureId !== movedFor) { movedFor = (args as { captureId?: string } | undefined)?.captureId; moved = { x: 0, y: 0 }; }
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
   if (command === 'get_history') return [];
   if (command === 'system_motion') return windowsMotion;
@@ -75,9 +108,9 @@ mockIPC((command, args) => {
   if (command === 'translate') request = args?.request as TranslationRequest;
   if (command === 'focus_overlay') return overlayFocus;
   if (command === 'plugin:window|inner_position') {
-    if (!holdPosition) return overlayPosition;
+    if (!holdPosition) return windowNow();
     holdPosition = false;
-    return new Promise(resolve => { releasePosition = () => resolve(overlayPosition); });
+    return new Promise(resolve => { releasePosition = () => resolve(windowNow()); });
   }
   if (command === 'plugin:window|monitor_from_point') return monitor();
   if (command === 'choose_action') {
@@ -108,6 +141,22 @@ mockIPC((command, args) => {
     holdUndo = false;
     return new Promise((resolve, reject) => { releaseUndo = () => { answer().then(resolve, reject); }; });
   }
+  // Lot 9: the pill's place, and the window moved under a faded pill.
+  if (command === 'result_pill') {
+    const { width, height } = args as { requestId: string; width: number; height: number };
+    const next = pillAnswers.shift();
+    if (next === 'refuse') return Promise.reject('Ce résultat n’est plus actif.');
+    return { ...pillPlace(width, height), ...next };
+  }
+  if (command === 'move_overlay') {
+    const { dx, dy } = args as { captureId: string; dx: number; dy: number };
+    const corner = document.querySelector('.ilot-corner');
+    const shape = document.querySelector('[data-ilot-shape]')?.getBoundingClientRect();
+    moves.push({ dx, dy, at: performance.now(), opacity: corner ? getComputedStyle(corner).opacity : '', shape: shape ? { width: shape.width, height: shape.height } : null });
+    if (refuseMove) { refuseMove = false; return Promise.reject('Déplacement refusé.'); }
+    moved = { x: moved.x + dx, y: moved.y + dy };
+    return;
+  }
   if (command === 'highlight_changes') { const ranges = (args as { ranges: unknown[] }).ranges; return { ranges: ranges.length, lines: ranges.length }; }
   if (command === 'clear_highlight') return;
   if (command === 'replace_result' && refuseReplace !== null) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject(refuseReplace); }
@@ -125,10 +174,11 @@ Object.assign(window, { nativeFixture: {
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },
   // A « replace » capture: Rust will paste the first complete result and report `result-delivery`.
   captureReplace: (id: string, text?: string) => { currentCapture = { ...capture(id, text, replaceExecution), canReplace: true }; return emit('capture', currentCapture); },
-  deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.', code?: ErrorCode) => { await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message, ...(code ? { code } : {}) }); },
+  deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.', code?: ErrorCode) => { pastedLines = []; await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message, ...(code ? { code } : {}) }); },
   // Lot 9: Rust's own paste under the Îlot, its text found (`pastedRects`, physical) and Undo on
   // (`undoable`), or not.
   pasted: async ({ undoable = true, pastedRects = [{ x: 380, y: 300, width: 140, height: 18 }] }: { undoable?: boolean; pastedRects?: Rect[] } = {}) => {
+    pastedLines = pastedRects;
     await emit('capture-target', { captureId: currentCapture.id, canReplace: false });
     await emit('result-delivery', { requestId: request.id, status: 'applied', confirmed: true, message: 'Sélection remplacée.', pastedRects, undoable });
   },
@@ -139,6 +189,12 @@ Object.assign(window, { nativeFixture: {
   releaseUndo: () => { releaseUndo?.(); releaseUndo = undefined; },
   // Rust withdrew Undo: a key in the source, the user's own Ctrl+Z, the caret moved.
   undoState: (reason: UndoLoss = 'typed', requestId = request.id) => emit('undo-state', { requestId, available: false, reason }),
+  // The next `result_pill` answers (a part of a PillTarget over Rust's own, or 'refuse').
+  pillAnswer: (answer: Partial<PillTarget> | 'refuse') => { pillAnswers.push(answer); },
+  refuseMove: () => { refuseMove = true; },
+  moves,
+  // Where the window is now (physical): Rust's place plus the moves of this capture.
+  windowPosition: () => windowNow(),
   delta: (text: string, requestId = request.id) => emit('translation', { requestId, kind: 'delta', text }),
   done: (text?: string) => emit('translation', { requestId: request.id, kind: 'done', ...(text === undefined ? {} : { text }) }),
   dismissEvent: (captureId: string) => emit('overlay-dismiss-requested', { captureId }),
