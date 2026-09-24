@@ -11,7 +11,11 @@ focus et le contenu réel du presse-papiers avant et après. Ne fermer que les f
 pour le test et ne jamais arrêter une autre charge (processus GPU compris). Un exécutable de
 test lancé depuis `src-tauri\target\release\` se lance avec `FLOWTRANSLATE_DATA_DIR` pointé
 vers un dossier jetable, pour ne jamais toucher aux réglages ni à l’historique de
-l’installation de Lucas (docs/UI-DECISIONS.md, décision 11 du 24 septembre 2026).
+l’installation de Lucas (docs/UI-DECISIONS.md, décision 11 du 24 septembre 2026). Dans ce
+document, « `settings.json` » désigne `<FLOWTRANSLATE_DATA_DIR>\settings.json` pour un
+exécutable de test, sinon `%APPDATA%\com.flowtranslate.desktop\settings.json` pour
+l’application installée ; `menu-memory.json` et `history.sqlite3` sont dans le même dossier.
+Toujours quitter FlowTranslate avant de modifier ce fichier à la main.
 
 Consigner les résultats réels dans VALIDATION.md. Une case ne se coche qu’avec une preuve
 consignée ; les listes ci-dessous sont une recette, pas une déclaration de tests réussis.
@@ -47,7 +51,9 @@ front », à dérouler quand il sera livré.
   (les preuves de la passe ont utilisé `Ctrl+Alt+Maj+Espace`) ou libérer le raccourci dans
   Claude desktop, puis faire toute la recette avec cette combinaison. *Preuve* : capture de la
   ligne, combinaison retenue.
-- [ ] Mise à jour depuis une 0.4 installée → l’Îlot est le parcours par défaut. Actions,
+- [ ] Mise à jour depuis une 0.4 installée (pour un exécutable de test : copier le
+  `settings.json` d’une 0.4 dans le dossier jetable avant le premier lancement) → l’Îlot est
+  le parcours par défaut. Actions,
   consignes et raccourcis directs gardés, aucun renommé (« Corriger » reste « Corriger »).
   Liaison du menu ajoutée sur `Ctrl+Alt+Espace`, sauf si une liaison utilise déjà cette
   combinaison. Interface en anglais, fichier 0.4 compris : repasser en français dans
@@ -97,8 +103,8 @@ recollée (5). Limites connues, à noter si vues, pas à corriger pendant la rec
   même action sur les deux dispositions. *Preuve* : action lancée, par disposition.
 - [ ] Une lettre sans action (par exemple « r ») → le champ s’ouvre, déjà rempli de cette
   lettre.
-- [ ] Chiffres 1 à 6 → la tuile de ce rang (6 = Ask tant que la grille a moins de six
-  actions). Sur AZERTY, avec l’Îlot au clavier, la rangée du haut sans Maj tape `&`, `é`, `"`…
+- [ ] Chiffres 1 à 6 → la tuile de ce rang. La tuile Ask suit la dernière action (6 avec les
+  cinq actions par défaut) ; un chiffre sans tuile ne fait rien. Sur AZERTY, avec l’Îlot au clavier, la rangée du haut sans Maj tape `&`, `é`, `"`…
   D’après le code (non vérifié en vraie fenêtre), ces touches ouvrent le champ pré-rempli au
   lieu de choisir une tuile. Maj + chiffre et le pavé numérique choisissent la tuile. Noter ce
   qu’on voit. *Preuve* : capture après la touche.
@@ -145,7 +151,7 @@ recollée (5). Limites connues, à noter si vues, pas à corriger pendant la rec
 
 ### Thème, langue et animations
 
-- [ ] Appearance › Theme : System, Light, Dark → verre clair ou sombre sur l’Îlot, la pilule, le
+- [ ] Appearance › Theme : Follow Windows, Light, Dark → verre clair ou sombre sur l’Îlot, la pilule, le
   verre du résultat et les Réglages. Changer le thème de Windows pendant que l’app tourne →
   bascule sans relance.
 - [ ] Lisibilité sur une page blanche, une page sombre et un fond chargé. En sombre, noter si
@@ -154,6 +160,9 @@ recollée (5). Limites connues, à noter si vues, pas à corriger pendant la rec
 - [ ] Appearance › Language : English ↔ Français → Réglages, Îlot, pilules d’erreur et menu de
   l’icône de notification changent de langue sans relance. Les noms des actions restent tels
   qu’écrits.
+- [ ] Interface en anglais, liaison directe en mode « Afficher le résultat » vers une adresse
+  sans serveur → le verre affiche le message d’erreur en français, suivi d’une aide en anglais.
+  Limite connue de 0.5.0 : les erreurs du verre des liaisons directes restent en français.
 - [ ] Animations « Follow Windows », avec « Effets d’animation » coupé dans Windows → mode
   réduit, et la ligne « Windows asks to reduce animations. » sous le réglage.
 - [ ] Animations « Reduced » : fondus courts seulement, sans ressort ni déplacement. Orbe
@@ -186,9 +195,11 @@ arrêter côté GPU : provoquer les erreurs par les Réglages.
 - [ ] ✕ ou Échap sur une pilule d’erreur → l’Îlot se ferme, rien n’est collé.
 - [ ] Aucune pilule ni info-bulle de l’icône ne montre le texte, le résultat, la consigne, la
   clé ou la réponse du serveur. L’app n’écrit pas de journal : le dossier de données ne
-  contient que `settings.json`, `menu-memory.json` et, historique activé, `history.sqlite3`.
-  *Preuve* : liste du dossier ; recherche d’un mot de la phrase de test dans ses fichiers
-  lisibles, sans résultat.
+  contient que `settings.json`, `menu-memory.json` et `history.sqlite3`. Ce dernier existe
+  toujours (créé au démarrage), même historique coupé ; `history.sqlite3-wal` et `-shm`
+  peuvent l’accompagner pendant que l’app tourne. Historique coupé, sa table `history` reste
+  vide. *Preuve* : liste du dossier ; nombre de lignes de la table `history` (0 historique
+  coupé) ; recherche d’un mot de la phrase de test dans les fichiers lisibles, sans résultat.
 
 ### Cible, sélection et presse-papiers
 
@@ -219,8 +230,11 @@ replacing › How to undo sur « Ctrl+Z » (défaut, option A), puis sur « Past
   Translate, Write email et la consigne libre surlignent le bloc entier. Highlight changed
   words coupé → aucun surlignage.
 - [ ] Annuler dans les 8 s (réglable de 2 à 20 s, pause au survol) → l’original revient à
-  l’identique (accents, espaces insécables, retours à la ligne, mise en forme dans Word) et la
-  pilule affiche « Undone ». En « Paste original », la sentinelle est intacte.
+  l’identique (accents, espaces insécables, retours à la ligne) et la pilule affiche
+  « Undone ». En « Ctrl+Z », la mise en forme de Word revient aussi. En « Paste original »,
+  l’original est recollé en texte brut : dans Word, il prend la mise en forme du point
+  d’insertion (limite connue, une mise en forme mixte ne revient pas) ; la sentinelle est
+  intacte.
 - [ ] Option A, une lettre tapée dans la source après le collage → Annuler disparaît et le
   surlignage s’efface. Le Ctrl+Z de l’utilisateur annule le collage lui-même et retire aussi
   Annuler.
