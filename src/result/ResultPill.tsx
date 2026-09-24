@@ -10,7 +10,7 @@ import { useReducedMotionSetting } from '../motion/MotionPreferences';
 import type { AfterReplace, ErrorCode, Indicator, Mode } from '../types';
 import { Icon, iconStroke } from '../ui';
 import { Countdown, resultTiming, type PauseReason } from './countdown';
-import { describeError, errorFamily, type ErrorAction, type ErrorSource } from './errors';
+import { describeError, errorFamily, type ErrorAction, type ErrorSource, type NoticeCause } from './errors';
 import '../menu/ilot.css';
 import './result.css';
 
@@ -47,8 +47,9 @@ import './result.css';
  *       pill (done with neither check nor Undo, or a silent error such as cancelled).
  *       The Îlot (src/menu/Ilot.tsx) takes it as is for its pill shape (src/menu/IlotStage.tsx).
  *   Stages: { stage: 'working', indicator, delayMs? } | { stage: 'done', afterReplace }
- *           | { stage: 'undone' } | { stage: 'error', error, mode?, model?, source? }
- *           source 'capture': a capture Rust refused (`capture-notice`), no button at all.
+ *           | { stage: 'undone' } | { stage: 'error', error, mode?, model?, source?, cause? }
+ *           source 'capture': a capture Rust refused (`capture-notice`), no button at all;
+ *           cause: which situation its code meant (src/result/errors.ts, noticeCause).
  *   onUndo()        Undo was clicked (the native side sends Ctrl+Z or pastes the original back,
  *                   after revalidation).
  *   onExpire()      the done or undone stage is over: let the surface leave.
@@ -66,7 +67,7 @@ export type ResultStage =
   | { stage: 'working'; indicator: Indicator; delayMs?: number }
   | { stage: 'done'; afterReplace: AfterReplace }
   | { stage: 'undone' }
-  | { stage: 'error'; error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource };
+  | { stage: 'error'; error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource; cause?: NoticeCause | null };
 export type ActionAnswer = void | boolean | Promise<void | boolean>;
 export type ResultHandlers = {
   onUndo?: () => void;
@@ -178,9 +179,9 @@ export function UndoneContent({ onExpire }: { onExpire?: () => void }) {
 }
 
 // The compact error pill (Simulator.jsx:286-296, app.css:169-171).
-export function ErrorContent({ error, mode, model, source, onAction, onDismiss }: { error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource } & Pick<ResultHandlers, 'onAction' | 'onDismiss'>) {
+export function ErrorContent({ error, mode, model, source, cause, onAction, onDismiss }: { error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource; cause?: NoticeCause | null } & Pick<ResultHandlers, 'onAction' | 'onDismiss'>) {
   const t = useT();
-  const description = describeError(error, { mode, model, source });
+  const description = describeError(error, { mode, model, source, cause });
   const [copied, setCopied] = useState(false);
   const alive = useRef(true);
   const timer = useRef(0);
@@ -229,7 +230,7 @@ export function resultContent(stage: ResultStage, handlers: ResultHandlers = {})
       return { key: 'undone', node: <UndoneContent onExpire={handlers.onExpire} /> };
     case 'error':
       if (errorFamily(stage.error) === 'silent') return null;
-      return { key: `error-${stage.error}`, node: <ErrorContent error={stage.error} mode={stage.mode} model={stage.model} source={stage.source} onAction={handlers.onAction} onDismiss={handlers.onDismiss} /> };
+      return { key: `error-${stage.error}${stage.cause ? `-${stage.cause}` : ''}`, node: <ErrorContent error={stage.error} mode={stage.mode} model={stage.model} source={stage.source} cause={stage.cause} onAction={handlers.onAction} onDismiss={handlers.onDismiss} /> };
   }
 }
 

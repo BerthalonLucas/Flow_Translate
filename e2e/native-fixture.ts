@@ -17,7 +17,8 @@ let heldCopy = false;
 let failSettings = new URLSearchParams(location.search).has('settingsError');
 let connected = false;
 let refuseShortcut = false;
-let refuseReplace = false;
+// Rust's refusal of the next `replace_result` (its French words; lot 10 gives the command no code).
+let refuseReplace: string | null = null;
 let resolveCopy: (() => void) | undefined;
 // Rust's reading of « Effets d'animation »: unknown until a test sets it.
 let windowsMotion: { reduced: boolean } | null = null;
@@ -25,9 +26,13 @@ let windowsMotion: { reduced: boolean } | null = null;
 let overlayFocus = true;
 const chosen = new Set<string>();
 // Where Rust put the overlay window (physical pixels), for the Îlot's side: by default below the
-// fixture's anchor, the Îlot's strip 8 px under the selection, its right edge (32 + 400 in the
+// fixture's anchor, the Îlot's strip 8 px under the selection, its right edge (149 + 283 in the
 // window) on the selection's end (src/layout.ts, ilotReserve).
 let overlayPosition = { x: 400 + 120 - 432, y: 300 + 18 + 8 - 104 };
+// The work area of the screen holding a point (`monitorFromPoint`, physical pixels), for the room
+// the Îlot has around its strip: one 1920 × 1080 screen, its taskbar 40 high.
+let workArea = { x: 0, y: 0, width: 1920, height: 1040 };
+const monitor = () => ({ name: 'fixture', scaleFactor: 1, position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 }, workArea: { position: { x: workArea.x, y: workArea.y }, size: { width: workArea.width, height: workArea.height } } });
 // The next `choose_action` is refused, as when the chosen action was deleted meanwhile.
 let refuseChoice = false;
 // Lot 10: what Windows answered for each binding (`shortcut_status`); by default every enabled
@@ -57,6 +62,7 @@ mockIPC((command, args) => {
   if (command === 'translate') request = args?.request as TranslationRequest;
   if (command === 'focus_overlay') return overlayFocus;
   if (command === 'plugin:window|inner_position') return overlayPosition;
+  if (command === 'plugin:window|monitor_from_point') return monitor();
   if (command === 'choose_action') {
     const { captureId, actionId, instruction } = args as { captureId: string; actionId: string; instruction?: string };
     if (captureId !== currentCapture.id || !currentCapture.menu) return Promise.reject('Cette capture n’attend pas de choix.');
@@ -74,7 +80,7 @@ mockIPC((command, args) => {
   if (command === 'start_drag') return Promise.reject('Synthetic drag failure');
   if (command === 'dismiss_overlay') return emit('overlay-dismiss-requested', { captureId: currentCapture.id });
   if (command === 'copy_result' && heldCopy) return new Promise<void>(resolve => { resolveCopy = resolve; });
-  if (command === 'replace_result' && refuseReplace) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject('La fenêtre source a changé; remplacement refusé.'); }
+  if (command === 'replace_result' && refuseReplace !== null) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject(refuseReplace); }
 }, { shouldMockEvents: true });
 mockWindows('overlay');
 
@@ -83,7 +89,7 @@ Object.assign(window, { nativeFixture: {
   recoverSettings: () => { failSettings = false; },
   connect: () => { connected = true; },
   refuseShortcut: () => { refuseShortcut = true; },
-  refuseReplace: () => { refuseReplace = true; },
+  refuseReplace: (message: string | null = 'La fenêtre source a changé; remplacement refusé.') => { refuseReplace = message; },
   // A failed request; lot 10 sends its code beside the French message (none: a 0.4 error).
   error: (code?: ErrorCode, message = 'Serveur indisponible.') => emit('translation', { requestId: request.id, kind: 'error', message, ...(code ? { code } : {}) }),
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },
@@ -117,6 +123,8 @@ Object.assign(window, { nativeFixture: {
   unanchoredMenu: (id: string, lastActionId: string | null = null) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null, canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   // Rust placed the window elsewhere (above the selection, another screen): physical pixels.
   windowAt: (x: number, y: number) => { overlayPosition = { x, y }; },
+  // The work area of the anchor's screen (physical pixels): a taskbar on the left, another screen.
+  workAreaAt: (x: number, y: number, width: number, height: number) => { workArea = { x, y, width, height }; },
   menuKey: (key: string, shiftKey = false, captureId = currentCapture.id) => emit('menu-key', { captureId, key, shiftKey }),
   // Lot 4: the menu shortcut pressed twice within 400 ms while its menu waits.
   menuRepeat: (captureId = currentCapture.id) => emit('menu-repeat', { captureId }),

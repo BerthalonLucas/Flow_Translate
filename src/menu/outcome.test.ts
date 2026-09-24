@@ -55,6 +55,14 @@ describe('ilotOutcome', () => {
     expect(outcome(retried, { requestId: 'r2', status: 'applied' })).toEqual({ stage: 'done' });
     expect(outcome(retried, { requestId: 'r2', status: 'refused' })).toEqual({ stage: 'error', code: 'paste_blocked' });
     expect(outcome({ ...retried, invalidated: true }, { requestId: 'r2', status: 'refused' })).toEqual({ stage: 'error', code: 'target_changed' });
+    // The refusal says why (src/result/errors.ts refusedPasteCode): the window moved, keys held…
+    for (const code of ['target_changed', 'keys_held', 'not_editable', 'paste_blocked'] as const) {
+      expect(outcome(retried, { requestId: 'r2', status: 'refused', code }), code).toEqual({ stage: 'error', code });
+    }
+    // Always a paste code: the result exists and was not pasted, Copy it.
+    expect(outcome(retried, { requestId: 'r2', status: 'refused', code: 'busy' })).toEqual({ stage: 'error', code: 'paste_blocked' });
+    // The watcher's word wins: the selection moved.
+    expect(outcome({ ...retried, invalidated: true }, { requestId: 'r2', status: 'refused', code: 'keys_held' })).toEqual({ stage: 'error', code: 'target_changed' });
   });
 
   it('never tries that paste over a selection the watcher dropped, nor on a capture that cannot be written', () => {

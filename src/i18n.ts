@@ -73,6 +73,12 @@ const dictionary = {
   'result.error.no_selection': { en: 'Select some text first', fr: 'Sélectionnez d’abord du texte' },
   'result.error.protected_field': { en: 'Protected field, not read', fr: 'Champ protégé, rien lu' },
   'result.error.cancelled': { en: 'Cancelled', fr: 'Annulé' },
+  // A capture Rust refused (capture-notice), where the request's words would mislead: the source
+  // window changed during the capture (nothing was tried), the Settings window was in front, the
+  // tray's « Revoir » found nothing recent (src/result/errors.ts, noticeCause).
+  'result.notice.target_changed': { en: 'Window changed — try again', fr: 'Fenêtre changée, réessayez' },
+  'result.notice.settings_open': { en: 'Close Settings first', fr: 'Fermez d’abord les Réglages' },
+  'result.notice.nothing_recent': { en: 'No recent translation', fr: 'Aucune traduction récente' },
   'init.connection': { en: 'The connection to FlowTranslate is unavailable.', fr: 'La connexion à FlowTranslate est indisponible.' },
   'init.close': { en: 'Closing failed. Try again.', fr: 'La fermeture a échoué. Réessayez.' },
   'init.restart': { en: 'Restart the app if the problem persists.', fr: 'Relancez l’application si le problème persiste.' },

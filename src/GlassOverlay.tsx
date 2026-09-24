@@ -150,8 +150,9 @@ export function GlassOverlay({ controller }: { controller: TranslationController
     ? <IlotStage key={state.capture.id} controller={controller} capture={state.capture} />
     : <GlassSession key={state.capture.id} controller={controller} />;
   if (!notice) return null;
-  // Under the Îlot a refused capture reads as its error pill, in the interface language.
-  return settings?.uiVersion === 'ilot' && notice.code ? <IlotNotice key={notice.id} code={notice.code} /> : <NoticePill key={notice.id} message={notice.message} />;
+  // Under the Îlot a refused capture reads as its error pill, in the interface language; Rust's
+  // message only tells which situation its code meant (never shown).
+  return settings?.uiVersion === 'ilot' && notice.code ? <IlotNotice key={notice.id} code={notice.code} message={notice.message} /> : <NoticePill key={notice.id} message={notice.message} />;
 }
 
 // Nothing to translate: one pill, never clickable, in place of the old MessageBox. Rust

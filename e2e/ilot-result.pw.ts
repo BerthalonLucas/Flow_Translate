@@ -22,8 +22,9 @@ type Fixture = {
   deliver: (status: 'applied' | 'fallback', confirmed?: boolean, message?: string, code?: string) => Promise<void>;
   notice: (message: string, code?: string) => Promise<void>;
   invalidate: (anchorLost?: boolean) => Promise<void>;
-  refuseReplace: () => void;
+  refuseReplace: (message?: string | null) => void;
   requestId: () => string;
+  workAreaAt: (x: number, y: number, width: number, height: number) => void;
 };
 const on = <T>(page: Page, run: (fixture: Fixture) => T | Promise<T>) => page.evaluate(`(${run.toString()})(window.nativeFixture)`) as Promise<T>;
 const calls = (page: Page, command: string) => page.evaluate(name => (window as unknown as { nativeFixture: Fixture }).nativeFixture.calls.filter(call => call.command === name).map(call => call.args ?? {}), command);
@@ -133,6 +134,54 @@ test('configuration: the work pill springs into the error pill on the same surfa
   expect(await translations(page, 'config')).toHaveLength(1);
 });
 
+test('near the work area’s left edge the error pill slides right to stay on the screen, on the shape’s spring; the work pill stays on the selection’s end', async ({ page }) => {
+  await openIlot(page, { language: 'fr' });
+  // Rust clamped the strip against the work area's left edge: the strip's corner (432 in the
+  // window, which Rust put at x = 88) is 283 px right of it, the work area starting at x = 237.
+  await on(page, f => f.workAreaAt(237, 0, 1683, 1040));
+  const reserve = ilotReserve('anchored');
+  const corner = reserve.frame.x + reserve.frame.width;
+  const edge = 237 - 88;
+  await chooseAndWork(page, 'edge');
+  const work = await box(page);
+  expect(work.x + work.width).toBeCloseTo(corner, 0);
+
+  // The widest pill (« Texte non modifiable, rien remplacé » + « Copier le résultat »).
+  await on(page, f => f.done('Texte synthétique'));
+  const frames = await follow(page, 'edge', () => on(page, f => f.deliver('fallback', false, 'Ce champ n’est pas modifiable; utilisez Copier.', 'not_editable')));
+  await expect(stage(page)).toHaveAttribute('data-error', 'not_editable');
+  await settled(page);
+  const pill = await box(page);
+  expect(pill.width).toBeGreaterThan(283);
+  // At rest on the work area's left edge: slid right by what it overhangs, inside the reserve.
+  const shift = Math.ceil(pill.width - 283);
+  expect(Math.abs(pill.x - edge)).toBeLessThan(1);
+  expect(pill.x + pill.width).toBeCloseTo(corner + shift, 0);
+  expect(pill.x + pill.width).toBeLessThanOrEqual(reserve.width - 32);
+  expect((await geometries(page, 'edge')).at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', { ...pill, shift })]);
+  // Every frame of the spring stays on the screen and in the region Rust holds; the slide is seen
+  // between its two positions, not a jump; same surface, same window and frame.
+  expect(frames.length).toBeGreaterThan(10);
+  for (const frame of frames) {
+    expect(frame.shape.x, JSON.stringify(frame)).toBeGreaterThanOrEqual(edge - 1);
+    expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  }
+  expect(frames.filter(frame => frame.shape.x + frame.shape.width > corner + 2 && frame.shape.x + frame.shape.width < corner + shift - 2).length).toBeGreaterThan(3);
+  expect(await sameSurface(page)).toBe(true);
+  for (const geometry of await geometries(page, 'edge')) expect(geometry).toMatchObject({ width: reserve.width, height: reserve.height, frame: reserve.frame });
+
+  // Far from the edge (the default work area), the same pill grows left from the selection's end.
+  await on(page, f => f.workAreaAt(0, 0, 1920, 1040));
+  await chooseAndWork(page, 'middle');
+  await on(page, f => f.done('Texte synthétique'));
+  await on(page, f => f.deliver('fallback', false, 'Ce champ n’est pas modifiable; utilisez Copier.', 'not_editable'));
+  await expect(stage(page)).toHaveAttribute('data-error', 'not_editable');
+  await settled(page);
+  const middle = await box(page);
+  expect(middle.x + middle.width).toBeCloseTo(corner, 0);
+  expect((await geometries(page, 'middle')).at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', middle)]);
+});
+
 test('configuration: each code opens its own field, in English and in French', async ({ page }) => {
   await openIlot(page);
   for (const [code, label, field] of [['unreachable', 'Open endpoint', 'quality.endpoint'], ['bad_endpoint', 'Open endpoint', 'quality.endpoint'], ['model_not_found', 'Choose model', 'quality.model']] as const) {
@@ -179,18 +228,33 @@ test('transient: Try again runs the same action on the same capture once, back t
   expect(await calls(page, 'copy_result')).toHaveLength(0);
 });
 
-test('transient: a retried result the paste refuses says so with Copy result; a dropped selection is never pasted over', async ({ page }) => {
+test('transient: a retried result the paste refuses says why with Copy result; a dropped selection is never pasted over', async ({ page }) => {
   await openIlot(page);
-  await chooseAndWork(page, 'refused');
-  await on(page, f => f.error('timeout'));
-  await expect(page.getByRole('alert')).toHaveText('Server took too long');
-  await on(page, f => { f.refuseReplace(); });
-  await page.getByRole('button', { name: 'Try again' }).click();
-  await expect.poll(() => translations(page, 'refused')).toHaveLength(2);
-  await on(page, f => f.done('Synthetic result'));
-  await expect(stage(page)).toHaveAttribute('data-error', 'paste_blocked');
-  await expect(page.getByRole('button', { name: 'Copy result' })).toBeVisible();
-  expect(await calls(page, 'replace_result')).toHaveLength(1);
+  // replace_result refuses with Rust's French words: the pill says the cause they mean (the
+  // source window changed, keys held, the paste blocked), always with Copy result.
+  const causes = [
+    ['La fenêtre source a changé; remplacement refusé.', 'target_changed', 'Text changed — not replaced'],
+    ['Relâchez les touches du raccourci, puis réessayez depuis la bulle.', 'keys_held', 'Keys held down, not replaced'],
+    ['Le collage a été bloqué par Windows ou par l’application; utilisez Copier.', 'paste_blocked', 'Can’t edit this app’s text'],
+  ] as const;
+  for (const [index, [refusal, code, text]] of causes.entries()) {
+    const id = `refused-${code}`;
+    await chooseAndWork(page, id);
+    await on(page, f => f.error('timeout'));
+    await expect(page.getByRole('alert')).toHaveText('Server took too long');
+    await page.evaluate(refusal => (window as unknown as { nativeFixture: Fixture }).nativeFixture.refuseReplace(refusal), refusal);
+    await page.getByRole('button', { name: 'Try again' }).click();
+    await expect.poll(() => translations(page, id)).toHaveLength(2);
+    await on(page, f => f.done('Synthetic result'));
+    await expect(stage(page)).toHaveAttribute('data-error', code);
+    await expect(page.getByRole('alert')).toHaveText(text);
+    await expect(stage(page)).not.toContainText('remplacement refusé');
+    await expect(page.getByRole('button', { name: 'Copy result' })).toBeVisible();
+    expect(await calls(page, 'replace_result')).toHaveLength(index + 1);
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  }
+  await on(page, f => { f.refuseReplace(null); });
 
   // The watcher dropped the selection during the retry: nothing is even tried.
   await chooseAndWork(page, 'moved');
@@ -201,7 +265,7 @@ test('transient: a retried result the paste refuses says so with Copy result; a 
   await on(page, f => f.done('Synthetic result'));
   await expect(stage(page)).toHaveAttribute('data-error', 'target_changed');
   await expect(page.getByRole('alert')).toHaveText('Text changed — not replaced');
-  expect(await calls(page, 'replace_result')).toHaveLength(1);
+  expect(await calls(page, 'replace_result')).toHaveLength(causes.length);
 });
 
 test('paste: a refused paste says why with Copy result; the copy goes through copy_result, nothing is replaced, the result never shows', async ({ page }) => {
@@ -325,12 +389,23 @@ test('a capture Rust refuses under the Îlot reads as its error pill, in the int
   // Rust shows it alone and hides it: no geometry asked, never clickable.
   expect((await calls(page, 'resize_overlay')).length).toBe(resizes);
   await expect(notice).toHaveCSS('pointer-events', 'none');
-  // Even a paste code: nothing was read, nothing to copy.
+  // no_selection also covers two situations where selecting text would not help: a shortcut
+  // pressed while the Settings window is in front, the tray's « Revoir » with nothing recent.
+  // Rust's words tell them apart; they are never shown.
+  await on(page, f => f.notice('Fermez les réglages avant d’utiliser un raccourci.', 'no_selection'));
+  await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Close Settings first');
+  await on(page, f => f.notice('Aucune traduction récente.', 'no_selection'));
+  await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('No recent translation');
+  await expect(page.locator('body')).not.toContainText('Aucune traduction');
+  // A paste code at the capture: the source window changed before anything was tried, nothing
+  // was read, nothing to copy.
   await on(page, f => f.settings({ language: 'fr' }));
-  await on(page, f => f.notice('La fenêtre source a changé.', 'target_changed'));
-  await expect(page.locator('.notice-root[data-notice="target_changed"]').getByRole('alert')).toHaveText('Texte modifié, rien remplacé');
+  await on(page, f => f.notice('La fenêtre source a changé pendant la capture. Réessayez.', 'target_changed'));
+  await expect(page.locator('.notice-root[data-notice="target_changed"]').getByRole('alert')).toHaveText('Fenêtre changée, réessayez');
   await expect(page.locator('.notice-root button')).toHaveCount(0);
-  await on(page, f => f.notice('Champ protégé : capture refusée.', 'protected_field'));
+  await on(page, f => f.notice('Fermez les réglages avant d’utiliser un raccourci.', 'no_selection'));
+  await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Fermez d’abord les Réglages');
+  await on(page, f => f.notice('La capture est refusée dans un champ protégé.', 'protected_field'));
   await expect(page.locator('.notice-root').getByRole('alert')).toHaveText('Champ protégé, rien lu');
 
   // The 0.4 journey keeps Rust's message in its own pill.

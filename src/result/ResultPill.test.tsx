@@ -169,12 +169,16 @@ describe('ErrorContent', () => {
 
   it('says a refused capture without any button: nothing to retry or copy, and no ✕ without onDismiss', async () => {
     const onAction = vi.fn();
+    // The source window changed during the capture: nothing was tried, the capture's own words.
     await mount(<ErrorContent error="target_changed" source="capture" onAction={onAction} />);
-    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Text changed — not replaced');
+    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Window changed — try again');
     expect(host!.querySelectorAll('button').length).toBe(0);
     await act(async () => root!.render(<ErrorContent error="no_selection" source="capture" />));
     expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Select some text first');
     expect(host!.querySelectorAll('button').length).toBe(0);
+    // no_selection also covers the Settings in front (src/result/errors.ts, noticeCause).
+    await act(async () => root!.render(<ErrorContent error="no_selection" source="capture" cause="settings_open" />));
+    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Close Settings first');
     // The pill is capped: the Îlot's window holds its widest.
     expect(host!.querySelector<HTMLElement>('.result-error')!.style.maxWidth).toBe('400px');
   });

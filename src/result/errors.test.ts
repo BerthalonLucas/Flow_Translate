@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import labData from '../../design-lab/src/data.js?raw';
+import captureRs from '../../src-tauri/src/capture.rs?raw';
+import clipboardRs from '../../src-tauri/src/clipboard_guard.rs?raw';
+import libRs from '../../src-tauri/src/lib.rs?raw';
 import { languages, translate } from '../i18n';
 import { resolveField } from '../settings/fields';
 import { errorCodes, type ErrorCode } from '../types';
-import { describeError, errorCodeOf, errorFamily } from './errors';
+import { describeError, errorCodeOf, errorFamily, noticeCause, noticeWords, refusalWords, refusedPasteCode } from './errors';
 
 // The lab's outcomes (design-lab/src/data.js:64-73), read from its source.
 type Outcome = { id: string; kind?: string; field?: string; short?: Record<'en' | 'fr', string>; action?: Record<'en' | 'fr', string> };
@@ -57,13 +60,70 @@ describe('error codes', () => {
     for (const code of errorCodes) {
       const { action, actionLabel, message } = describeError(code, { source: 'capture' });
       expect([action, actionLabel], code).toEqual([null, null]);
-      expect(message).toBe(describeError(code).message);
+      // The request's words, but for the source window changing during the capture: nothing
+      // was tried, so « not replaced » would mislead.
+      expect(message, code).toBe(code === 'target_changed' ? 'result.notice.target_changed' : describeError(code).message);
     }
+    expect(languages.map(language => translate(language, describeError('target_changed', { source: 'capture' }).message))).toEqual(['Window changed — try again', 'Fenêtre changée, réessayez']);
+  });
+
+  it('tells apart the situations Rust sends as no_selection, from its words, for a capture only', () => {
+    // Rust's own sentences (src-tauri/src/capture.rs, lib.rs).
+    const nothing = 'Rien à traduire dans la fenêtre active.';
+    const settings = 'Fermez les réglages avant d’utiliser un raccourci.';
+    const recent = 'Aucune traduction récente.';
+    for (const sentence of [nothing, settings, recent]) expect(captureRs + libRs, sentence).toContain(sentence);
+    expect(noticeCause('no_selection', nothing)).toBeNull();
+    expect(noticeCause('no_selection', settings)).toBe('settings_open');
+    expect(noticeCause('no_selection', recent)).toBe('nothing_recent');
+    expect(noticeCause('no_selection', undefined)).toBeNull();
+    // Only for the code Rust sends them with.
+    expect(noticeCause('too_long', recent)).toBeNull();
+    const text = (message: string) => languages.map(language => translate(language, describeError('no_selection', { source: 'capture', cause: noticeCause('no_selection', message) }).message));
+    expect(text(nothing)).toEqual(['Select some text first', 'Sélectionnez d’abord du texte']);
+    expect(text(settings)).toEqual(['Close Settings first', 'Fermez d’abord les Réglages']);
+    expect(text(recent)).toEqual(['No recent translation', 'Aucune traduction récente']);
+    // A request never takes a capture's words.
+    expect(describeError('target_changed', { cause: 'settings_open' }).message).toBe('result.error.target_changed');
+  });
+
+  it('reads the paste code of a replace_result refusal from Rust’s words, paste_blocked otherwise', () => {
+    // Every refusal replace_result can answer (src-tauri: lib.rs replace_result, capture.rs paste
+    // and validate_target, clipboard_guard.rs put_text), with the code its words mean.
+    const refusals: Array<[string, ErrorCode]> = [
+      ['La fenêtre source a changé; remplacement refusé.', 'target_changed'],
+      ['Le champ actif a changé; remplacement refusé.', 'target_changed'],
+      ['La cible a changé; remplacement refusé.', 'target_changed'],
+      ['La sélection a changé; remplacement refusé.', 'target_changed'],
+      ['La sélection n’est plus disponible; utilisez Copier.', 'target_changed'],
+      ['Relâchez les touches du raccourci, puis réessayez depuis la bulle.', 'keys_held'],
+      ['Ce champ n’est pas modifiable; utilisez Copier.', 'not_editable'],
+      ['Impossible de réactiver la fenêtre source; utilisez Copier.', 'paste_blocked'],
+      ['Le collage a été bloqué par Windows ou par l’application; utilisez Copier.', 'paste_blocked'],
+      ['Le résultat contient un caractère nul; remplacement refusé.', 'paste_blocked'],
+      ['Le presse-papiers a changé; son nouveau contenu est conservé.', 'paste_blocked'],
+      ['Le remplacement a été interrompu; utilisez Copier.', 'paste_blocked'],
+      ['Ce résultat n’est plus actif.', 'paste_blocked'],
+    ];
+    const rust = libRs + captureRs + clipboardRs;
+    for (const [sentence, code] of refusals) {
+      expect(rust, sentence).toContain(sentence);
+      expect(refusedPasteCode(sentence), sentence).toBe(code);
+      expect(errorFamily(code)).toBe('paste');
+    }
+    for (const reason of [undefined, null, new Error('x'), 42, '']) expect(refusedPasteCode(reason)).toBe('paste_blocked');
+  });
+
+  it('finds every fragment of Rust’s words it reads still in src-tauri', () => {
+    // A rewording on the native side fails here instead of silently showing the generic text.
+    const rust = libRs + captureRs;
+    for (const { words } of [...noticeWords, ...refusalWords]) expect(rust, words).toContain(words);
   });
 
   it('says it in six words at most, in English and in French', () => {
-    for (const kind of errorCodes) {
-      const { message, actionLabel } = describeError(kind, { model: 'gemma-4-12b' });
+    const descriptions = [...errorCodes.map(kind => describeError(kind, { model: 'gemma-4-12b' })), ...errorCodes.map(kind => describeError(kind, { source: 'capture' })),
+      ...noticeWords.map(({ code, cause }) => describeError(code, { source: 'capture', cause }))];
+    for (const { code: kind, message, actionLabel } of descriptions) {
       for (const language of languages) {
         const text = translate(language, message, { model: 'gemma-4-12b' });
         expect(text.trim(), `${kind} ${language}`).not.toBe('');

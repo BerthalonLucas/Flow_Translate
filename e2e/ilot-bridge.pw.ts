@@ -242,6 +242,12 @@ test('Îlot window: reserved once below the selection, the region follows each s
   const reserve = ilotReserve('anchored');
   const stage = page.locator('.ilot-stage');
   await expect(stage).toHaveAttribute('data-side', 'below');
+  // Rust clamps the strip into the work area: the menu's widest shape (the field, 283), never the
+  // error pill's 400, so the Îlot stays on the selection's end unless it is within 283 px of the
+  // left edge. The first geometry, before the Îlot rendered, holds that strip alone.
+  const [first] = await geometries(page, 'regions');
+  expect(first.frame).toEqual({ x: 149, y: 104, width: 283, height: 32, radius: 0 });
+  expect(first.regions).toEqual([{ x: 149, y: 104, width: 283, height: 32, radius: 16 }]);
   // The Îlot hangs from the strip Rust anchors, its entrance origin on the selection's side.
   const compact = await box(page);
   expect(compact.x + compact.width).toBeCloseTo(reserve.frame.x + reserve.frame.width, 0);
@@ -303,8 +309,10 @@ test('Îlot window: above the selection it grows up from the strip; without an a
   expect(low.x + low.width / 2).toBeCloseTo(bottom.width / 2, 0);
   for (const geometry of await geometries(page, 'clipboard')) expect(geometry).toMatchObject({ width: bottom.width, height: bottom.height, presentation: 'bottom', frame: bottom.frame });
   expect((await geometries(page, 'clipboard')).at(-1)?.regions).toEqual([ilotRegion('bottom', 'above', low)]);
-  // The window position is only read for an anchored capture.
+  // The window position and the work area are only read for an anchored capture, at the anchor's
+  // centre (the screen Rust placed it on).
   expect((await calls(page, 'plugin:window|inner_position')).length).toBe(1);
+  expect(await calls(page, 'plugin:window|monitor_from_point')).toEqual([{ x: 460, y: 309 }]);
 });
 
 test('Îlot: under v4 nothing changes, the menu capture shows no Îlot and a direct capture keeps its spinner pill', async ({ page }) => {
