@@ -53,13 +53,13 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *   Undo      lot 9: after Rust's own paste (`result-delivery` applied), the check, then Undo and
  *             its ring while Rust offers it (`undoable`). One click asks `undo_result` once:
  *             `undone` → « Undone », then the Îlot leaves; refused or failed → the error pill in
- *             Undo's words, ✕ only; nothing else is ever pasted. `undo-state` withdraws it: the
- *             user's own Ctrl+Z (`undo_key`) undid the paste → « Undone » 0.9 s, then the Îlot
- *             leaves, as the lab's Ctrl+Z; a key or the caret (`typed`, `caret_moved`) → the check
- *             alone takes its place on the same clock (the surface's corner fixed), 1.1 s at most,
- *             then the Îlot leaves. The time stands still under the pointer, on the focus and while
- *             Undo is on its way; at its end the Îlot leaves. A retried result the Îlot pasted
- *             itself has no Undo (Rust's own only).
+ *             Undo's words, ✕ only; nothing else is ever pasted. `undo-state` withdraws it (even
+ *             before the delivery): the user's own Ctrl+Z (`undo_key`) undid the paste →
+ *             « Undone » 0.9 s, then the Îlot leaves, as the lab's Ctrl+Z; a key or the caret
+ *             (`typed`, `caret_moved`) → the check alone takes its place on the same clock (the
+ *             surface's corner fixed), 1.1 s at most, then the Îlot leaves. The time stands still
+ *             under the pointer, on the focus and while Undo is on its way; at its end the Îlot
+ *             leaves. A retried result the Îlot pasted itself has no Undo (Rust's own only).
  *   marks     lot 9: the changed words (src/result/highlight.ts, afterReplace.changedWords) asked
  *             once per replacement with `highlight_changes` while Undo is offered, cleared once
  *             with `clear_highlight` at the countdown's end (Rust clears them itself on Undo, a

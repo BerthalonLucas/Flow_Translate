@@ -166,7 +166,7 @@ export function useTranslation(readyOnMount = false) {
       bridge.on<Screen>('work-area', next => setScreen(next)),
       // Lot 9: Undo is no longer safe; the reason decides what the Îlot says (src/menu/outcome.ts):
       // the user's own Ctrl+Z undid the paste (« Undone »), a key or the caret moved (the pill
-      // leaves soon).
+      // leaves soon). Kept even when it comes before `result-delivery`.
       bridge.on<UndoState>('undo-state', event => {
         if (event.requestId === requestRef.current && !closingRef.current && event.available === false) dispatch({ type: 'UNDO_LOST', requestId: event.requestId, reason: event.reason });
       }),

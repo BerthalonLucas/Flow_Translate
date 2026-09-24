@@ -46,7 +46,7 @@ async function settled(page: Page) {
 }
 // A menu capture of `text`, chosen with Enter (its last action), then the model's `result` and
 // Rust's paste: the check on the Îlot's own surface, tagged to tell it is the same element.
-async function pasteThrough(page: Page, id: string, { lastActionId = null, text = 'Their going too the store', result = 'They are going to the store', undoable = true }: { lastActionId?: string | null; text?: string; result?: string; undoable?: boolean } = {}, beforePaste?: () => Promise<void>) {
+async function pasteThrough(page: Page, id: string, { lastActionId = null, text = 'Their going too the store', result = 'They are going to the store', undoable = true }: { lastActionId?: string | null; text?: string; result?: string; undoable?: boolean } = {}, beforePaste?: () => Promise<unknown>, after: 'done' | 'undone' = 'done') {
   await page.evaluate(({ id, lastActionId, text }) => (window as unknown as { nativeFixture: Fixture }).nativeFixture.captureMenu(id, lastActionId, text), { id, lastActionId, text });
   await expect(stage(page)).toHaveAttribute('data-stage', 'menu');
   await expect(stage(page)).toHaveAttribute('data-capture-id', id);
@@ -56,7 +56,7 @@ async function pasteThrough(page: Page, id: string, { lastActionId = null, text 
   await page.evaluate(result => (window as unknown as { nativeFixture: Fixture }).nativeFixture.done(result), result);
   await beforePaste?.();
   await page.evaluate(undoable => (window as unknown as { nativeFixture: Fixture }).nativeFixture.pasted({ undoable }), undoable);
-  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await expect(stage(page)).toHaveAttribute('data-stage', after);
   return on(page, f => f.requestId());
 }
 test.describe.configure({ timeout: 45_000 });
@@ -239,6 +239,33 @@ test('the user’s own Ctrl+Z in the source (undo-state undo_key): « Undone » 
   await page.clock.resume();
   // Rust fades its own marks, and nothing was asked of it: no undo_result, no clear_highlight.
   for (const command of ['undo_result', 'clear_highlight', 'replace_result']) expect(await calls(page, command), command).toHaveLength(0);
+});
+
+test('undo-state before result-delivery is kept: Undo is never offered (the check alone, 1.1 s), and a Ctrl+Z seen first reads as Undone', async ({ page }) => {
+  await page.clock.install();
+  await openIlot(page);
+  // Rust saw the caret move between its paste and the delivery reaching the page.
+  await pasteThrough(page, 'early-caret', {}, async () => {
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50));
+    await on(page, f => f.undoState('caret_moved'));
+  });
+  await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="done"]')).toHaveClass(/is-check-only/);
+  await expect(undoButton(page)).toHaveCount(0);
+  await page.clock.runFor(1000);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+  await page.clock.runFor(200);
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await page.clock.resume();
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  // No Undo, so no marks either.
+  expect(await calls(page, 'highlight_changes')).toHaveLength(0);
+
+  // The user's own Ctrl+Z, seen before the delivery: « Undone » straight away.
+  await pasteThrough(page, 'early-ctrl-z', {}, () => on(page, f => f.undoState('undo_key')), 'undone');
+  await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="undone"]')).toHaveText('Undone');
+  await expect(undoButton(page)).toHaveCount(0);
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(2);
+  for (const command of ['undo_result', 'highlight_changes', 'clear_highlight']) expect(await calls(page, command), command).toHaveLength(0);
 });
 
 test('After replacing: changed words off, Undo off, the check off, a shorter Undo, and a block for Translate', async ({ page }) => {

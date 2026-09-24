@@ -20,6 +20,8 @@ export type TranslationState = {
   // applied, `undoable`), until `undo-state` withdraws it. False for anything else.
   undoable: boolean;
   // Lot 9: why Rust withdrew Undo for the current request (`undo-state`), null while it has not.
+  // Kept even when it arrives before `result-delivery` (Rust may send it in between), so that
+  // delivery never offers an Undo already withdrawn.
   undoLost: UndoLoss | null;
 };
 
@@ -63,11 +65,12 @@ export function translationReducer(state: TranslationState, action: Action): Tra
     case 'DELIVERY':
       if (action.event.requestId !== state.requestId) return state;
       return { ...state, delivery: action.event.status, code: action.event.status === 'fallback' && action.event.code !== undefined ? errorCodeOf(action.event.code) : null,
-        replacementValid: action.event.status === 'applied' ? false : state.replacementValid, undoable: action.event.status === 'applied' && action.event.undoable === true };
+        replacementValid: action.event.status === 'applied' ? false : state.replacementValid,
+        undoable: action.event.status === 'applied' && action.event.undoable === true && state.undoLost === null };
     // Lot 9: Rust withdrew Undo (a key in the source, the user's own Ctrl+Z, the caret moved), once
-    // per replacement: the first reason stays.
+    // per replacement; the first reason stays, even before the delivery reached the reducer.
     case 'UNDO_LOST':
-      return action.requestId === state.requestId && state.undoable ? { ...state, undoable: false, undoLost: action.reason } : state;
+      return action.requestId === state.requestId && state.undoLost === null ? { ...state, undoable: false, undoLost: action.reason } : state;
     case 'TARGET':
       // The native target arrives behind the shown window; a stale capture id is ignored.
       if (action.captureId !== state.capture?.id) return state;
