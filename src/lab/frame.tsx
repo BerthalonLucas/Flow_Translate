@@ -1,6 +1,7 @@
-import { StrictMode, useEffect, useRef } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Capsule, SettingsWindow } from '../App';
+import { SettingsWindow } from '../App';
+import { HaloLines } from '../halo/HaloWindow';
 import { GlassOverlay } from '../GlassOverlay';
 import { useTranslation } from '../useTranslation';
 import { bridge } from '../bridge';
@@ -12,7 +13,7 @@ import { MotionPreferences } from '../motion/MotionPreferences';
 import { applyMotion } from '../motion/preference';
 import { applyMotionPreset } from '../motion/tokens';
 import { indicatorOf } from '../loaders/pill';
-import type { MotionPreference, MotionPreset } from '../types';
+import type { MotionPreference, MotionPreset, Rect } from '../types';
 import '../styles.css';
 import '../glass.css';
 
@@ -53,6 +54,21 @@ function OverlayFixture() {
   return <div className="standalone-demo" data-preview-background={theme} data-lab-phase={controller.state.phase}><GlassOverlay controller={controller}/></div>;
 }
 
+// The halo over three lines of demonstration text: the rectangles of the lines as the page
+// lays them out (what UI Automation gives Rust in the real window), drawn by the halo itself.
+function HaloFixture() {
+  const text = useRef<HTMLDivElement>(null);
+  const [lines, setLines] = useState<Rect[]>([]);
+  useEffect(() => {
+    const spans = [...(text.current?.querySelectorAll('span') ?? [])];
+    setLines(spans.map(span => { const box = span.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; }));
+  }, []);
+  return <div className="standalone-demo" data-preview-background={theme}>
+    <div ref={text} style={{ font: '18px/28px "Segoe UI", sans-serif', color: 'var(--text)' }}><span>Could you send the updated proposal</span><br/><span>before Thursday, with the delivery timeline</span><br/><span>and the payment terms?</span></div>
+    {lines.length > 0 && <HaloLines lines={lines} state="shown"/>}
+  </div>;
+}
+
 async function mount() {
   if (!import.meta.env.DEV || bridge.native) return;
   // The defect reproduction must not hide the production document background.
@@ -84,6 +100,6 @@ async function mount() {
     });
     observer.observe(document.getElementById('root')!, { childList: true, subtree: true });
   }
-  createRoot(document.getElementById('root')!).render(<MotionPreferences motion={motion} preset={preset}>{scenario === 'settings' || scenario === 'history' ? <SettingsWindow/> : scenario === 'capsule' ? <div className="standalone-demo" data-preview-background={theme}><Capsule/></div> : <OverlayFixture/>}</MotionPreferences>);
+  createRoot(document.getElementById('root')!).render(<MotionPreferences motion={motion} preset={preset}>{scenario === 'settings' || scenario === 'history' ? <SettingsWindow/> : scenario === 'halo' ? <HaloFixture/> : <OverlayFixture/>}</MotionPreferences>);
 }
 void mount();

@@ -28,13 +28,14 @@
         "skipTaskbar": true
       },
       {
-        "label": "capsule",
+        "label": "halo",
         "create": false,
         "focus": false,
+        "focusable": false,
         "title": "FlowTranslate",
-        "url": "/?window=capsule",
-        "width": 200,
-        "height": 36,
+        "url": "/?window=halo",
+        "width": 64,
+        "height": 32,
         "visible": false,
         "decorations": false,
         "transparent": true,

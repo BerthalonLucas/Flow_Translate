@@ -217,13 +217,23 @@ test('error never enables copy of a partial or absent result', async ({ page }) 
   await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeDisabled();
 });
 
-test('capsule fits a 200px native viewport without horizontal overflow', async ({ page }) => {
-  await page.setViewportSize({ width: 200, height: 36 });
-  await page.goto('/?window=capsule&demo=1');
-  const bounds = await page.locator('.capsule').boundingBox();
-  expect(bounds?.width).toBe(200);
-  expect(bounds?.height).toBe(36);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(200);
+// The capsule window is retired (DA-PLAN §4.2, lot 6); its small native window is now the
+// halo, sized by Rust to the lines + 12 px: the page fits it, stays transparent and never
+// takes the pointer.
+test('halo fits its native viewport without overflow, transparent and never under the pointer', async ({ page }) => {
+  await page.setViewportSize({ width: 236, height: 48 });
+  await page.route('**/?window=halo&fixture=1', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: (await response.text()).replace('/src/main.tsx', '/e2e/native-fixture.ts') });
+  });
+  await page.goto('/?window=halo&fixture=1');
+  await expect(page.locator('html')).toHaveAttribute('data-halo-ready', 'true');
+  await page.evaluate(() => (window as unknown as { nativeFixture: { halo: (event: unknown) => Promise<void> } }).nativeFixture.halo({ generation: 1, phase: 'work', lines: [{ x: 12, y: 12, width: 212, height: 24 }], width: 236, height: 48 }));
+  const line = page.locator('.halo-line');
+  expect(await line.boundingBox()).toEqual({ x: 12, y: 12, width: 212, height: 24 });
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(page.locator('.halo')).toHaveCSS('pointer-events', 'none');
+  expect(await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.scrollHeight])).toEqual([236, 48]);
 });
 
 // « Suivre Windows » (the default) with Windows reducing animations: data-motion follows the

@@ -25,9 +25,9 @@ const defects = [
     image: 'overlay-reported.png',
     observed: 'Les commandes restent affichées ; le petit trait au repos et le déploiement au survol ne sont pas implémentés.',
     steps: ['Survoler la capsule actuelle.', 'Éloigner la souris.', 'Constater que les commandes restent affichées : il n’existe pas encore de transition repos/survol.'],
-    cause: 'Le composant Capsule ne possède aucun état de survol ou de repli. Il faut implémenter le comportement validé, pas ajuster un délai existant.',
-    boundary: 'L’absence de repli est observable ici. Le placement et le glisser-déposer Windows ne sont pas simulés dans ce cadre.',
-    scenario: 'capsule',
+    cause: 'Sans objet depuis l’Îlot : la fenêtre capsule est retirée (docs/DA-PLAN.md §4.2, lot 6). Défaut conservé pour mémoire.',
+    boundary: 'Plus de reproduction : la capsule n’existe plus dans l’application.',
+    scenario: null,
   },
   {
     id: 'drag', title: 'Déplacement et focus', code: 'UI-002b', scope: 'Windows uniquement',

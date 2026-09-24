@@ -53,9 +53,6 @@ const dictionary = {
   'common.settings': { en: 'Settings', fr: 'Réglages' },
   'mode.quality': { en: 'Quality', fr: 'Qualité' },
   'mode.fast': { en: 'Fast', fr: 'Rapide' },
-  // Capsule (removed with the Îlot, still routed today).
-  'capsule.show': { en: 'Show translation', fr: 'Afficher la traduction' },
-  'capsule.settings': { en: 'Open settings', fr: 'Ouvrir les réglages' },
   // Browser preview.
   'preview.label': { en: 'Browser preview · simulated response', fr: 'Aperçu navigateur · réponse simulée' },
   'preview.backgrounds': { en: 'Preview background', fr: 'Fond de l’aperçu' },

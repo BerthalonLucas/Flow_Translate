@@ -9,7 +9,11 @@ export type Replay = { requestId: string; translatedText: string; mode: Mode };
 // origin: how Rust obtained the text (uia selection, synthetic copy, fresh user copy, tray replay, demo); shown nowhere.
 export type CaptureOrigin = 'uia' | 'copy' | 'fresh' | 'replay' | 'demo';
 // menu: a `menu` shortcut under the Îlot (uiVersion 'ilot'): no execution until `choose_action`, the frontend opens the menu.
-export type Capture = { id: string; text: string; source: 'selection' | 'clipboard'; origin?: CaptureOrigin; canReplace: boolean; anchor: Rect | null; screen?: Screen; replay?: Replay; execution?: ExecutionInfo; menu?: MenuInfo };
+// The halo window (lot 6): the lines of the selection in logical pixels relative to the window (width × height); work draws them after 250 ms, leave fades them, clear removes them.
+export type HaloPhase = 'work' | 'leave' | 'clear';
+export type HaloEvent = { generation: number; phase: HaloPhase; lines: Rect[]; width: number; height: number };
+// selectionRects: the lines of a UI Automation selection, physical screen pixels like anchor (lot 5); Rust places from them, the frontend never does.
+export type Capture = { id: string; text: string; source: 'selection' | 'clipboard'; origin?: CaptureOrigin; canReplace: boolean; anchor: Rect | null; selectionRects?: Rect[]; screen?: Screen; replay?: Replay; execution?: ExecutionInfo; menu?: MenuInfo };
 // lastActionId: the last action chosen in the source application (null: none remembered). Never any text.
 export type MenuInfo = { lastActionId: string | null };
 // A menu key the native hook took from the source window (the overlay could not hold the foreground): KeyboardEvent.key naming.

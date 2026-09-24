@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Icon, Segmented, SettingSwitch } from './ui';
 import { bridge } from './bridge';
-import { GlassOverlay, dragSurface } from './GlassOverlay';
+import { GlassOverlay } from './GlassOverlay';
+import { HaloWindow } from './halo/HaloWindow';
 import { NativeMenuProbe } from './menu/NativeMenuProbe'; // PROVISIONAL (lots 3–4), replaced by the Îlot of lot 7
 import { useTranslation } from './useTranslation';
 import { shareSettings, useSettings } from './useSettings';
@@ -24,23 +25,6 @@ const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send th
 const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Alex,\n\nThank you for your feedback. The updated proposal includes the delivery timeline, responsibilities, and payment terms. Could you confirm these details before Thursday?\n\nWe have kept the total budget unchanged and clarified the review process. Please check the dates and amounts before we share the final version with the team.\n\nBest regards,\nMarie' };
 const clipboardCapture: Capture = { id: 'demo-clipboard', text: 'Je vous envoie la proposition mise à jour.', source: 'clipboard', canReplace: false, anchor: null };
 const uid = () => crypto.randomUUID?.() ?? `request-${Date.now()}`;
-
-export function Capsule() {
-  const fade = useContentPresence();
-  const t = useT();
-  const [label, setLabel] = useState('FlowTranslate');
-  const actionLabel = (settings: Settings) => settings.actions.find(action => action.id === settings.defaultActionId)?.name ?? 'FlowTranslate';
-  useEffect(() => {
-    let off: (() => void) | undefined;
-    void bridge.getSettings().then(settings => setLabel(actionLabel(settings))).catch(() => undefined);
-    void bridge.on<Settings>('settings-changed', settings => setLabel(actionLabel(settings))).then(listener => off = listener);
-    return () => off?.();
-  }, []);
-  return <motion.div {...fade} className="capsule" onPointerDown={event => dragSurface(event)}>
-    <button className="capsule-main" onClick={() => void bridge.focusOverlay()} aria-label={t('capsule.show')}><Icon name="clipboard" /><span>{label}</span></button>
-    <span className="capsule-rule" aria-hidden="true" /><button className="icon-button capsule-settings" onClick={() => void bridge.openSettings()} aria-label={t('capsule.settings')}><Icon name="more" /></button><button className="icon-button capsule-close" onClick={() => void bridge.dismiss()} aria-label={t('common.close')}><Icon name="close" /></button>
-  </motion.div>;
-}
 
 type SaveStatus = 'saved' | 'just-saved' | 'saving' | 'error';
 // Why a save failed: one of our messages, or Rust's refusal (shown translated when known).
@@ -324,7 +308,7 @@ export function App() {
   useDocumentPreferences(settings);
   useEffect(() => { document.body.className = `flowtranslate-window flowtranslate-${windowName}`; return () => { document.body.className = ''; }; }, [windowName]);
   const content = windowName === 'settings' ? <SettingsWindow />
-    : windowName === 'capsule' ? <Capsule />
+    : windowName === 'halo' ? <HaloWindow />
     : windowName === 'overlay' && (bridge.native || standaloneDemo) ? <OverlayWindow standaloneDemo={standaloneDemo} />
     : <DemoWindow />;
   return <MotionPreferences motion={settings?.motion ?? 'system'} preset={settings?.motionPreset ?? 'smooth'}>{content}</MotionPreferences>;

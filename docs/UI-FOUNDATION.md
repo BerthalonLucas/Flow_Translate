@@ -35,7 +35,7 @@ Run `npm run dev -- --port 5176 --strictPort` in an isolated worktree. This star
 - `/?window=overlay&demo=1&scenario=long`: long result and scrolling.
 - `/?window=overlay&demo=1&scenario=error`: failure with copy disabled and Close available.
 - `/?window=overlay&demo=1&scenario=confirmation`: explicit clipboard confirmation.
-- `/?window=capsule&demo=1`: capsule; use a 200×36 viewport. (Historique : fenêtre capsule retirée par docs/DA-PLAN.md §4.2.)
+- `/lab-frame.html?scenario=halo&theme=light`: the halo over three demo lines (`motion=reduce` for the fixed veil, `motion=full` for the sweep). The capsule window was removed with lot 6 (docs/DA-PLAN.md §4.2).
 - `/?window=settings&demo=1`: settings switches and advanced connection controls.
 - `/`: selectable scenarios that can be replayed without duplicate capture IDs.
 
