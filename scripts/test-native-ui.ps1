@@ -1,12 +1,17 @@
 param(
-    [string]$Executable = "$env:USERPROFILE\Apps\FlowTranslate\FlowTranslate.exe",
+    # The per-user install of the NSIS installer (0.5.0); pass -Executable for a build target.
+    [string]$Executable = "$env:LOCALAPPDATA\FlowTranslate\FlowTranslate.exe",
     [int]$Port = 9227,
     [string]$OutputDirectory = '',
     # A fresh data folder per run: the build-target executable would otherwise read and
     # rewrite the installed app's settings.json and history (%APPDATA%\com.flowtranslate.desktop).
     [string]$DataDirectory = '',
-    # Optional settings.json copied into that folder before launch (e.g. uiVersion « ilot »).
+    # settings.json copied into that folder before launch. By default the probe's own
+    # (scripts/native-ui-settings/<Theme>.json): the demo opens the reader the probe checks first,
+    # no global shortcut is registered, and the Îlot (uiVersion's default) runs its journey.
     [string]$SettingsFile = '',
+    [ValidateSet('light', 'dark')]
+    [string]$Theme = 'light',
     # Delay between simulated words (FLOWTRANSLATE_SIMULATE_WORD_MS): the Îlot's work pill and its
     # halo window must last long enough for the probe's region and halo checks.
     [int]$WordMs = 1000
@@ -28,7 +33,8 @@ $previousDataDir = $env:FLOWTRANSLATE_DATA_DIR
 $previousWordMs = $env:FLOWTRANSLATE_SIMULATE_WORD_MS
 if (-not $DataDirectory) { $DataDirectory = Join-Path $projectRoot "release\native-data\$([guid]::NewGuid())" }
 New-Item -ItemType Directory -Force -Path $DataDirectory | Out-Null
-if ($SettingsFile) { Copy-Item -LiteralPath $SettingsFile -Destination (Join-Path $DataDirectory 'settings.json') -Force }
+if (-not $SettingsFile) { $SettingsFile = Join-Path $PSScriptRoot "native-ui-settings\$Theme.json" }
+Copy-Item -LiteralPath $SettingsFile -Destination (Join-Path $DataDirectory 'settings.json') -Force
 $testProcess = $null
 try {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"

@@ -280,10 +280,14 @@ reste visible tant que les composants ne les implémentent pas.
 
 ### Accès réel à Tauri / WebView2
 
-`npm run ui:native` lance l’exécutable installé en démo explicite, ouvre un port
-CDP local et utilise Playwright dans sa vraie WebView2. Fermer l’application avant
-ce test ; le script refuse une session existante. Pour un autre build :
-`powershell -NoProfile -File scripts/test-native-ui.ps1 -Executable CHEMIN_EXE`.
+`npm run ui:native` lance l’exécutable installé (`%LOCALAPPDATA%\FlowTranslate`, installateur
+NSIS) en démo explicite, ouvre un port CDP local et utilise Playwright dans sa vraie WebView2.
+Fermer l’application avant ce test ; le script refuse une session existante. Pour un autre build :
+`powershell -NoProfile -File scripts/test-native-ui.ps1 -Executable CHEMIN_EXE`. Les réglages
+de la sonde sont versionnés dans `scripts/native-ui-settings/` (`-Theme dark` pour le sombre) :
+aucun raccourci global n'est enregistré, et l'Îlot fait son parcours après le lecteur de la démo.
+La sonde déplace le vrai curseur (sauf session verrouillée) : ne pas la lancer pendant que
+quelqu'un utilise le PC.
 Le script termine seulement son propre processus, même si le test échoue.
 La version de l’exécutable testé dépend du chemin fourni : ne jamais assimiler
 le test de l’installation 0.1.5 à celui d’un futur build de la branche.
