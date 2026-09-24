@@ -49,6 +49,8 @@ test('waiting shows a turning spinner in a pill of 60 × 28', async ({ page }) =
   const frame = page.frameLocator('iframe');
   await expect(frame.locator('[data-lab-phase]')).toHaveAttribute('data-lab-phase', 'streaming');
   const pill = frame.locator('.wait-pill');
+  // The pill enters on the spring (glide and scale are paint only): measured at rest.
+  await expect(pill).toHaveCSS('transform', 'none');
   expect(await pill.boundingBox()).toMatchObject({ width: 60, height: 28 });
   expect(await pill.locator('svg').count()).toBe(1);
   expect(await pill.locator('svg').evaluate(el => getComputedStyle(el).animationName)).toBe('wait-spin');

@@ -106,6 +106,8 @@ test('the spinner turns while the engine streams; a long result then lands whole
   await page.goto('/?window=overlay&demo=1&scenario=long');
   const pill = page.locator('.wait-pill');
   await expect(pill).toHaveAttribute('aria-label', 'Traduction en cours');
+  // The pill enters on the spring (glide and scale are paint only): measured at rest.
+  await expect(pill).toHaveCSS('transform', 'none');
   expect(await pill.boundingBox()).toMatchObject({ width: 60, height: 28 });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'pending');
   // A long source waits at the bottom from the start (UI-025): the band is born there.
@@ -129,6 +131,8 @@ test('the reader band is half the viewport wide, 22/33, whole lines within 45 % 
   await page.goto('/?window=overlay&demo=1&scenario=very-long');
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 15000 });
   const bubble = page.locator('.translation-bubble');
+  // The band enters on the spring (glide and scale are paint only): measured at rest.
+  await expect(bubble).toHaveCSS('transform', 'none');
   const box = (await bubble.boundingBox())!;
   expect(box.width).toBe(700);
   expect(Math.abs(box.x + box.width / 2 - 700)).toBeLessThanOrEqual(1);
@@ -220,14 +224,23 @@ test('capsule fits a 200px native viewport without horizontal overflow', async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(200);
 });
 
-test('reduced motion freezes the spinner and skips the reveal', async ({ page }) => {
+// « Suivre Windows » (the default) with Windows reducing animations: data-motion follows the
+// media, the spinner rests and the reveal keeps only a short fade, nothing moving.
+test('reduced motion freezes the spinner and keeps only a short fade for the reveal', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?window=overlay&demo=1&scenario=long');
+  await expect(page.locator('html')).toHaveAttribute('data-motion', 'reduced');
   await expect(page.locator('.wait-pill')).toHaveCount(1);
-  expect(['0s', '1e-05s', '0.00001s']).toContain(await page.locator('.wait-pill svg').evaluate(el => getComputedStyle(el).animationDuration));
+  expect(await page.locator('.wait-pill svg').evaluate(el => getComputedStyle(el).animationPlayState)).toBe('paused');
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 30000 });
-  const durations = await page.evaluate(() => ['.translation-bubble', '.translation-text .reveal'].map(selector => { const el = document.querySelector(selector); return el ? getComputedStyle(el).animationDuration : 'missing'; }));
-  for (const duration of durations) expect(['0s', '1e-05s', '0.00001s']).toContain(duration);
+  const reveals = await page.evaluate(() => ['.translation-bubble', '.translation-text .reveal'].map(selector => {
+    const el = document.querySelector(selector);
+    if (!el) return 'missing';
+    const style = getComputedStyle(el);
+    return { name: style.animationName, duration: parseFloat(style.animationDuration), delay: style.animationDelay, transform: style.transform };
+  }));
+  for (const reveal of reveals) expect(reveal).toMatchObject({ name: 'text-in', delay: '0s', transform: 'none' });
+  for (const reveal of reveals) expect((reveal as { duration: number }).duration).toBeLessThanOrEqual(0.15);
 });
 
 test('comparison shows source without replacing the translated result', async ({ page }) => {
@@ -380,12 +393,26 @@ test('demo can replay and change scenarios without stale capture deduplication',
   await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
 });
 
-test('reduced motion paints menu immediately without transforms or opacity transition', async ({ page }) => {
+test('reduced motion opens the menu without any transform, with a fade of 150 ms at most', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?window=overlay&demo=1');
+  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  // Sampled every frame from the click: never a transform, fully opaque within 150 ms.
+  const samples = await page.evaluate(() => new Promise<Array<{ t: number; opacity: number; transform: string }>>(resolve => {
+    const start = performance.now();
+    const out: Array<{ t: number; opacity: number; transform: string }> = [];
+    const tick = () => {
+      const menu = document.querySelector('.more-menu');
+      if (menu) { const style = getComputedStyle(menu); out.push({ t: performance.now() - start, opacity: Number(style.opacity), transform: style.transform }); }
+      if (performance.now() - start < 400) requestAnimationFrame(tick); else resolve(out);
+    };
+    tick();
+  }));
+  expect(samples.length).toBeGreaterThan(0);
+  for (const sample of samples) expect(sample.transform).toBe('none');
+  for (const sample of samples.filter(sample => sample.t > 200)) expect(sample.opacity).toBe(1);
   await expect(page.getByRole('menu')).toHaveCSS('opacity', '1');
-  await expect(page.getByRole('menu')).toHaveCSS('transform', 'none');
 });
 
 test('a short result opens beside the selection from the pill row and never becomes a reader', async ({ page }) => {

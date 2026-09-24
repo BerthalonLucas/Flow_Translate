@@ -1,17 +1,23 @@
 import { useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MotionConfig } from 'motion/react';
 import { Capsule, SettingsWindow } from '../App';
 import { GlassOverlay } from '../GlassOverlay';
 import { useTranslation } from '../useTranslation';
 import { bridge } from '../bridge';
 import { scenarioFrom } from './scenarios';
+import { MotionPreferences } from '../motion/MotionPreferences';
+import { applyMotion } from '../motion/preference';
+import { applyMotionPreset } from '../motion/tokens';
+import type { MotionPreference, MotionPreset } from '../types';
 import '../styles.css';
 import '../glass.css';
 
 const params = new URLSearchParams(location.search);
 const scenario = scenarioFrom(params.get('scenario')).id;
 const theme = params.get('theme') === 'light' ? 'light' : 'dark';
+// motion=reduce|full forces the setting « Animations »; without it the frame follows the system.
+const motion: MotionPreference = params.get('motion') === 'reduce' ? 'reduced' : params.get('motion') === 'full' ? 'full' : 'system';
+const preset: MotionPreset = params.get('preset') === 'bouncy' ? 'bouncy' : 'smooth';
 
 function OverlayFixture() {
   const controller = useTranslation();
@@ -44,6 +50,8 @@ async function mount() {
   // The defect reproduction must not hide the production document background.
   if (params.get('surface') !== 'production') document.documentElement.style.colorScheme = theme;
   document.documentElement.dataset.labScenario = scenario;
+  applyMotion(motion);
+  applyMotionPreset(preset);
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
   if (scenario === 'history') {
     await bridge.saveSettings({ ...await bridge.getSettings(), historyEnabled: true });
@@ -56,6 +64,6 @@ async function mount() {
     });
     observer.observe(document.getElementById('root')!, { childList: true, subtree: true });
   }
-  createRoot(document.getElementById('root')!).render(<MotionConfig reducedMotion={params.get('motion') === 'reduce' ? 'always' : 'never'}>{scenario === 'settings' || scenario === 'history' ? <SettingsWindow/> : scenario === 'capsule' ? <div className="standalone-demo" data-preview-background={theme}><Capsule/></div> : <OverlayFixture/>}</MotionConfig>);
+  createRoot(document.getElementById('root')!).render(<MotionPreferences motion={motion} preset={preset}>{scenario === 'settings' || scenario === 'history' ? <SettingsWindow/> : scenario === 'capsule' ? <div className="standalone-demo" data-preview-background={theme}><Capsule/></div> : <OverlayFixture/>}</MotionPreferences>);
 }
 void mount();

@@ -1,10 +1,12 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { bridge } from './bridge';
 import { anchoredFloor, anchoredReserve, bottomReserve, countWords, decideForm, decidePlacement, dimming, glass, halo, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics, type ShortMetrics } from './layout';
 import { breakable } from './text';
-import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton, motionTokens, useFade, useRise } from './ui';
+import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton } from './ui';
+import { useContentPresence, useMotionPreset, useReducedMotionSetting, useSurfacePresence } from './motion/MotionPreferences';
+import { curveTransition, emilOut, exitScale, reducedFade } from './motion/tokens';
 import type { Form, HitRegion, Presentation, Screen, TextSize } from './types';
 import type { TranslationController } from './useTranslation';
 
@@ -57,7 +59,8 @@ function WaitSpinner() {
 // The pill alone: the spinner while the model works; in « replace » mode it also shows
 // the check once the result was pasted, then the glass leaves (0.4.0).
 function WaitPill({ slow, done }: { slow: boolean; done: boolean }) {
-  return <span className="wait-pill" role="img" aria-label={done ? 'Sélection remplacée' : 'Traduction en cours'} data-slow={slow && !done} data-done={done || undefined}>{done ? <Icon name="check" size={16} /> : <WaitSpinner />}</span>;
+  const enter = useSurfacePresence('up');
+  return <motion.span {...enter} className="wait-pill" role="img" aria-label={done ? 'Sélection remplacée' : 'Traduction en cours'} data-slow={slow && !done} data-done={done || undefined}>{done ? <Icon name="check" size={16} /> : <WaitSpinner />}</motion.span>;
 }
 
 // Long runs (paths, URLs, identifiers) get a break opportunity after their separators,
@@ -139,17 +142,23 @@ export function GlassOverlay({ controller }: { controller: TranslationController
 // shows it alone at the bottom of the cursor's screen (420 × 64) and hides it four
 // seconds later; the browser preview lays it near the bottom of the page.
 function NoticePill({ message }: { message: string }) {
-  const fade = useFade('feedback');
-  return <div className="notice-root"><motion.p {...fade} className="notice-pill" role="status">{message}</motion.p></div>;
+  const enter = useSurfacePresence('up');
+  return <div className="notice-root"><motion.p {...enter} className="notice-pill" role="status">{message}</motion.p></div>;
 }
 
-// Entrance travel is paint only: regions use the resting layout.
-function travel(node: Element | null) {
-  if (!node) return { x: 0, y: 0 };
+// Entrance travel and scale are paint only: regions use the resting layout. A surface enters
+// with a glide and a scale about its centre (src/motion/presence.ts), so its resting box is
+// the painted box unscaled about the same centre, less the glide.
+function restingBox(node: Element) {
+  const box = node.getBoundingClientRect();
   const transform = getComputedStyle(node).transform;
-  if (!transform || transform === 'none') return { x: 0, y: 0 };
+  if (!transform || transform === 'none') return { x: box.x, y: box.y, width: box.width, height: box.height };
   const matrix = new DOMMatrix(transform);
-  return { x: matrix.e, y: matrix.f };
+  // Unscaling a painted float leaves a residue (60.00003): snap to Chromium's 1/64 px layout unit.
+  const unit = (value: number) => Math.round(value * 64) / 64;
+  const width = matrix.a ? unit(box.width / matrix.a) : box.width;
+  const height = matrix.d ? unit(box.height / matrix.d) : box.height;
+  return { x: box.x + (box.width - width) / 2 - matrix.e, y: box.y + (box.height - height) / 2 - matrix.f, width, height };
 }
 
 // The browser preview has no native screen: the viewport stands in for the work area.
@@ -199,9 +208,12 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   }, []);
   const root = useRef<HTMLDivElement>(null);
   const previousGeometry = useRef('');
-  const fade = useFade('feedback');
-  const pillRise = useRise(4, 'surface', 0.06);
-  const reduced = useReducedMotion();
+  const fade = useContentPresence();
+  const tokens = useMotionPreset();
+  // The action pill rises once the glass has held its first frames (glass-open, src/glass.css).
+  const pillRise = useSurfacePresence('up', 65);
+  const feedbackEnter = useSurfacePresence(placement === 'bottom' ? 'up' : 'down');
+  const reduced = useReducedMotionSetting();
   const active = useRef({ requestId: state.requestId, closing: closingCaptureId });
   useLayoutEffect(() => { active.current = { requestId: state.requestId, closing: closingCaptureId }; }, [state.requestId, closingCaptureId]);
   const streaming = state.phase === 'streaming';
@@ -356,10 +368,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
           if (!part) return [];
           const style = getComputedStyle(part);
           if (style.visibility === 'hidden') return [];
-          // Entrance travel (pill, menu, band) is paint only.
-          const own = travel(part);
-          const box = part.getBoundingClientRect();
-          const rect = { x: box.x - own.x, y: box.y - own.y, width: box.width, height: box.height, bottom: box.bottom - own.y };
+          // Entrance travel and scale (pill, menu, band) are paint only.
+          const box = restingBox(part);
+          const rect = { ...box, bottom: box.y + box.height };
           return [{ part, rect, radius: parseFloat(style.borderTopLeftRadius) }];
         });
         // The root padding is the halo that holds the shadows (none in the browser preview).
@@ -431,17 +442,23 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   };
   const metrics = isReader ? reader : short;
   const rootStyle = { '--copy-size': `${metrics.fontSize}px`, '--copy-line': `${metrics.lineHeight}px`, width: isReader ? reader.width : glass.shortWidth } as CSSProperties;
+  // The glass is born visible (its surfaces bring their own entrance), dims when the reading
+  // budget ends and leaves on the exit curve, half-way to its entrance scale; reduced motion
+  // keeps a short fade and no scale.
   const opacity = closingCaptureId ? 0 : exit === 'dimming' ? dimming.opacity : 1;
-  const duration = reduced ? 0 : closingCaptureId ? (exit === 'dimming' ? dimming.exitMs : 120) / 1000 : exit === 'dimming' ? dimming.fadeMs / 1000 : motionTokens.enter;
+  const scale = closingCaptureId && exit !== 'dimming' && !reduced ? exitScale(tokens) : 1;
+  const transition = reduced ? reducedFade
+    : closingCaptureId ? (exit === 'dimming' ? curveTransition({ ms: dimming.exitMs, ease: emilOut }) : curveTransition(tokens.exit))
+    : exit === 'dimming' ? curveTransition({ ms: dimming.fadeMs, ease: emilOut }) : curveTransition(tokens.content);
   return <motion.div key={captureId} ref={root} className={`glass-overlay is-${form} is-${placement}`} style={rootStyle}
     data-capture-id={captureId} data-origin={state.capture?.origin} data-form={form} data-placement={placement} data-closing={Boolean(closingCaptureId)} data-moving={moving} data-dimming={exit === 'dimming'} data-pinned={pinned} data-dragging={dragging}
     onClickCapture={refresh} onWheelCapture={refresh} onKeyDownCapture={refresh}
     onFocus={event => { if (event.target.matches(':focus-visible')) setFocusWithin(true); }}
     onBlur={event => { if (!(event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget))) setFocusWithin(false); }}
-    initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity }}
-    transition={{ duration, ease: motionTokens.ease }}
+    initial={{ opacity: 1, scale: 1 }} animate={{ opacity, scale }}
+    transition={transition}
     onAnimationComplete={() => { if (closingCaptureId) completeDismiss(closingCaptureId); }}>
-    <BubbleMenu open={menuVisible} onOpenChange={setMenuOpen} actions={[
+    <BubbleMenu open={menuVisible} onOpenChange={setMenuOpen} grow={placement === 'bottom' ? 'up' : 'down'} actions={[
       { label: state.comparing ? 'Masquer l’original' : 'Afficher l’original', disabled: !ready, run: act(() => dispatch({ type: 'TOGGLE_COMPARE' })) },
       ...(state.replacementValid ? [{ label: 'Remplacer', disabled: !ready, run: () => void invokeResult('replace') }] : []),
       ...(state.phase === 'error' ? [{ label: 'Réessayer', run: act(() => { if (state.capture) start(state.capture); }) }] : []),
@@ -474,7 +491,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
         </>}
       </div>
     </BubbleMenu>
-    <AnimatePresence>{feedback && !menuVisible && form !== 'pending' && <motion.p key={feedback} {...fade} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
+    <AnimatePresence>{feedback && !menuVisible && form !== 'pending' && <motion.p key={feedback} {...feedbackEnter} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
     <span className="sr-only" role="status">{streaming ? 'Traduction en cours' : state.delivery === 'applied' ? 'Sélection remplacée' : state.phase === 'complete' && !replacing ? 'Traduction terminée' : copied ? 'Traduction copiée' : ''}</span>
   </motion.div>;
 }
