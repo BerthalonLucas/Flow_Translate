@@ -195,13 +195,17 @@ pub fn escape_scope(source:isize,overlay:isize){
     SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
 }
 pub fn close_escape_scope(){OVERLAY_VISIBLE.store(false,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+/// Whether a scope (Escape, or the menu's) is open.
+pub fn escape_open()->bool{OVERLAY_VISIBLE.load(Ordering::Acquire)}
 pub fn take_escape()->bool{ESCAPE_PENDING.swap(false,Ordering::AcqRel)}
 pub fn handle(window:&WebviewWindow)->isize{window.hwnd().map(|h|h.0 as isize).unwrap_or(0)}
 
-/// Opens (source and overlay known at once, before the overlay is even placed, so a key
-/// typed right after the shortcut never lands in the source) or closes the menu's scope.
-/// While it is open the hook never swallows Escape for itself: the WebView owns it when
-/// the overlay has the foreground, the frontend receives it as a `menu-key` otherwise.
+/// Opens or closes the menu's scope. A menu binding opens it at its press, before the capture
+/// is even taken (review of da-ilot, n°4 and n°7): a key typed right after the shortcut never
+/// lands in the source, Rust holds it until the capture has its id. The stored capture opens
+/// it again for its own source. While it is open the hook never swallows Escape for itself:
+/// the WebView owns it when the overlay has the foreground, the frontend receives it as a
+/// `menu-key` otherwise.
 pub fn set_menu_open(open:bool,source:isize,overlay:isize){
     if open{SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
     MENU_FOCUSED.store(false,Ordering::Release);

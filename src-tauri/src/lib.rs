@@ -111,6 +111,9 @@ struct Inner {
     applied: Option<Applied>,
     /// How far `move_overlay` moved the anchored window (physical pixels), kept by `position`.
     shift: (f64, f64),
+    /// Some while a menu capture is being taken (review n°4 and n°7): the menu keys the hook
+    /// took from the source since the press, until the capture has its id.
+    held_keys: Option<Vec<host::MenuKey>>,
 }
 /// A replacement under the Îlot (lot 9): where the result went, what it replaced, the pasted
 /// text as UI Automation found it. Only Rust's memory holds these texts: nothing emits or
@@ -175,6 +178,7 @@ impl Inner {
             last_result: None,
             applied: None,
             shift: (0., 0.),
+            held_keys: None,
         }
     }
     /// Sets the result aside for the tray before the glass state forgets it.
@@ -242,6 +246,33 @@ impl Inner {
         };
         press.capture_id = Some(capture_id.to_string());
         press.repeat.then(|| capture_id.to_string())
+    }
+    /// A menu key the hook took from the source: for the menu that waits, or held while a menu
+    /// capture is still being taken (review n°4 and n°7: its id is not known yet).
+    fn route_menu_key(&mut self, key: host::MenuKey) -> Option<(String, host::MenuKey)> {
+        if let Some(held) = self.held_keys.as_mut() {
+            held.push(key);
+            return None;
+        }
+        let capture_id = self.menu.as_ref().filter(|menu| self.visible && !menu.chosen && !menu.invalidated).map(|menu| menu.capture_id.clone())?;
+        Some((capture_id, key))
+    }
+    /// The keys held for the stored capture `capture_id`, a batch at a time: the caller emits
+    /// each batch and asks again, so a key held meanwhile keeps its order; an empty batch ends
+    /// the hold. Without a capture (None, or its menu no longer waits) they are dropped, never
+    /// replayed in the source.
+    fn release_held_keys(&mut self, capture_id: Option<&str>) -> Vec<(String, host::MenuKey)> {
+        let keys = self.held_keys.as_mut().map(std::mem::take).unwrap_or_default();
+        let waits = capture_id.filter(|id| {
+            self.visible && self.pending_dismiss.is_none() && self.menu.as_ref().is_some_and(|menu| menu.capture_id == *id && !menu.chosen && !menu.invalidated)
+        });
+        match waits {
+            Some(id) if !keys.is_empty() => keys.into_iter().map(|key| (id.to_string(), key)).collect(),
+            _ => {
+                self.held_keys = None;
+                Vec::new()
+            }
+        }
     }
     fn complete_pending_dismiss(&mut self, capture_id: &str, generation: u64) -> bool {
         if self.pending_dismiss.as_ref().is_none_or(|pending| pending.0 != capture_id || pending.1 != generation) {
@@ -633,7 +664,26 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
         }
         Err(Repeat::Swallow) => return Ok(None),
     };
-    let result = capture_opening(&app, state, opening);
+    // Review n°4 and n°7: the menu's scope opens at the press, before the capture (a synthetic
+    // copy first waits for the chord's release): a key typed right after the shortcut is held
+    // here until the capture has its id, never typed in the source. Never over our windows.
+    let source = host::foreground();
+    let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
+    let before = (matches!(opening, Opening::Menu(_)) && !ours(&app, source)).then(|| (host::escape_open(), host::menu_focused()));
+    if before.is_some() {
+        if let Ok(mut i) = state.inner.lock() { i.held_keys = Some(Vec::new()); }
+        host::set_menu_open(true, source, overlay);
+    }
+    let result = capture_opening(&app, state, opening, source);
+    if let Some((escape_before, focused_before)) = before {
+        match result.as_ref().ok().and_then(|capture| capture.as_ref()) {
+            Some(capture) => release_held_keys(&app, state, Some(&capture.id)),
+            None => {
+                release_held_keys(&app, state, None);
+                restore_scope(state, overlay, escape_before, focused_before);
+            }
+        }
+    }
     if let Some(at) = pressed_at {
         let stored = result.as_ref().ok().and_then(|capture| capture.as_ref()).map(|capture| capture.id.clone());
         let repeat = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?.settle_press(at, stored.as_deref());
@@ -643,10 +693,60 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
     }
     result
 }
+/// Emits the keys held during a menu capture as `menu-key` for it, in order, or drops them.
+fn release_held_keys(app: &AppHandle, state: &AppState, capture_id: Option<&str>) {
+    loop {
+        let Ok(keys) = state.inner.lock().map(|mut i| i.release_held_keys(capture_id)) else { return };
+        if keys.is_empty() { return; }
+        for (capture_id, key) in keys {
+            let _ = app.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
+        }
+    }
+}
+/// What the scope becomes when a menu press opened it and got no capture: the scope of what
+/// is still shown, never a menu scope left open over nothing (the hook would keep the keys).
+#[derive(Debug, PartialEq, Eq)]
+enum ScopeAfter {
+    Closed,
+    Menu,
+    Escape,
+}
+fn scope_after(shown: bool, menu_waits: bool, escape_before: bool) -> ScopeAfter {
+    match (shown, menu_waits, escape_before) {
+        (false, _, _) => ScopeAfter::Closed,
+        (true, true, _) => ScopeAfter::Menu,
+        (true, false, true) => ScopeAfter::Escape,
+        (true, false, false) => ScopeAfter::Closed,
+    }
+}
+fn restore_scope(state: &AppState, overlay: isize, escape_before: bool, focused_before: bool) {
+    let (shown, waits, source) = state.inner.lock().map(|i| {
+        let waits = i.menu.as_ref().is_some_and(|menu| !menu.chosen && !menu.invalidated && i.capture.as_ref().is_some_and(|capture| capture.public.id == menu.capture_id));
+        (i.visible && i.pending_dismiss.is_none(), waits, i.source_window)
+    }).unwrap_or((false, false, 0));
+    match scope_after(shown, waits, escape_before) {
+        ScopeAfter::Menu => {
+            host::set_menu_open(true, source, overlay);
+            if focused_before { host::set_menu_focused(); }
+        }
+        ScopeAfter::Escape => {
+            host::set_menu_open(false, 0, 0);
+            host::escape_scope(source, overlay);
+        }
+        ScopeAfter::Closed => {
+            host::set_menu_open(false, 0, 0);
+            host::close_escape_scope();
+        }
+    }
+}
+/// A menu capture is being taken: the scope it opened at its press is its own until it is
+/// stored or restored (a dismissal of the previous glass meanwhile must not close it).
+fn menu_opening(state: &AppState) -> bool {
+    state.inner.lock().is_ok_and(|i| i.held_keys.is_some())
+}
 /// Takes the capture of a press (or of `capture_text`) and stores it with what it opens.
-fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Result<Option<Capture>, AppError> {
+fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening, source: isize) -> Result<Option<Capture>, AppError> {
     let app = app.clone();
-    let source = host::foreground();
     // The demo capture reads no window; any other never takes one of ours as its source.
     if !state.demo && ours(&app, source) { return Ok(None); }
     let mut captured = capture::capture_current(state.demo, source)?;
@@ -1203,10 +1303,12 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
 }
 
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    host::close_escape_scope();
+    if !menu_opening(state) {
+        host::close_escape_scope();
+        host::set_menu_open(false, 0, 0);
+    }
     halo::hide(app);
     host::disarm_undo_watch();
-    host::set_menu_open(false, 0, 0);
     // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
     // back before the window hides, its selection untouched and nothing pasted. Hiding
     // the active window alone would let Windows pick the next one in the z-order.
@@ -1394,7 +1496,7 @@ fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String,
         let info = i.choose(&capture_id, &action_id, instruction.as_deref())?;
         (info, i.source_window, i.menu.as_ref().and_then(|menu| menu.process.clone()))
     };
-    host::set_menu_open(false, 0, 0);
+    if !menu_opening(&state) { host::set_menu_open(false, 0, 0); }
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, true);
     return_foreground(overlay, source);
@@ -2044,10 +2146,11 @@ pub fn run() {
             let keys = app.handle().clone();
             let typed = app.handle().clone();
             host::install_keyboard_hook(move |key| {
-                // The keyboard fallback of the Îlot: only while its capture still waits.
+                // The keyboard fallback of the Îlot: only while its capture still waits, or held
+                // while a menu capture is being taken (review n°4 and n°7).
                 let state = keys.state::<AppState>();
-                let capture_id = state.inner.lock().ok().and_then(|i| i.menu.as_ref().filter(|menu| i.visible && !menu.chosen).map(|menu| menu.capture_id.clone()));
-                if let Some(capture_id) = capture_id {
+                let routed = state.inner.lock().ok().and_then(|mut i| i.route_menu_key(key));
+                if let Some((capture_id, key)) = routed {
                     let _ = keys.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
                 }
             }, move |key| {
@@ -2192,6 +2295,37 @@ mod tests {
         i.pending_dismiss = None;
         i.menu = None;
         assert!(i.choose("closing", "correct", None).is_err());
+    }
+    #[test]
+    fn a_key_typed_during_a_menu_capture_waits_for_its_id_and_is_dropped_without_one() {
+        let key = |name: &str| host::MenuKey { key: name.into(), shift: false };
+        let mut i = Inner::new(Settings::default());
+        // The press opened the scope; the capture is still being taken.
+        i.held_keys = Some(Vec::new());
+        assert_eq!(i.route_menu_key(key("f")), None, "held, never typed in the source");
+        menu_capture(&mut i, "menu");
+        assert_eq!(i.route_menu_key(key("Enter")), None, "still held until the release");
+        assert_eq!(i.release_held_keys(Some("menu")), vec![("menu".into(), key("f")), ("menu".into(), key("Enter"))]);
+        assert_eq!(i.route_menu_key(key("Tab")), None, "held meanwhile, after the first batch");
+        assert_eq!(i.release_held_keys(Some("menu")), vec![("menu".into(), key("Tab"))]);
+        assert!(i.release_held_keys(Some("menu")).is_empty());
+        assert!(i.held_keys.is_none());
+        assert_eq!(i.route_menu_key(key("1")), Some(("menu".into(), key("1"))), "then straight to the menu");
+        // No capture (nothing selected, an error): dropped, never replayed.
+        i.held_keys = Some(vec![key("f")]);
+        assert!(i.release_held_keys(None).is_empty());
+        assert!(i.held_keys.is_none());
+        // A capture whose menu no longer waits gets nothing either.
+        i.held_keys = Some(vec![key("f")]);
+        i.menu.as_mut().unwrap().chosen = true;
+        assert!(i.release_held_keys(Some("menu")).is_empty());
+        assert_eq!(i.route_menu_key(key("f")), None);
+        // The scope after a press without capture: never a menu scope over nothing.
+        assert_eq!(scope_after(false, false, true), ScopeAfter::Closed);
+        assert_eq!(scope_after(false, true, true), ScopeAfter::Closed);
+        assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
+        assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
+        assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
     }
     #[test]
     fn a_menu_left_or_invalidated_closes_and_never_runs_a_choice() {
