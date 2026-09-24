@@ -1,7 +1,9 @@
+// Each entry opens in the Îlot journey, the app's default, unless it asks for the 0.4 one (`ui`).
 export const scenarios = [
   { id: 'short', label: 'Traduction courte', issue: 'UI-003', expected: 'Verre court de 380 px (huit lignes au plus) ouvert depuis la pilule d’attente ; Copier · ⋯ · Fermer ; texte #e8eaef 16/24 sur un seul graphite, sans reflet.' },
   { id: 'long', label: 'Traduction longue (lecteur)', issue: 'UI-021', expected: 'Bande centrée en bas, moitié de la largeur de la zone (450 px ici), 22/33, hauteur au plus 45 % de l’écran puis défilement ; Copier · Épingler · ⋯ · Fermer ; aucun « Agrandir ».' },
-  { id: 'pending', label: 'Attente du moteur', issue: 'UI-023', expected: 'Pilule seule de 60 × 28 avec le spinner de shadcn (LoaderCircle 18 px, un tour par seconde), trait de progression après 1,5 s ; annulation possible ; le texte arrive d’un bloc.' },
+  // The 0.4 journey, asked for (`ui`): the Îlot's wait is the working pill of the entries below.
+  { id: 'pending', label: 'Attente du moteur (0.4)', issue: 'UI-023', ui: 'v4', expected: '0.4 (réglage caché uiVersion « v4 ») : pilule seule de 60 × 28 avec le spinner de shadcn (LoaderCircle 18 px, un tour par seconde), trait de progression après 1,5 s ; annulation possible ; le texte arrive d’un bloc. Dans l’Îlot, l’attente est la pilule de travail (entrées « Pilule de travail »).' },
   { id: 'partial', label: 'Réponse interrompue', issue: 'UI-003', expected: 'Texte partiel identifié ; copie et remplacement désactivés.' },
   { id: 'error', label: 'Erreur réseau', issue: 'UI-003', expected: 'Erreur courte, possibilité de réessayer et de fermer.' },
   { id: 'notice', label: 'Rien à traduire', issue: 'UI-020', expected: 'Pilule seule à 13 px, « Rien à traduire dans la fenêtre active », aucune boîte de dialogue ; disparaît d’elle-même après quatre secondes (rejouée ici toutes les trois secondes).' },
@@ -16,8 +18,9 @@ export const scenarios = [
 export type Scenario = typeof scenarios[number]['id'];
 export function scenarioFrom(value: string | null) { return scenarios.find(item => item.id === value) ?? scenarios[0]; }
 
-// The Îlot (lot 7), apart from the list above: visual-tests/ keeps one reference image per entry
-// of `scenarios`. Theme, preset (smooth / bouncy) and motion are parameters of the frame.
+// The Îlot (lot 7), apart from the list above: visual-tests/ keeps a reference image of each entry
+// of `scenarios`, in the 0.4 journey or the Îlot's. Theme, preset (smooth / bouncy) and motion are
+// parameters of the frame.
 export const ilotScenarios = [
   { id: 'ilot-compact', label: 'Îlot au repos', issue: 'Lot 7', expected: 'Compact, 32 px de haut : dernière action (Entrée la relance) · pastille ✦. Tab, ↓ ou un survol de 450 ms déplient la grille ; F T P S E lancent ; 1-6 choisissent une tuile ; Espace ou / ouvrent la consigne ; une lettre libre ouvre la consigne déjà tapée ; Échap ferme. Un choix transforme l’Îlot en pilule (contenu factice), puis il revient.' },
   { id: 'ilot-grid', label: 'Îlot en grille', issue: 'Lot 7', expected: 'Grille 3 × 2 de tuiles 66 × 50 (218 × 116, rayon 16), surbrillance sur la dernière action ; flèches, Tab, Entrée, lettres, chiffres ; Échap revient au compact, puis ferme.' },
