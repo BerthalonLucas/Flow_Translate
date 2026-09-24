@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
+import { t } from './i18n';
 import type { Capture, CaptureNotice, CaptureTarget, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
@@ -8,6 +9,8 @@ const NOTICE_MS = 4000;
 // A « replace » capture whose paste never reports back opens its glass after this.
 const DELIVERY_MS = 3000;
 export type Notice = { id: number; message: string };
+// Why the overlay cannot work at all; the window shows it in its own language.
+export type InitError = 'connection' | 'close';
 
 export function useTranslation(readyOnMount = false) {
   const [state, dispatch] = useReducer(translationReducer, initialTranslationState);
@@ -27,7 +30,7 @@ export function useTranslation(readyOnMount = false) {
   // result lands at once (one native resize instead of one per line). An error or an
   // interruption still surfaces the partial text through flush().
   const pending = useRef({ requestId: '', text: '' });
-  const [initError, setInitError] = useState<string | null>(null);
+  const [initError, setInitError] = useState<InitError | null>(null);
 
   const discardPending = useCallback(() => { pending.current = { requestId: '', text: '' }; }, []);
   const flush = useCallback(() => {
@@ -53,7 +56,7 @@ export function useTranslation(readyOnMount = false) {
     requestRef.current = id;
     dispatch({ type: 'START', requestId: id, mode });
     void bridge.translate({ id, captureId: capture.id, text: capture.text, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate-fr' }).catch((error: unknown) => {
-      if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : 'L’action n’a pas pu démarrer.' } });
+      if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : t('error.startFailed') } });
     });
   }, [discardPending]);
 
@@ -125,10 +128,10 @@ export function useTranslation(readyOnMount = false) {
             if (!await settingsReadyRef.current) throw new Error('settings unavailable');
             const capture = await bridge.frontendReady();
             if (capture && !disposed) receiveCapture(capture);
-          } catch { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); }
+          } catch { if (!disposed) setInitError('connection'); }
         }
       }
-    }).catch(() => { if (!disposed) setInitError('La connexion à FlowTranslate est indisponible.'); });
+    }).catch(() => { if (!disposed) setInitError('connection'); });
     return () => { disposed = true; off.forEach(unlisten => unlisten()); };
   }, [discardPending, flush, readyOnMount, receiveCapture, showNotice]);
 
@@ -137,14 +140,14 @@ export function useTranslation(readyOnMount = false) {
     if (state.phase !== 'complete' || state.delivery !== 'pending' || !state.requestId) return;
     const requestId = state.requestId;
     const timer = window.setTimeout(() => {
-      const message = 'Le remplacement n’a pas répondu; le résultat reste dans la bulle.';
+      const message = t('error.deliveryTimeout');
       dispatch({ type: 'DELIVERY', event: { requestId, status: 'fallback', confirmed: false, message } });
       showNotice(message);
     }, DELIVERY_MS);
     return () => window.clearTimeout(timer);
   }, [state.phase, state.delivery, state.requestId, showNotice]);
 
-  const cancelAndDismiss = useCallback(() => { void bridge.dismiss().catch(() => setInitError('La fermeture a échoué. Réessayez.')); }, []);
+  const cancelAndDismiss = useCallback(() => { void bridge.dismiss().catch(() => setInitError('close')); }, []);
   const completeDismiss = useCallback((captureId: string) => {
     if (closingRef.current !== captureId || captureRef.current?.id !== captureId) return;
     closingRef.current = null;

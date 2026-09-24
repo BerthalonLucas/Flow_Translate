@@ -13,5 +13,6 @@ export default defineConfig({
   // make Vite re-optimise mid-run, which fails on Windows (EPERM renaming .vite/deps).
   optimizeDeps: { entries: ['index.html', 'lab.html', 'lab-frame.html', 'e2e/native-fixture.ts'] },
   server: { watch: { ignored: foreign } },
-  test: { environment: 'jsdom', globals: true, exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**', 'visual-tests/**', ...foreign] }
+  // css.include: src/theme.test.ts reads the theme tokens as text (vitest empties CSS otherwise).
+  test: { environment: 'jsdom', globals: true, css: { include: [/theme\.css/] }, exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**', 'visual-tests/**', ...foreign] }
 });

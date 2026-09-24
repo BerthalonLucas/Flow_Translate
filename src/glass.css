@@ -8,7 +8,9 @@
    2026-09-14 (calibrated reading): two forms decided once on the real result, the short
    glass (380 px, ≤ 8 lines) beside the selection or the reader band (half the screen,
    22 px) centred at the bottom; a waiting pill with three dots before; no fold, no tab,
-   no « Agrandir »; the text is #e8eaef on one graphite, without sheen. */
+   no « Agrandir »; the text is #e8eaef on one graphite, without sheen.
+   2026-09-24 (Îlot, lot 1): the graphite gives way to the lab's painted material, light or
+   dark with Windows (src/theme.css); sizes, radii and regions are unchanged. */
 .native-overlay { background: transparent; }
 .glass-overlay { position: relative; display: flex; flex-direction: column; align-items: stretch; width: 380px; flex: none; color: var(--text); pointer-events: none; --copy-size: 16px; --copy-line: 24px; }
 .glass-overlay > * { pointer-events: auto; }
@@ -24,13 +26,13 @@
 /* While the native window moves to the bottom for a reader, nothing shows (paint only, still measured). */
 .glass-overlay[data-moving="true"] .glass-body { opacity: 0; }
 .glass-overlay[data-closing="true"], .glass-overlay[data-closing="true"] * { pointer-events: none; }
-.translation-bubble { position: relative; display: flex; flex-direction: column; width: 100%; min-height: calc(var(--copy-line) + 29px); max-height: 221px; padding: 0; border: 1px solid var(--glass-border); border-radius: 28px; background: var(--glass-bg); box-shadow: var(--glass-shadow); cursor: default; }
+.translation-bubble { position: relative; display: flex; flex-direction: column; width: 100%; min-height: calc(var(--copy-line) + 29px); max-height: 221px; padding: 1px; border: 0; border-radius: 28px; cursor: default; }
 .glass-overlay[data-dragging="true"] .translation-bubble { cursor: grabbing; }
 .is-reader .translation-bubble { min-height: calc(var(--copy-line) + 34px); }
 /* Browser preview blurs its own backdrop; the packaged window paints only the DOM. */
 .standalone-demo .translation-bubble, .demo-desktop .translation-bubble { backdrop-filter: blur(32px) saturate(140%); -webkit-backdrop-filter: blur(32px) saturate(140%); }
 .reading-area { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 27px; }
-.translation-copy { flex: 1 1 auto; min-height: 0; height: 100%; padding: 16px 22px 13px; color: #e8eaef; font-size: var(--copy-size); line-height: var(--copy-line); letter-spacing: 0; font-weight: 400; cursor: text; outline: none; overscroll-behavior: contain; text-wrap: pretty; }
+.translation-copy { flex: 1 1 auto; min-height: 0; height: 100%; padding: 16px 22px 13px; color: var(--text); font-size: var(--copy-size); line-height: var(--copy-line); letter-spacing: 0; font-weight: 400; cursor: text; outline: none; overscroll-behavior: contain; text-wrap: pretty; }
 .is-reader .translation-copy { padding: 18px 28px 16px; }
 .translation-copy[data-scroll-edge="top"] { mask-image: linear-gradient(#000 calc(100% - 34px), transparent); -webkit-mask-image: linear-gradient(#000 calc(100% - 34px), transparent); }
 .translation-copy[data-scroll-edge="middle"] { mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); -webkit-mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 22px), transparent); }
@@ -40,14 +42,14 @@
 /* Words break at spaces or at the <wbr> the frontend places after a long run's separators; a letter-level cut is the last resort. */
 .translation-text { white-space: pre-wrap; overflow-wrap: break-word; }
 .translation-text.is-placeholder { display: block; }
-/* Waiting: shadcn's spinner (lucide LoaderCircle, one turn per second, linear), white on the pill. */
-.wait-spinner { display: inline-flex; align-items: center; justify-content: center; height: 28px; color: #fff; }
+/* Waiting: shadcn's spinner (lucide LoaderCircle, one turn per second, linear), in ink on the pill. */
+.wait-spinner { display: inline-flex; align-items: center; justify-content: center; height: 28px; color: var(--text); }
 .wait-spinner svg { display: block; animation: wait-spin 1s linear infinite; will-change: transform; }
 @keyframes wait-spin { to { transform: rotate(360deg); } }
 /* The waiting pill alone: 60 × 28 where the action pill will stand (anchored), or centred (bottom); a progress sweep after 1.5 s. */
-.wait-pill { position: absolute; top: 0; right: 16px; display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 28px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); overflow: hidden; }
+.wait-pill { position: absolute; top: 0; right: 16px; display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 28px; border-radius: 14px; overflow: hidden; }
 .is-pending .glass-body { min-height: 42px; }
-.wait-pill[data-done] { color: #fff; }
+.wait-pill[data-done] { color: var(--text); }
 .is-bottom .wait-pill { right: auto; left: calc(50% - 30px); }
 .wait-pill[data-slow="true"]::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, transparent, var(--accent-cursor), transparent); animation: wait-sweep 1400ms linear infinite; }
 @keyframes wait-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
@@ -63,49 +65,47 @@
 /* The reader band rises 8 px and fades in (220 ms) once the native window rests at the bottom. */
 .is-reader .translation-bubble[data-reveal="true"] { animation: band-in 220ms cubic-bezier(.2,0,0,1) both; }
 @keyframes band-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.scroll-indicator { width: 3px !important; border-radius: 2px; background: rgba(255,255,255,.07); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
+.scroll-indicator { width: 3px !important; border-radius: 2px; background: rgb(var(--ink-rgb) / .07); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
 .reading-area[data-indicator="true"] .scroll-indicator { opacity: 1; }
-.scroll-thumb { border-radius: 2px; background: rgba(255,255,255,.28); transition: background-color 140ms ease; }
-.scroll-indicator:hover .scroll-thumb { background: rgba(255,255,255,.34); }
+.scroll-thumb { border-radius: 2px; background: rgb(var(--ink-rgb) / .28); transition: background-color 140ms ease; }
+.scroll-indicator:hover .scroll-thumb { background: rgb(var(--ink-rgb) / .34); }
 /* Opaque pill: Copier · (Épingler, reader) · ⋯ · Fermer. */
-.action-pill { position: absolute; top: 0; right: 16px; z-index: 2; display: flex; align-items: center; gap: 0; height: 28px; padding: 0 2px; border-radius: 14px; background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--glass-border), 0 4px 12px rgba(0,0,0,.3); }
+.action-pill { position: absolute; top: 0; right: 16px; z-index: 2; display: flex; align-items: center; gap: 0; height: 28px; padding: 0 2px; border-radius: 14px; }
 .icon-button { appearance: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 12px; color: var(--text-muted); background: transparent; transition: background-color 140ms ease, color 140ms ease; }
-.icon-button:hover:not(:disabled) { color: #fff; background: var(--hover); }
-.icon-button:active:not(:disabled), .icon-button[data-pressed], .icon-button[data-copied] { color: #fff; background: var(--pressed); }
+.icon-button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.icon-button:active:not(:disabled), .icon-button[data-pressed], .icon-button[data-copied] { color: var(--text); background: var(--pressed); }
 .icon-button:disabled { cursor: default; color: var(--text-disabled); }
 .icon-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.icon-button svg { width: 15px; height: 15px; }
 .action-glyph { display: grid; place-items: center; width: 15px; height: 15px; }
 .action-glyph > span { grid-area: 1 / 1; display: grid; place-items: center; }
 /* Popper geometry is replaced by an absolute anchor under the pill, no portal; the halo offsets it. Bottom, it opens above the pill. */
 .glass-overlay [data-radix-popper-content-wrapper] { position: absolute !important; top: calc(34px + var(--halo-top)) !important; right: calc(16px + var(--halo-x)) !important; left: auto !important; transform: none !important; min-width: 0 !important; width: 196px !important; z-index: 3; }
 .glass-overlay.is-bottom [data-radix-popper-content-wrapper] { top: auto !important; bottom: calc(100% + 6px - var(--halo-top)) !important; }
-/* The menu is the same graphite as the glass: no native blur exists behind a per-pixel window. Its tallest form fits the reserve (src/layout.ts). */
-.more-menu { width: 196px; padding: 4px; border: 1px solid var(--glass-border); border-radius: 16px; color: #f2f3f6; background: var(--menu-bg); box-shadow: 0 12px 32px rgba(0,0,0,.4); outline: none; }
+/* The menu is the same material as the glass: no native blur exists behind a per-pixel window. Its tallest form fits the reserve (src/layout.ts). */
+.more-menu { width: 196px; padding: 5px; border: 0; border-radius: 16px; color: var(--text); outline: none; }
 .menu-slot { display: contents; }
 .menu-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.3; outline: none; cursor: pointer; user-select: none; transition: background-color 120ms ease; }
-.menu-item[data-highlighted] { background: rgba(255,255,255,.08); }
+.menu-item[data-highlighted] { background: var(--hover); }
 .menu-item:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .menu-item[data-disabled] { opacity: .38; cursor: default; }
-.menu-separator { display: block; height: 1px; margin: 3px 8px; background: rgba(255,255,255,.08); }
-.menu-close { color: rgba(242,243,246,.75); }
-.menu-close svg { width: 13px; height: 13px; }
+.menu-separator { display: block; height: 1px; margin: 3px 8px; background: var(--line); }
+.menu-close { color: var(--text-muted); }
 /* A notice without a glass: one pill, never clickable, centred in the 420 × 64 window Rust places at the bottom of the cursor's screen. */
 .notice-root { display: grid; place-items: center; pointer-events: none; }
 .native-overlay .notice-root { position: fixed; inset: 0; }
 .standalone-demo > .notice-root { position: absolute; inset: auto 0 24px 0; }
-.notice-pill { margin: 0; padding: 7px 14px; border: 1px solid var(--glass-border); border-radius: 16px; color: var(--text); font-size: 13px; line-height: 18px; white-space: nowrap; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
-.compact-feedback { align-self: flex-end; z-index: 2; max-width: calc(100% - 32px); margin: 8px 16px 0 0; padding: 6px 10px; border: 1px solid var(--glass-border); border-radius: 12px; color: var(--error-text); font-size: 12px; line-height: 16px; background: var(--pill-bg); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.notice-pill { margin: 0; padding: 8px 15px; border: 0; border-radius: 16px; color: var(--text); font-size: 13px; line-height: 18px; white-space: nowrap; }
+.compact-feedback { align-self: flex-end; z-index: 2; max-width: calc(100% - 32px); margin: 8px 16px 0 0; padding: 7px 11px; border: 0; border-radius: 12px; color: var(--error-text); font-size: 12px; line-height: 16px; }
 /* Bottom: the feedback stands above the glass (the window ends 16 px under it). */
 .is-bottom .compact-feedback { order: -1; margin: 0 16px 8px 0; }
 .glass-overlay:has(.more-menu) > .compact-feedback { visibility: hidden; }
 /* The original reads like the translation, one size down, on a lighter field (contrast above 4.5:1 on the glass). */
-.original-copy { margin: 0 0 12px; padding: 9px 11px; border-radius: 12px; color: rgba(250,251,253,.85); font-size: calc(var(--copy-size) - 2px); line-height: 1.45; letter-spacing: 0; background: rgba(255,255,255,.05); white-space: pre-wrap; overflow-wrap: break-word; }
-.original-copy > span { display: block; margin-bottom: 3px; color: rgba(250,251,253,.55); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.original-copy { margin: 0 0 12px; padding: 9px 11px; border-radius: 12px; color: rgb(var(--ink-rgb) / .85); font-size: calc(var(--copy-size) - 2px); line-height: 1.45; letter-spacing: 0; background: rgb(var(--ink-rgb) / .05); white-space: pre-wrap; overflow-wrap: break-word; }
+.original-copy > span { display: block; margin-bottom: 3px; color: var(--text-subtle); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .primary-action, .quiet-action { min-height: 30px; border: 0; border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 600; transition: background-color 140ms ease; }
-.primary-action { color: #102344; background: #d8e8ff; }
-.primary-action:hover { background: #edf5ff; }
-.quiet-action { color: #f2f3f5; background: rgba(255,255,255,.11); }
+.primary-action { color: var(--primary-text); background: var(--primary-bg); }
+.primary-action:hover { background: var(--primary-hover); }
+.quiet-action { color: var(--text); background: var(--quiet-bg); }
 .subtle-warning { margin: 12px 0 0; color: var(--warning-text); font-size: 12px; line-height: 18px; }
 .error-copy { color: var(--error-text); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; pointer-events: none; }

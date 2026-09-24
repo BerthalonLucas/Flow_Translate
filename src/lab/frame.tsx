@@ -6,6 +6,7 @@ import { GlassOverlay } from '../GlassOverlay';
 import { useTranslation } from '../useTranslation';
 import { bridge } from '../bridge';
 import { scenarioFrom } from './scenarios';
+import '../theme.css';
 import '../styles.css';
 import '../glass.css';
 
@@ -43,6 +44,8 @@ async function mount() {
   if (!import.meta.env.DEV || bridge.native) return;
   // The defect reproduction must not hide the production document background.
   if (params.get('surface') !== 'production') document.documentElement.style.colorScheme = theme;
+  // The app's tokens follow data-theme (src/theme.css): the scenario's theme is the app's.
+  document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.labScenario = scenario;
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
   if (scenario === 'history') {

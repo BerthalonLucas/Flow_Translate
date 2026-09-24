@@ -1,4 +1,5 @@
 import type { Capture, Mode, StreamEvent, ResultDelivery } from './types';
+import { t } from './i18n';
 
 export type TranslationState = {
   capture: Capture | null;
@@ -42,7 +43,7 @@ export function translationReducer(state: TranslationState, action: Action): Tra
       if (action.event.kind === 'delta') return { ...state, result: state.result + (action.event.text ?? '') };
       // `done` may carry the cleaned final text (no thinking block, no fence): it replaces the deltas.
       if (action.event.kind === 'done') return { ...state, phase: 'complete', result: action.event.text ?? state.result, replacementValid: !state.invalidated && (state.capture?.canReplace ?? false) };
-      return { ...state, phase: 'error', delivery: null, error: action.event.message ?? 'La traduction n’a pas abouti.', replacementValid: false };
+      return { ...state, phase: 'error', delivery: null, error: action.event.message ?? t('error.failed'), replacementValid: false };
     case 'DELIVERY':
       if (action.event.requestId !== state.requestId) return state;
       return { ...state, delivery: action.event.status, replacementValid: action.event.status === 'applied' ? false : state.replacementValid };

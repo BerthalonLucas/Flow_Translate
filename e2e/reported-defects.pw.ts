@@ -3,10 +3,11 @@ import { test, expect } from '@playwright/test';
 test('settings background covers the widened production document', async ({ page }) => {
   await page.setViewportSize({ width: 960, height: 450 });
   await page.goto('/lab-frame.html?scenario=settings&surface=production');
-  await expect(page.getByRole('heading', { name: 'Réglages', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   await page.screenshot({ path: `release/ui-evidence/settings-${process.env.FLOWTRANSLATE_EVIDENCE_STAGE ?? 'current'}.png` });
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(31, 33, 38)');
-  await expect(page.locator('.settings-window')).toHaveCSS('background-color', 'rgb(31, 33, 38)');
+  // The scenario's dark theme: the settings fill of src/theme.css, edge to edge.
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(28, 30, 34)');
+  await expect(page.locator('.settings-window')).toHaveCSS('background-color', 'rgb(28, 30, 34)');
 });
 
 test('the frame band is documented as native-only with its established cause', async ({ page }) => {
@@ -26,9 +27,9 @@ test('a long translation reads as a band, half the frame wide, without « Agrand
   const inner = await frame.locator('html').evaluate(() => window.innerWidth);
   expect(inner).toBeGreaterThanOrEqual(956);
   await expect(frame.locator('.translation-bubble')).toHaveCSS('width', `${Math.round(inner / 2)}px`);
-  await frame.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await expect(frame.getByRole('menuitem', { name: 'Agrandir' })).toHaveCount(0);
-  await expect(frame.getByRole('menuitem', { name: 'Afficher l’original', exact: true })).toBeVisible();
+  await frame.getByRole('button', { name: 'More options', exact: true }).click();
+  await expect(frame.getByRole('menuitem', { name: 'Expand' })).toHaveCount(0);
+  await expect(frame.getByRole('menuitem', { name: 'Show original', exact: true })).toBeVisible();
 });
 
 // UI-022 (the glass stays too long): read, leave, gone within four seconds.
