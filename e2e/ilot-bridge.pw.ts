@@ -74,7 +74,7 @@ test('Îlot: a menu capture opens the Îlot by its selection, takes the keyboard
   await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
   await expect(ilot).toHaveAttribute('data-mode', 'compact');
   // Nothing remembered for that application: the default action (Fix grammar) under Enter.
-  await expect(page.locator('[data-item="last"]')).toHaveAttribute('title', 'Fix grammar');
+  await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Fix grammar');
   expect(await calls(page, 'focus_overlay')).toHaveLength(1);
   expect(await translations(page, 'keys')).toHaveLength(0);
   const surface = await page.locator('[data-ilot-shape]').elementHandle();
@@ -110,7 +110,7 @@ test('Îlot: a menu capture opens the Îlot by its selection, takes the keyboard
 test('Îlot: the pointer unfolds the grid and picks a tile once, even clicked twice', async ({ page }) => {
   await openIlot(page);
   await on(page, f => f.captureMenu('mouse', 'shorten'));
-  await expect(page.locator('[data-item="last"]')).toHaveAttribute('title', 'Shorten');
+  await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Shorten');
   await page.locator('[data-item="last"]').hover();
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'grid');
   await page.locator('[data-tile="email"]').dblclick();

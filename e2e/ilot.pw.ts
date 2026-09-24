@@ -346,7 +346,7 @@ test('menu semantics, key hints and a focus ring once the keyboard moves', async
   await page.keyboard.press('ArrowRight');
   await expect(page.locator('[data-tile="pro"]')).toBeFocused();
   expect(await page.locator('[data-tile="pro"]').evaluate(el => getComputedStyle(el).outlineStyle)).toBe('solid');
-  await expect(page.locator('[data-tile="pro"]')).toHaveAttribute('title', 'Make professional');
+  await expect(page.locator('[data-tile="pro"]')).toHaveAttribute('aria-description', 'Make professional');
 });
 
 test('fewer than six actions end with Ask, more than six drop it; letters still reach them', async ({ page }) => {
