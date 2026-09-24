@@ -14,6 +14,10 @@ export type Capture = { id: string; text: string; source: 'selection' | 'clipboa
 export type MenuInfo = { lastActionId: string | null };
 // A menu key the native hook took from the source window (the overlay could not hold the foreground): KeyboardEvent.key naming.
 export type MenuKey = { captureId: string; key: string; shiftKey: boolean };
+// `menu-repeat`: the menu shortcut pressed twice within 400 ms while its menu waits (lot 4).
+export type MenuRepeat = { captureId: string };
+// `shortcut_conflict`: the chord is also AltGr + a key on the active layout, typing `character`.
+export type ShortcutConflict = { altGr: boolean; character?: string };
 // Second step of a capture: the document offsets and the Win32 control decide « Remplacer » behind the shown window.
 export type CaptureTarget = { captureId: string; canReplace: boolean };
 // A short message in place of the old MessageBox: a pill alone, or a line in the open glass.

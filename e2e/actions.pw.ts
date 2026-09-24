@@ -26,18 +26,18 @@ test('a custom instruction and a second shortcut retain their action and destina
   await second.locator('.shortcut-options select').nth(1).selectOption('replace');
   await second.getByRole('button', { name: 'Modifier', exact: true }).click();
   await page.keyboard.press('Control+Alt+R');
-  await expect.poll(() => saved(page)).toMatchObject({ shortcutBindings: [expect.objectContaining({ shortcut: 'Ctrl+Alt+T', actionId: 'translate-fr' }), expect.objectContaining({ shortcut: 'Ctrl+Alt+R', actionId: id, outputMode: 'replace', enabled: true })] });
+  await expect.poll(() => saved(page)).toMatchObject({ shortcutBindings: [expect.objectContaining({ kind: 'menu', shortcut: 'Ctrl+Alt+Space', actionId: 'correct' }), expect.objectContaining({ shortcut: 'Ctrl+Alt+R', actionId: id, outputMode: 'replace', enabled: true })] });
   await expect(custom.getByRole('button', { name: /Supprimer l’action/ })).toBeDisabled();
 });
 
 test('an empty instruction is explained and never sent for persistence', async ({ page }) => {
   await openSettings(page);
   await page.locator('.action-card').first().locator('summary').click();
-  await page.getByRole('textbox', { name: 'Consigne Traduire en français', exact: true }).fill('   ');
+  await page.getByRole('textbox', { name: 'Consigne Fix grammar', exact: true }).fill('   ');
   await expect(page.locator('.save-status')).toContainText('Non enregistré');
   expect(await saved(page)).toBeUndefined();
-  await page.getByRole('textbox', { name: 'Consigne Traduire en français', exact: true }).fill('Traduis le texte en français.');
-  await expect.poll(() => saved(page)).toMatchObject({ actions: expect.arrayContaining([expect.objectContaining({ id: 'translate-fr', promptTemplate: 'Traduis le texte en français.' })]) });
+  await page.getByRole('textbox', { name: 'Consigne Fix grammar', exact: true }).fill('Corrige seulement les fautes.');
+  await expect.poll(() => saved(page)).toMatchObject({ actions: expect.arrayContaining([expect.objectContaining({ id: 'correct', promptTemplate: 'Corrige seulement les fautes.' })]) });
 });
 
 test('reserved chords are refused immediately and AZERTY letters use their label', async ({ page }) => {

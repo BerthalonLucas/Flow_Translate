@@ -14,9 +14,9 @@ use windows::Win32::{
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, GetKeyboardLayout, MapVirtualKeyW, SendInput, ToUnicodeEx, HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+            GetAsyncKeyState, GetKeyboardLayout, MapVirtualKeyExW, MapVirtualKeyW, SendInput, ToUnicodeEx, HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
             KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
-            VK_INSERT, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
+            VK_INSERT, VK_LBUTTON, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
         },
         Shell::{DefSubclassProc, SetWindowSubclass},
         WindowsAndMessaging::{
@@ -233,6 +233,69 @@ unsafe fn character(vk:u32,scan:u32,state:&[u8;256],layout:HKL)->Option<char>{
 }
 
 fn held(key:VIRTUAL_KEY)->bool{unsafe{GetAsyncKeyState(key.0 as i32)<0}}
+
+/// The character Ctrl+Alt (+Shift) + `vk` types with `layout` (lot 4): on a layout with
+/// AltGr (AZERTY, QWERTZ…) Windows reads Ctrl+Alt as AltGr, so a global shortcut on that
+/// chord steals a character (€, {, @…). None when the chord types nothing. A dead key
+/// counts: it is a character the user types.
+pub fn altgr_character_in(layout:HKL,vk:u32,shift:bool)->Option<char>{
+    let mut state=[0u8;256];
+    for key in [VK_CONTROL,VK_LCONTROL,VK_MENU,VK_LMENU]{state[key.0 as usize]=0x80;}
+    if shift{for key in [VK_SHIFT,VK_LSHIFT]{state[key.0 as usize]=0x80;}}
+    unsafe{
+        let scan=MapVirtualKeyExW(vk,MAPVK_VK_TO_VSC,Some(layout));
+        character(vk,scan,&state,layout)
+    }
+}
+
+/// `altgr_character_in` with the layout of the foreground window's thread (the settings
+/// window, whose recorder asks while the user types the chord).
+pub fn altgr_character(vk:u32,shift:bool)->Option<char>{
+    unsafe{
+        let thread=GetWindowThreadProcessId(GetForegroundWindow(),None);
+        altgr_character_in(GetKeyboardLayout(thread),vk,shift)
+    }
+}
+
+/// The keyboard layouts loaded in this session (a test looks for a known one; nothing is
+/// ever loaded for it).
+#[cfg(test)]
+fn keyboard_layouts()->Vec<HKL>{
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayoutList;
+    unsafe{
+        let count=GetKeyboardLayoutList(None);
+        if count<=0{return Vec::new();}
+        let mut layouts=vec![HKL::default();count as usize];
+        let filled=GetKeyboardLayoutList(Some(&mut layouts));
+        layouts.truncate(filled.max(0) as usize);
+        layouts
+    }
+}
+
+/// The executable name of the process that owns a window, lowercase (« notepad.exe »):
+/// the key of the Îlot's memory per application (lot 4). Never a path, never a title.
+pub fn process_name(handle:isize)->Option<String>{
+    use windows::Win32::{Foundation::CloseHandle,System::Threading::{OpenProcess,QueryFullProcessImageNameW,PROCESS_NAME_WIN32,PROCESS_QUERY_LIMITED_INFORMATION}};
+    if handle==0{return None;}
+    let mut pid=0u32;
+    unsafe{GetWindowThreadProcessId(HWND(handle as *mut _),Some(&mut pid));}
+    if pid==0{return None;}
+    let mut path=[0u16;1024];
+    let mut length=path.len() as u32;
+    unsafe{
+        let process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid).ok()?;
+        let read=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,windows::core::PWSTR(path.as_mut_ptr()),&mut length);
+        let _=CloseHandle(process);
+        read.ok()?;
+    }
+    executable_name(&String::from_utf16_lossy(&path[..length as usize]))
+}
+
+/// The file name of an executable path, lowercase; None for anything implausible.
+pub fn executable_name(path:&str)->Option<String>{
+    let name=path.rsplit(['\\','/']).next()?.trim().to_lowercase();
+    (!name.is_empty()&&name.len()<=260&&!name.chars().any(char::is_control)).then_some(name)
+}
 
 /// The low-level keyboard hook, on the main thread. It stays minimal (LowLevelHooksTimeout):
 /// a few atomics, the async state of the modifiers and, for a letter while the menu is
@@ -929,6 +992,37 @@ mod tests {
         // Space (the free field needs the real WebView), and any chord, are never taken.
         assert_eq!(menu_key(0x20, false, false, none), None);
         for vk in [0x0D, 0x1B, 0x09, 0x28, 0x31, 0x46] { assert_eq!(menu_key(vk, false, true, || Some('f')), None, "{vk:#x} with Ctrl/Alt/Win"); }
+    }
+
+    #[test]
+    fn the_memory_key_is_the_lowercase_executable_name_only() {
+        assert_eq!(executable_name("C:\\Windows\\System32\\Notepad.exe").as_deref(), Some("notepad.exe"));
+        assert_eq!(executable_name("C:/Program Files/Google/Chrome/Application/chrome.exe").as_deref(), Some("chrome.exe"));
+        assert_eq!(executable_name("WINWORD.EXE").as_deref(), Some("winword.exe"));
+        assert_eq!(executable_name("C:\\dir\\"), None);
+        assert_eq!(executable_name(""), None);
+    }
+
+    /// Only on a layout this session already has (none is ever loaded for the test):
+    /// French AZERTY types € with AltGr+E and @ with AltGr+0, US English has no AltGr.
+    #[test]
+    fn altgr_is_read_on_a_known_layout_when_the_session_has_one() {
+        let layouts = keyboard_layouts();
+        let find = |id: usize| layouts.iter().copied().find(|layout| layout.0 as usize & 0xFFFF_FFFF == id);
+        let (french, us) = (find(0x040C_040C), find(0x0409_0409));
+        if french.is_none() && us.is_none() {
+            eprintln!("no French AZERTY nor US layout loaded in this session: skipped");
+            return;
+        }
+        if let Some(french) = french {
+            assert_eq!(altgr_character_in(french, 0x45, false), Some('€'));
+            assert_eq!(altgr_character_in(french, 0x30, false), Some('@'));
+            assert_eq!(altgr_character_in(french, 0x41, false), None, "AltGr+A types nothing");
+        }
+        if let Some(us) = us {
+            assert_eq!(altgr_character_in(us, 0x45, false), None);
+            assert_eq!(altgr_character_in(us, 0x20, false), None);
+        }
     }
 
     #[test]

@@ -1,14 +1,14 @@
-import { defaultActions, defaultBindings, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
+import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, ShortcutConflict, StreamEvent, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'menu-key';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'menu-key' | 'menu-repeat';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [],
+  mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -31,6 +31,8 @@ function demoTranslation(text: string, actionId: string) {
   if (text.includes('Je vous envoie')) return language === 'en' ? 'I am sending you the updated proposal.' : 'Je vous envoie la proposition mise à jour.';
   return language === 'fr' ? 'Voici une traduction de démonstration, prête à être relue.' : 'Here is a demo translation, ready for review.';
 }
+
+const azertyAltGr: Record<string, string> = { e: '€', '2': '~', '3': '#', '4': '{', '5': '[', '6': '|', '7': '`', '8': '\\', '9': '^', '0': '@', bracketleft: ']', equal: '}' };
 
 async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (native) return tauriInvoke<T>(name, args);
@@ -78,6 +80,14 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
     if (!action) throw 'L’action n’existe plus.';
     return { actionId, actionName: action.name, outputMode: 'replace', mode: demoSettings.mode } satisfies ExecutionInfo as T;
   }
+  // The preview has no keyboard layout to ask: it answers for French AZERTY, the layout
+  // the AltGr warning matters most for (Ctrl+Alt+E types €, Ctrl+Alt+0 types @).
+  if (name === 'shortcut_conflict') {
+    const parts = String(args?.shortcut ?? '').split('+').map(part => part.trim().toLowerCase());
+    const key = parts.at(-1)?.replace(/^(key|digit)/, '') ?? '';
+    const character = parts.includes('ctrl') && parts.includes('alt') && !parts.includes('shift') ? azertyAltGr[key] : undefined;
+    return (character ? { altGr: true, character } : { altGr: false }) satisfies ShortcutConflict as T;
+  }
   if (name === 'dismiss_overlay') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); emit('overlay-dismiss-requested', { captureId: demoCapture.id }); return undefined as T; }
   if (name === 'cancel_translation') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); return undefined as T; }
   return undefined as T;
@@ -120,6 +130,8 @@ export const bridge = {
   focusOverlay: () => command<boolean>('focus_overlay'),
   // Once per menu capture: a saved action, or `instructionActionId` with the free instruction.
   chooseAction: (captureId: string, actionId: string, instruction?: string) => command<ExecutionInfo>('choose_action', { captureId, actionId, ...(instruction === undefined ? {} : { instruction }) }),
+  // Lot 4, for the shortcut recorder (wired in lot 13): is this chord AltGr + a key here?
+  shortcutConflict: (shortcut: string) => command<ShortcutConflict>('shortcut_conflict', { shortcut }),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
   resize: (width: number, height: number, geometry: OverlayGeometry) => command<void>('resize_overlay', { width, height, ...geometry }),
   // The reading budget is spent: Rust frees Escape while the glass dims; an approach re-arms it.

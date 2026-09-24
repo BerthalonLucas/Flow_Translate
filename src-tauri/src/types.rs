@@ -194,6 +194,23 @@ pub struct MenuKeyEvent {
     pub shift_key: bool,
 }
 
+/// A second press of the same menu shortcut within 400 ms while its menu waits (lot 4):
+/// the frontend runs the last action of that application at once.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuRepeatEvent {
+    pub capture_id: String,
+}
+
+/// Whether a shortcut is also AltGr + a key on the active layout, and what it types.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutConflict {
+    pub alt_gr: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Replay {
@@ -344,8 +361,8 @@ impl Default for Settings {
         Self {
             mode: Mode::Quality,
             actions: crate::actions::defaults(),
-            shortcut_bindings: crate::actions::default_bindings("Ctrl+Alt+T".into()),
-            default_action_id: "translate-fr".into(),
+            shortcut_bindings: crate::actions::default_bindings(),
+            default_action_id: crate::actions::DEFAULT_ACTION_ID.into(),
             history_enabled: false,
             autostart: false,
             connection_expanded: false,
@@ -361,7 +378,7 @@ impl Default for Settings {
             undo_strategy: UndoStrategy::default(),
             pill_placement: PillPlacement::default(),
             glass_material: GlassMaterial::default(),
-            menu_action_ids: Vec::new(),
+            menu_action_ids: crate::actions::default_menu_action_ids(),
             profiles,
         }
     }
