@@ -12,7 +12,7 @@ import { resultContent, type ActionAnswer, type ResultStage } from '../result/Re
 import type { ActionDefinition, Capture, ErrorCode, HitRegion, Presentation, Settings } from '../types';
 import type { TranslationController } from '../useTranslation';
 import { Ilot, type IlotHandle, type IlotKeyboard } from './Ilot';
-import { browserShortcut, keyInputOf, maxTiles } from './keys';
+import { browserShortcut, keyInputOf, maxTiles, type KeyInput } from './keys';
 import { ilotMetrics } from './metrics';
 import { MorphSurface, type ShapeChange, type SurfaceSize } from './MorphSurface';
 import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } from './outcome';
@@ -29,7 +29,9 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  *             window's own focus (a click on the Îlot) also gives the keys to the WebView, and the
  *             ✦ clicked in 'injected' mode asks `focus_overlay` again. The last signal wins, a
  *             forwarded key saying the source is in front. The browser's own shortcuts (F5, Ctrl+R, Ctrl+P,
- *             Ctrl+F, zoom, Alt+←) and Ctrl + wheel do nothing (keys.ts browserShortcut).
+ *             Ctrl+F, zoom, Alt+←) and Ctrl + wheel do nothing (keys.ts browserShortcut). A key
+ *             the window receives before the Îlot shows (activated, the side still being read) is
+ *             kept and replayed once it shows, after the forwarded ones: none is lost.
  *   window    reserved once for the largest shape (src/layout.ts, ilotReserve): shapes only change
  *             the hit-test region, published at the start of a change on both shapes and at its
  *             end on the new one; the window never resizes while the surface springs.
@@ -53,6 +55,8 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
 // How long the Îlot waits for Rust's placement before it opens anyway (below the selection); the
 // glass's working pill waits as long for its side (GlassOverlay).
 export const SIDE_WAIT_MS = 400;
+// Keys that only modify another: never kept for the Îlot (a chord's release is not a key).
+const modifierKeys: ReadonlySet<string> = new Set(['Control', 'Alt', 'AltGraph', 'Shift', 'Meta', 'OS', 'CapsLock', 'NumLock', 'ScrollLock', 'Fn']);
 
 // The menu's actions, in the user's order (settings.menuActionIds). An empty list is the user's
 // choice (the Settings say « only the free instruction »): no action tile, only « Ask ». Only a
@@ -194,12 +198,33 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('wheel', onWheel, true); };
   }, []);
 
-  // Forwarded keys go through the Îlot's table in order, once it shows (useTranslation keeps them).
+  // The keys the window receives before the Îlot listens (Sol's measure of lot 9: a key sent in
+  // the ~25 ms after `focus_overlay` activated the overlay was lost twice): Rust has given the
+  // WebView the foreground, but the Îlot only shows once the window's side is read (two more
+  // IPC answers and a render). Installed with the stage's first frame, before `focus_overlay` is
+  // even asked; kept in order, never the browser's own shortcuts, nor a composition.
+  const early = useRef<KeyInput[]>([]);
+  useLayoutEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (handle.current || closingRef.current || event.defaultPrevented) return;
+      const input = keyInputOf(event);
+      if (input.isComposing || browserShortcut(input) || modifierKeys.has(input.key)) return;
+      early.current.push(input);
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  // Forwarded keys, then the early ones, go through the Îlot's table in order once it shows
+  // (useTranslation keeps the forwarded ones): at its first frame, where it starts listening too.
   const shown = side !== null && !closing;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const ilot = handle.current;
-    if (!ilot || !forwarded) return;
-    for (const key of takeMenuKeys(captureId)) ilot.press(key.key, { shiftKey: key.shiftKey });
+    if (!ilot) return;
+    if (forwarded) for (const key of takeMenuKeys(captureId)) ilot.press(key.key, { shiftKey: key.shiftKey });
+    const typed = early.current.splice(0);
+    for (const { key, ...modifiers } of typed) ilot.press(key, modifiers);
   }, [forwarded, shown, captureId, takeMenuKeys]);
 
   // The pill as soon as a choice leaves; a refused choice gives the menu back.

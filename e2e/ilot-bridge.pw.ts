@@ -22,9 +22,12 @@ type Fixture = {
   releaseChoice: () => void;
   invalidate: (anchorLost?: boolean, captureId?: string) => Promise<void>;
   windowAt: (x: number, y: number) => void;
+  holdPosition: () => void;
+  releasePosition: () => void;
   menuKey: (key: string, shiftKey?: boolean, captureId?: string) => Promise<void>;
   menuRepeat: (captureId?: string) => Promise<void>;
   done: (text?: string) => Promise<void>;
+  dismissEvent: (captureId: string) => Promise<void>;
   deliver: (status: 'applied' | 'fallback', confirmed?: boolean, message?: string, code?: string) => Promise<void>;
 };
 // Runs `run` in the page against the fixture (the function travels as source: no outer variables).
@@ -222,6 +225,59 @@ test('Îlot: in the fallback, the window\'s focus or a click on the ✦ gives th
   await expect(field).toBeFocused();
   await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
   expect(await chosen(page, 'regain')).toHaveLength(0);
+});
+
+// Sol's measure (lot 9): a key sent to the overlay in the ~25 ms after `focus_overlay` activated it
+// was lost twice. The WebView has the keyboard then, but the Îlot only shows once its window's side
+// is read; the fixture holds that reading so the keys surely arrive before it.
+async function pressBeforeTheIlot(page: Page, id: string, keys: Array<{ key: string; code?: string }>) {
+  await on(page, f => f.holdPosition());
+  const shown = await page.evaluate(async ({ id, keys }) => {
+    await (window as unknown as { nativeFixture: Fixture }).nativeFixture.captureMenu(id);
+    // The stage's first frame, without leaving the page (no Playwright round trip).
+    for (let i = 0; i < 200 && !document.querySelector(`.ilot-stage[data-capture-id="${id}"]`); i++) await new Promise(resolve => requestAnimationFrame(resolve));
+    const before = document.querySelectorAll('[data-ilot]').length;
+    for (const { key, code } of keys) (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true }));
+    return before;
+  }, { id, keys });
+  expect(shown).toBe(0);
+  await on(page, f => f.releasePosition());
+}
+
+test('Îlot: the keys the window receives before the Îlot shows are kept and replayed in order once it shows', async ({ page }) => {
+  await openIlot(page);
+  // A letter: its action, once.
+  await pressBeforeTheIlot(page, 'early-letter', [{ key: 't', code: 'KeyT' }]);
+  await expect.poll(() => chosen(page, 'early-letter')).toEqual([{ captureId: 'early-letter', actionId: 'translate' }]);
+  await expect.poll(() => translations(page, 'early-letter')).toHaveLength(1);
+  expect(await chosen(page, 'early-letter')).toHaveLength(1);
+  await on(page, f => f.dismissEvent('early-letter'));
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+
+  // In order: Tab unfolds the grid on the last action's tile (Fix, the first), → → move to the
+  // third, Enter picks it.
+  await pressBeforeTheIlot(page, 'early-grid', [{ key: 'Tab', code: 'Tab' }, { key: 'ArrowRight', code: 'ArrowRight' }, { key: 'ArrowRight', code: 'ArrowRight' }, { key: 'Enter', code: 'Enter' }]);
+  await expect.poll(() => chosen(page, 'early-grid')).toEqual([{ captureId: 'early-grid', actionId: 'professionalize' }]);
+  await on(page, f => f.dismissEvent('early-grid'));
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+
+  // A letter no action holds opens the field with it; the next ones are its text, and the field
+  // then takes the keyboard's keys itself.
+  await pressBeforeTheIlot(page, 'early-field', [{ key: 'q', code: 'KeyQ' }, { key: 'u', code: 'KeyU' }, { key: 'i', code: 'KeyI' }]);
+  const input = page.locator('.ilot-input');
+  await expect(input).toHaveValue('qui');
+  await expect(input).toBeFocused();
+  await page.keyboard.type(' vite');
+  await expect(input).toHaveValue('qui vite');
+  expect(await chosen(page, 'early-field')).toHaveLength(0);
+  await on(page, f => f.dismissEvent('early-field'));
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+
+  // Escape before it shows: it closes as soon as it shows, nothing chosen, nothing pasted.
+  await pressBeforeTheIlot(page, 'early-escape', [{ key: 'Escape', code: 'Escape' }]);
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  expect(await chosen(page, 'early-escape')).toHaveLength(0);
+  expect(await calls(page, 'replace_result')).toHaveLength(0);
 });
 
 test('Îlot: a double press runs the application\'s last action once; before the Îlot shows, it is born a pill', async ({ page }) => {

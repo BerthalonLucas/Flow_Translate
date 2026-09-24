@@ -30,6 +30,9 @@ const chosen = new Set<string>();
 // fixture's anchor, the Îlot's strip 8 px under the selection, its right edge (149 + 283 in the
 // window) on the selection's end (src/layout.ts, ilotReserve).
 let overlayPosition = { x: 400 + 120 - 432, y: 300 + 18 + 8 - 104 };
+// The next read of that position answers only once released: the Îlot waits for its side.
+let holdPosition = false;
+let releasePosition: (() => void) | undefined;
 // The work area of the screen holding a point (`monitorFromPoint`, physical pixels), for the room
 // the Îlot has around its strip: one 1920 × 1080 screen, its taskbar 40 high.
 let workArea = { x: 0, y: 0, width: 1920, height: 1040 };
@@ -65,7 +68,11 @@ mockIPC((command, args) => {
   if (command === 'frontend_ready') return currentCapture;
   if (command === 'translate') request = args?.request as TranslationRequest;
   if (command === 'focus_overlay') return overlayFocus;
-  if (command === 'plugin:window|inner_position') return overlayPosition;
+  if (command === 'plugin:window|inner_position') {
+    if (!holdPosition) return overlayPosition;
+    holdPosition = false;
+    return new Promise(resolve => { releasePosition = () => resolve(overlayPosition); });
+  }
   if (command === 'plugin:window|monitor_from_point') return monitor();
   if (command === 'choose_action') {
     const { captureId, actionId, instruction } = args as { captureId: string; actionId: string; instruction?: string };
@@ -132,6 +139,9 @@ Object.assign(window, { nativeFixture: {
   unanchoredMenu: (id: string, lastActionId: string | null = null) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null, canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   // Rust placed the window elsewhere (above the selection, another screen): physical pixels.
   windowAt: (x: number, y: number) => { overlayPosition = { x, y }; },
+  // The next read of the window's position waits for releasePosition (the Îlot not shown yet).
+  holdPosition: () => { holdPosition = true; },
+  releasePosition: () => { releasePosition?.(); releasePosition = undefined; },
   // The work area of the anchor's screen (physical pixels): a taskbar on the left, another screen.
   workAreaAt: (x: number, y: number, width: number, height: number) => { workArea = { x, y, width, height }; },
   menuKey: (key: string, shiftKey = false, captureId = currentCapture.id) => emit('menu-key', { captureId, key, shiftKey }),
