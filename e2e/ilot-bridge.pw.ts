@@ -374,6 +374,35 @@ test('Îlot: an emptied grid shows only « Ask »; the compact state still offer
   expect(await chosen(page, 'empty-grid')).toHaveLength(0);
 });
 
+// Review of bc57857, finding 5: a click on the field's dot or its drawn ↵ took the focus from the
+// input; Enter then went nowhere and Escape closed the whole menu, the instruction lost.
+test('Îlot: a click in the field keeps its focus, Escape still goes back, and the drawn ↵ sends', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('field-click', 'correct'));
+  await settled(page);
+  const ilot = page.locator('[data-ilot]');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  const present = (part: string) => page.locator(`.shape-layer:not(.is-leaving) ${part}`);
+  await page.keyboard.press('Space');
+  await expect(field).toBeFocused();
+  // A synthetic instruction, invented for the test.
+  await page.keyboard.type('plus court');
+  await present('.ilot-dot').click();
+  await expect(field).toBeFocused();
+  // The focus lost all the same (the body): Escape goes back to the compact state, nothing closes.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  await expect(field).toHaveCount(0);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+  await page.keyboard.press('Space');
+  await expect(field).toBeFocused();
+  await page.keyboard.type('plus court');
+  await present('.ilot-keycap').click();
+  await expect.poll(() => chosen(page, 'field-click')).toEqual([{ captureId: 'field-click', actionId: 'instruction', instruction: 'plus court' }]);
+  await expect(ilot).toHaveAttribute('data-shape', 'pill');
+});
+
 test('Îlot: a refused choice gives the menu back, and the next choice goes through', async ({ page }) => {
   await openIlot(page);
   await on(page, f => { f.refuseChoice(); return f.captureMenu('refused', 'translate'); });

@@ -78,12 +78,40 @@ describe('Ilot', () => {
     expect(mode()).toBe('prompt');
     const input = document.activeElement as HTMLInputElement;
     expect(input.value).toBe('x');
-    await keydown('Escape');
-    expect(mode()).toBe('prompt');
     await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
     expect(mode()).toBe('compact');
+    expect(calls.onClose).not.toHaveBeenCalled();
+    // The focus outside the input (review of bc57857, finding 5): Escape still goes back one step.
+    await keydown('x');
+    expect(mode()).toBe('prompt');
+    (document.activeElement as HTMLElement).blur();
+    await keydown('Escape');
+    expect(mode()).toBe('compact');
+    expect(calls.onClose).not.toHaveBeenCalled();
     await keydown('Escape');
     expect(calls.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Review of bc57857, finding 5: a click on the field's dot or ↵ took the focus from the input.
+  it('keeps the focus in the field when its dot or ↵ is pressed, and sends on the ↵ like Enter', async () => {
+    const { calls, keydown, present } = await mount();
+    await keydown(' ');
+    const input = present().querySelector<HTMLInputElement>('input')!;
+    expect(document.activeElement).toBe(input);
+    for (const part of ['.ilot-dot', '.ilot-keycap', '.ilot-field']) {
+      const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      present().querySelector(part)!.dispatchEvent(press);
+      expect(press.defaultPrevented, part).toBe(true);
+    }
+    const onInput = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    input.dispatchEvent(onInput);
+    expect(onInput.defaultPrevented).toBe(false);
+    // Blank: nothing is sent; a (synthetic) instruction is sent trimmed, once per click.
+    await act(async () => { present().querySelector<HTMLElement>('.ilot-keycap')!.click(); });
+    expect(calls.onInstruction).not.toHaveBeenCalled();
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '  plus court  '); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => { present().querySelector<HTMLElement>('.ilot-keycap')!.click(); });
+    expect(calls.onInstruction).toHaveBeenCalledWith('plus court');
   });
 
   it('takes only the keys it is given when Rust forwards them, without a field', async () => {

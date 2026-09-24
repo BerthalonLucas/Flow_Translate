@@ -167,8 +167,10 @@ export function resolveIlotKey(input: KeyInput, state: IlotState, context: IlotK
   if (input.isComposing || key === 'Process' || key === 'Dead' || key === 'Unidentified') return null;
   // menus.jsx:21: Ctrl, Meta and Alt combinations belong to the system, except AltGr, which types.
   if ((input.ctrlKey || input.metaKey || input.altKey) && !input.altGraph) return null;
-  // The field is a real <input>: it handles Enter and Escape itself (menus.jsx:40, 66).
-  if (state.mode === 'prompt') return null;
+  // The field is a real <input>: it handles Enter and every character itself (menus.jsx:40, 66).
+  // Escape goes back to the compact state wherever the focus is: a click on the field's dot or
+  // its ↵ must not leave Escape to close the whole menu (review of bc57857, finding 5).
+  if (state.mode === 'prompt') return key === 'Escape' ? { type: 'compact' } : null;
   const { tiles, promptAvailable } = context;
   const openPrompt = (seed: string): IlotCommand | null => promptAvailable ? { type: 'prompt', seed } : seed ? null : { type: 'none' };
 

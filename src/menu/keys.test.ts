@@ -165,8 +165,15 @@ describe('resolveIlotKey', () => {
     expect(press('Dead')).toBeNull();
   });
 
-  it('lets the text field handle every key, Enter and Escape included', () => {
-    for (const key of ['Enter', 'Escape', 'f', ' ', 'Tab', '1', 'ArrowDown']) expect(press(key, prompt)).toBeNull();
+  // Review of bc57857, finding 5: Escape left to the input was lost once a click on the field's dot
+  // or ↵ had moved the focus; the table now takes it wherever the focus is.
+  it('lets the text field handle every key but Escape, which goes back to the compact state', () => {
+    for (const key of ['Enter', 'f', ' ', 'Tab', '1', 'ArrowDown']) expect(press(key, prompt)).toBeNull();
+    expect(press('Escape', prompt)).toEqual({ type: 'compact' });
+    expect(press({ key: 'Escape', shiftKey: true }, prompt)).toEqual({ type: 'compact' });
+    // An IME composition cancels itself with Escape; a chord stays the system's.
+    expect(press({ key: 'Escape', isComposing: true }, prompt)).toBeNull();
+    expect(press({ key: 'Escape', ctrlKey: true }, prompt)).toBeNull();
   });
 
   it('has no field when the keys come from Rust: Space is swallowed, other characters pass', () => {

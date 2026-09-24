@@ -190,7 +190,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
 
   let content: ReactNode;
   if (shape === 'pill') content = pill?.node;
-  else if (mode === 'prompt') content = <PromptField seed={seed.text} label={describe} onSubmit={onInstruction} onCancel={() => apply({ type: 'compact' })} />;
+  else if (mode === 'prompt') content = <PromptField seed={seed.text} label={describe} onSubmit={onInstruction} />;
   else if (mode === 'grid') content = <div role="menu" aria-label={t('ilot.menu')} className="ilot-grid" style={{ gridTemplateColumns: `repeat(${context.columns}, ${ilotMetrics.tile.width}px)` }}>
     {context.tiles.map((tile, index) => {
       const isHot = index === safeHot;
@@ -237,8 +237,11 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
 }
 
 // menus.jsx:33-43: the free instruction in a real <input>, so AltGr characters, dead keys and IME
-// composition reach it as typed. Enter sends, Escape goes back to the compact state.
-function PromptField({ seed, label, onSubmit, onCancel }: { seed: string; label: string; onSubmit: (text: string) => void; onCancel: () => void }) {
+// composition reach it as typed. Enter sends, and so does a click on the drawn ↵; Escape goes back
+// to the compact state (the Îlot's table, keys.ts, wherever the focus is). A press anywhere else in
+// the field (its dot, its ↵, its padding) keeps the focus in the input (review of bc57857,
+// finding 5).
+function PromptField({ seed, label, onSubmit }: { seed: string; label: string; onSubmit: (text: string) => void }) {
   const [value, setValue] = useState(seed);
   const input = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
@@ -247,22 +250,18 @@ function PromptField({ seed, label, onSubmit, onCancel }: { seed: string; label:
     field.focus({ preventScroll: true });
     field.setSelectionRange(field.value.length, field.value.length);
   }, []);
-  return <div className="ilot-field">
+  const submit = () => {
+    const text = cleanInstruction(value);
+    if (text) onSubmit(text);
+  };
+  return <div className="ilot-field" onMouseDown={event => { if (event.target !== input.current) event.preventDefault(); }}>
     <span className="ilot-dot" aria-hidden="true" />
     <input ref={input} className="ilot-input" value={value} placeholder={label} aria-label={label} maxLength={ilotMetrics.instructionMax}
       autoComplete="off" enterKeyHint="send" onChange={event => setValue(event.target.value)}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          const text = cleanInstruction(value);
-          if (text) onSubmit(text);
-        } else if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          onCancel();
-        } else if (event.key === 'Tab') event.preventDefault();
+        if (event.key === 'Enter') { event.preventDefault(); submit(); } else if (event.key === 'Tab') event.preventDefault();
       }} />
-    <span className="ilot-keycap" aria-hidden="true">↵</span>
+    <span className="ilot-keycap" aria-hidden="true" onClick={submit}>↵</span>
   </div>;
 }
