@@ -2,9 +2,10 @@ import { test, expect, type Page } from '@playwright/test';
 import { ilotRegion, ilotReserve } from '../src/layout';
 
 // Lot 9: the pill's place after Rust's own paste (docs/BRIDGE.md « The pill's place », « Moving
-// the window »), over the IPC fixture (e2e/native-fixture.ts), which answers `result_pill` as Rust
-// places it (under the new text's last line, above it without room, in the margin) relative to the
-// window, and records each `move_overlay` with what the page showed then. The pill leaves the
+// the window »), over the IPC fixture (e2e/native-fixture.ts), which places the Îlot's window and
+// answers `result_pill` with Rust's own algorithm, ported (placement.rs: under the new text's last
+// line, above it without room, in the margin; never over a line), relative to the window, and
+// records each `move_overlay` with what the page showed then. The pill leaves the
 // selection's old end for its place, never over the new text: in the DOM when the place is in the
 // window (every frame in the region Rust holds), else the window moves once, at rest, the pill
 // faded out. Synthetic texts and rectangles: a browser run, not the Windows window.
@@ -164,7 +165,23 @@ test('the check alone (no Undo) keeps the work pill’s size, and still goes to 
   expect(await calls(page, 'move_overlay')).toEqual([]);
 });
 
-test('a place outside the window: once the shape rests the pill fades out, the window moves once, Rust answers again for it, and the pill fades back in there', async ({ page }) => {
+test('the pasted text not found: no Undo, and the place Rust estimates from the selection and the result’s length', async ({ page }) => {
+  await openIlot(page);
+  await working(page, 'estimated');
+  // 27 characters for 25 selected on one line: two lines, the text ending one line lower (318 to
+  // 336) on the selection's end (520); the pill 8 px under it.
+  await fixture(page).run(f => f.pasted({ undoable: false, pastedRects: [] }));
+  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await expect(page.locator('[data-result-content="done"]')).toHaveClass(/is-check-only/);
+  await expect.poll(() => calls(page, 'result_pill')).toHaveLength(1);
+  await settled(page);
+  const pill = await box(page);
+  expect(pill.x + pill.width).toBeCloseTo(520 - origin.x, 0);
+  expect(pill.y).toBeCloseTo(336 + 8 - origin.y, 0);
+  expect(await calls(page, 'move_overlay')).toEqual([]);
+});
+
+test('a place outside the window: the pill fades out, the window moves once at rest, Rust answers again for it, and the pill fades back in there', async ({ page }) => {
   await openIlot(page);
   await working(page, 'far');
   // Twelve lines: the last ends at x = 700, its bottom at y = 516: out of the 581 × 264 window.
@@ -206,14 +223,15 @@ test('a place outside the window: once the shape rests the pill fades out, the w
 test('in the margin the pill keeps its left edge beside the text: a narrower shape shrinks away from the text', async ({ page }) => {
   await openIlot(page, { pillPlacement: 'margin' });
   await working(page, 'margin');
-  // The widest line ends at x = 420: the pill's left edge at 428, level with the last line (318).
+  // The widest line ends at x = 420: the pill's left edge at 428, centred on the last line (318
+  // to 336).
   const lines = [{ x: 200, y: 300, width: 220, height: 18 }, { x: 200, y: 318, width: 150, height: 18 }];
   await paste(page, lines);
   await expect(stage(page)).toHaveAttribute('data-stage', 'done');
   await settled(page);
   const pill = await box(page);
   expect(pill.x).toBeCloseTo(428 - origin.x, 0);
-  expect(pill.y).toBeCloseTo(318 - origin.y, 0);
+  expect(pill.y).toBeCloseTo(318 + (18 - pill.height) / 2 - origin.y, 0);
   for (const line of lines) expect(overlaps(pill, inWindow(line)), JSON.stringify(line)).toBe(false);
   expect(await calls(page, 'move_overlay')).toEqual([]);
   const withdrawn = await follow(page, 'margin', () => fixture(page).run(f => f.undoState('typed')), 900);
@@ -233,13 +251,15 @@ const linesAt = (lines: Box[], window: { x: number; y: number }, frame: Frame, m
   lines.map(line => ({ ...line, x: line.x - window.x - (moved && frame.t >= moved.at ? moved.dx : 0), y: line.y - window.y - (moved && frame.t >= moved.at ? moved.dy : 0) }));
 
 test('the Îlot above the selection, the place under the new text: the pill never sweeps over the text; out of sight it takes its place at once', async ({ page }) => {
-  // A selection near the bottom of the work area: Rust opened the Îlot above it (the strip 8 px
-  // over the selection, the window at (88, 156)); under the new text there is still room.
+  // A selection near the bottom of the work area (220 px do not fit under it): Rust opens the
+  // Îlot above it, the strip 8 px over the selection, the window at (88, 156); under the new text
+  // there is still room for the pill.
   await openIlot(page);
-  await fixture(page).run(f => { f.workAreaAt(0, 0, 1920, 500); f.windowAt(88, 156); });
+  await fixture(page).run(f => f.workAreaAt(0, 0, 1920, 500));
   await working(page, 'over');
   await expect(stage(page)).toHaveAttribute('data-side', 'above');
   const window = { x: 88, y: 156 };
+  expect(await fixture(page).run(f => f.windowPosition())).toEqual(window);
   const lines = [{ x: 300, y: 300, width: 420, height: 18 }, { x: 300, y: 318, width: 260, height: 18 }];
   const frames = await follow(page, 'over', () => paste(page, lines), 1400);
   await expect(stage(page)).toHaveAttribute('data-stage', 'done');
@@ -261,6 +281,56 @@ test('the Îlot above the selection, the place under the new text: the pill neve
   expect(frames.at(-1)?.opacity).toBe(1);
   expect(await calls(page, 'move_overlay')).toEqual([]);
   expect(await sameSurface(page)).toBe(true);
+});
+
+test('no room under the new text: the pill goes above its first line, its right edge on the end of the line the text ends on', async ({ page }) => {
+  // The work area ends at y = 360: Rust opens the Îlot above the selection (the window at
+  // (88, 156)), and puts the pill above the new text, 8 px over its first line (300), its right
+  // edge on the end of the last line (560), not of the first (720).
+  await openIlot(page);
+  await fixture(page).run(f => f.workAreaAt(0, 0, 1920, 360));
+  await working(page, 'up');
+  await expect(stage(page)).toHaveAttribute('data-side', 'above');
+  const window = await fixture(page).run(f => f.windowPosition());
+  expect(window).toEqual({ x: 88, y: 156 });
+  const lines = [{ x: 300, y: 300, width: 420, height: 18 }, { x: 300, y: 318, width: 260, height: 18 }];
+  const frames = await follow(page, 'up', () => paste(page, lines), 1200);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await settled(page);
+  const pill = await box(page);
+  expect(pill.x + pill.width + window.x).toBeCloseTo(560, 0);
+  expect(pill.y + pill.height + window.y).toBeCloseTo(292, 0);
+  // Above then above: a glide in the window, never over a line, every frame in the region.
+  for (const frame of frames) {
+    for (const line of linesAt(lines, window, frame)) expect(overlaps(frame.shape, line), JSON.stringify(frame)).toBe(false);
+    expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  }
+  expect(frames.every(frame => frame.opacity === 1)).toBe(true);
+  expect(await calls(page, 'move_overlay')).toEqual([]);
+});
+
+test('in the margin without room on the right of the text, the pill goes under it instead: never squeezed over it', async ({ page }) => {
+  await openIlot(page, { pillPlacement: 'margin' });
+  await working(page, 'squeezed');
+  // Lines ending at x = 1860, 60 px from the work area's right edge: no room beside them for the
+  // pill, so Rust puts it under the last line, its right edge on 1860, its top at 344.
+  const lines = [{ x: 300, y: 300, width: 1560, height: 18 }, { x: 300, y: 318, width: 1560, height: 18 }];
+  const frames = await follow(page, 'squeezed', () => paste(page, lines), 1800);
+  await expect.poll(() => moves(page)).toHaveLength(1);
+  await expect.poll(() => opacity(page)).toBe('1');
+  await settled(page);
+  const pill = await box(page);
+  const window = await fixture(page).run(f => f.windowPosition());
+  expect(pill.x + pill.width + window.x).toBeCloseTo(1860, 0);
+  expect(pill.y + window.y).toBeCloseTo(344, 0);
+  for (const line of lines) expect(overlaps({ ...pill, x: pill.x + window.x, y: pill.y + window.y }, line), JSON.stringify(line)).toBe(false);
+  // From Rust's answer on, never visible over a line of the text.
+  const [answered] = await fixture(page).run(f => f.calls.filter(call => call.command === 'result_pill').map(call => call.at));
+  const [move] = await moves(page);
+  for (const frame of frames.filter(frame => frame.t > answered + 170 + 50)) {
+    if (frame.opacity <= 0.05) continue;
+    for (const line of linesAt(lines, origin, frame, move)) expect(overlaps(frame.shape, line), JSON.stringify(frame)).toBe(false);
+  }
 });
 
 test('a place outside the window: the pill fades out as soon as Rust answers, not once its shape rests, and is never seen over the new text after that', async ({ page }) => {
