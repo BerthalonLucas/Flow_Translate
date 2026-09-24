@@ -143,6 +143,9 @@ describe('Îlot window (lot 7)', () => {
     // window): a pill any closer to an edge would have its shadow cut by the window.
     for (const target of [{ x: 32, y: 20 }, { x: 439, y: 192 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(true);
     for (const target of [{ x: 31, y: 122 }, { x: 440, y: 122 }, { x: 362, y: 19 }, { x: 362, y: 193 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
+    // At 125 or 150 % Rust's logical pixels are fractional: the place is whole pixels.
+    expect(ilotPlace({ x: 362.4, y: 121.6, side: 'below' }, pill, 'below')).toEqual({ x: 40, y: 18, width: 110, keepLeft: false });
+    expect(ilotPlace({ x: 327.6, y: 77.5, side: 'above' }, pill, 'above')).toEqual({ x: 6, y: -30, width: 110, keepLeft: false });
   });
   it('slides a placed pill only by what the work area needs, and keeps any shape in the window', () => {
     const wide = ilotRoom(520 - 432, 1, { x: 0, width: 1920 });

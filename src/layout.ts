@@ -137,11 +137,13 @@ export function ilotShift(width: number, room: IlotRoom | null, x = 0): number {
 // bottom above it). In the margin (right of the text, `side: 'margin'`) the pill keeps its left
 // edge instead, so a wider shape never grows over the text.
 export type IlotPlace = { x: number; y: number; width: number; keepLeft: boolean };
+// Whole pixels (Rust answers in logical pixels, fractional at 125 or 150 %): a translation by a
+// fraction would blur the pill's text.
 export function ilotPlace(target: Pick<PillTarget, 'x' | 'y' | 'side'>, size: { width: number; height: number }, side: IlotSide): IlotPlace {
   const { frame } = ilotReserve('anchored');
   return {
-    x: target.x + size.width - (frame.x + frame.width),
-    y: side === 'below' ? target.y - frame.y : target.y + size.height - (frame.y + frame.height),
+    x: Math.round(target.x + size.width - (frame.x + frame.width)),
+    y: Math.round(side === 'below' ? target.y - frame.y : target.y + size.height - (frame.y + frame.height)),
     width: size.width, keepLeft: target.side === 'margin',
   };
 }
