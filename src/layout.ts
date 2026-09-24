@@ -119,16 +119,17 @@ export function ilotRoom(windowX: number, scale: number, work: Pick<Rect, 'x' | 
 // How far right of the strip's corner a shape's corner sits: `x`, the pill's place after the paste
 // (0 before; ilotPlace, placeX), then a slide so the shape stays in the work area: nothing while it
 // fits left of its corner (always at the strip's corner, up to the strip's width: Rust clamped the
-// strip), else what it overhangs, whole pixels, never past the work area's right edge. Whatever the
-// place, the corner never goes past the reserve's spare, and the shape's left edge keeps the halo's
-// room in the window: its shadow is never cut. Unknown room: no slide (the browser preview, a
-// screen the point is not on).
+// strip), else what it overhangs, whole pixels. Whatever the place, the corner never goes past the
+// reserve's spare nor the work area's right edge, and the shape's left edge keeps the halo's room
+// in the window: its shadow is never cut. Unknown room: no slide (the browser preview, a screen the
+// point is not on).
 export function ilotShift(width: number, room: IlotRoom | null, x = 0): number {
   const at = room && { left: room.left + x, right: room.right - x };
   const overhang = at ? Math.ceil(width - at.left) : 0;
   const slide = at && overhang > 0 ? Math.max(0, Math.min(overhang, ilotSpare - x, Math.floor(at.right))) : 0;
   const corner = ilotReserve('anchored').frame.x + ilotStrip;
-  return Math.max(width - corner + halo.x, Math.min(x + slide, ilotSpare));
+  const high = room ? Math.min(ilotSpare, Math.floor(room.right)) : ilotSpare;
+  return Math.max(width - corner + halo.x, Math.min(x + slide, high));
 }
 // Lot 9: where the pill goes after Rust's paste, from `result_pill` (its top-left corner in the
 // window as it stands, logical) for a pill of `size`: the offset of its corner from the strip's,

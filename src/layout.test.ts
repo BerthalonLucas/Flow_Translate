@@ -160,6 +160,10 @@ describe('Îlot window (lot 7)', () => {
     // most. Before the review of lot 9 the bounds were the window's own edges (−172 and 149).
     expect(ilotShift(260, null, -300)).toBe(-140);
     expect(ilotShift(110, null, 200)).toBe(117);
+    // Nor past the work area's right edge (30 px right of the strip's corner): a shape placed in
+    // the margin, 60 px right of it, stops there.
+    expect(ilotShift(260, { left: 600, right: 30 }, 60)).toBe(30);
+    expect(ilotShift(260, { left: 600, right: 30.8 }, 60)).toBe(30);
   });
   it('covers a placed pill and its way there, above or below the selection', () => {
     // From the strip's corner to 40 px right and 18 px below it: both positions.

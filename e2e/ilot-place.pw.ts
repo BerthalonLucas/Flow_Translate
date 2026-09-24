@@ -310,6 +310,48 @@ test('a place in the window but too close to its edge for the shadow: the window
   expect(pill.y + pill.height).toBeLessThanOrEqual(reserve.height - 44);
 });
 
+test('in the margin, a wider shape after the check (an Undo refused) is placed again for its size: never pushed over the text, its ✕ in the work area', async ({ page }) => {
+  await openIlot(page, { pillPlacement: 'margin' });
+  await working(page, 'wider');
+  // The widest line ends at x = 470: the pill's left edge at 478, 390 in the window.
+  const lines = [{ x: 250, y: 300, width: 220, height: 18 }, { x: 250, y: 318, width: 150, height: 18 }];
+  await paste(page, lines);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await expect.poll(() => opacity(page)).toBe('1');
+  await settled(page);
+  const check = await box(page);
+  expect(check.x).toBeCloseTo(478 - origin.x, 0);
+  const requestId = await fixture(page).run(f => f.requestId());
+  await fixture(page).run(f => f.undoWith({ status: 'refused', confirmed: false, message: 'Le texte a changé.', code: 'target_changed' }));
+  const frames = await follow(page, 'wider', () => page.locator('.shape-layer:not(.is-leaving) .result-undo').click(), 2000);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'error');
+  await expect.poll(() => opacity(page)).toBe('1');
+  await settled(page);
+  const error = await box(page);
+  expect(error.width).toBeGreaterThan(check.width + 60);
+  // Asked again for the error pill's size (once more after the window moved for it).
+  const asked = await calls(page, 'result_pill');
+  expect(asked[0]).toEqual({ requestId, width: check.width, height: check.height });
+  expect(asked.slice(1).every(args => args.width === error.width)).toBe(true);
+  expect(asked.length).toBeGreaterThanOrEqual(2);
+  // Never a visible frame over the text, whether the window moved or not; its left edge kept
+  // (while it fades out before the move the window may cut its right end: the region holds the
+  // part the window shows).
+  const [move] = await moves(page);
+  const shown = (shape: Box) => { const x = Math.max(0, shape.x), y = Math.max(0, shape.y); return { x, y, width: Math.min(reserve.width, shape.x + shape.width) - x, height: Math.min(reserve.height, shape.y + shape.height) - y }; };
+  for (const frame of frames) {
+    if (frame.opacity > 0.05) for (const line of linesAt(lines, origin, frame, move)) expect(overlaps(frame.shape, line), JSON.stringify(frame)).toBe(false);
+    if (frame.opacity > 0.05) expect(frame.shape.x >= -0.5 && frame.shape.y >= -0.5 && frame.shape.x + frame.shape.width <= reserve.width + 0.5 && frame.shape.y + frame.shape.height <= reserve.height + 0.5, JSON.stringify(frame)).toBe(true);
+    expect(inside(shown(frame.shape), frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  }
+  const window = await fixture(page).run(f => f.windowPosition());
+  expect(error.x + window.x).toBeCloseTo(478, 0);
+  // The ✕ inside the work area (1920 wide), the shadow's room in the window.
+  const close = await page.getByRole('button', { name: 'Close' }).evaluate(element => { const r = element.getBoundingClientRect(); return { x: r.x, width: r.width }; });
+  expect(close.x + close.width + window.x).toBeLessThanOrEqual(1920);
+  expect(error.x + error.width).toBeLessThanOrEqual(reserve.width - 32);
+});
+
 test('Undo withdrawn on the pill’s way to the margin: it never sweeps over the text, the check alone lands at the margin’s left edge, every frame in the region', async ({ page }) => {
   await openIlot(page, { pillPlacement: 'margin' });
   await working(page, 'hop');
