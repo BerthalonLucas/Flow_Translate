@@ -1,3 +1,4 @@
+use crate::selection_lines;
 use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetIdentity};
 use arboard::Clipboard;
 use uiautomation::{patterns::UITextPattern, variants::SafeArray, UIAutomation, UIElement};
@@ -36,8 +37,9 @@ fn ui_automation() -> Result<UIAutomation, ()> {
     })
 }
 
-/// Text, last visible rectangle, length and editability of the current UIA selection.
-fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool), String> {
+/// Text, visible rectangles (physical, one per run as `GetBoundingRectangles` gives
+/// them), length and editability of the current UIA selection.
+fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
     let pattern = element
         .get_pattern::<UITextPattern>()
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?;
@@ -62,18 +64,18 @@ fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool),
         .ok()
         .and_then(|v| <uiautomation::variants::Variant as TryInto<bool>>::try_into(v).ok())
         .is_some_and(|v| !v);
-    let anchor = unsafe { range.as_ref().GetBoundingRectangles() }
+    let rects = unsafe { range.as_ref().GetBoundingRectangles() }
         .ok()
         .and_then(|raw| <SafeArray as TryInto<Vec<f64>>>::try_into(SafeArray::from(raw)).ok())
-        .and_then(|values| {
-            values.chunks_exact(4).last().map(|last| Rect {
-                x: last[0],
-                y: last[1],
-                width: last[2],
-                height: last[3],
-            }).filter(|r| r.x.is_finite() && r.y.is_finite() && r.width.is_finite() && r.height.is_finite() && r.width > 0.0 && r.height > 0.0)
-        });
-    Ok((text, anchor, selection_len, range_editable))
+        .map(|values| selection_lines::from_flat(&values))
+        .unwrap_or_default();
+    Ok((text, rects, selection_len, range_editable))
+}
+
+/// The anchor of a capture: the last visible rectangle as UI Automation gives it (none
+/// when that one is unusable). Physical; the placement and `validate_target` compare it.
+fn anchor_of(rects: &[Rect]) -> Option<Rect> {
+    rects.last().copied().filter(selection_lines::drawable)
 }
 
 fn ensure_source_unchanged(source_window: isize) -> Result<(), String> {
@@ -111,6 +113,11 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 width: 280.0,
                 height: 24.0,
             }),
+            // Two lines ending on the anchor: the halo is exercised without UI Automation.
+            selection_rects: vec![
+                Rect { x: 640.0, y: 396.0, width: 360.0, height: 24.0 },
+                Rect { x: 640.0, y: 420.0, width: 280.0, height: 24.0 },
+            ],
             replay: None,
             execution: None,
             menu: None,
@@ -136,8 +143,10 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 Ok(false) => {}
             }
             match selection(&element) {
-                Ok((text, anchor, selection_len, range_editable)) => {
+                Ok((text, rects, selection_len, range_editable)) => {
                     ensure_source_unchanged(source_window)?;
+                    let anchor = anchor_of(&rects);
+                    let selection_rects = selection_lines::lines(&rects, crate::host::window_rect(source_window));
                     let runtime_id = element.get_runtime_id().map_err(|_| {
                         "Impossible d’identifier le contrôle source.".to_string()
                     })?;
@@ -156,6 +165,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         origin: CaptureOrigin::Uia,
                         can_replace,
                         anchor,
+                        selection_rects,
                         screen: None,
                         replay: None,
                         execution: None,
@@ -234,6 +244,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         origin,
         can_replace,
         anchor: None,
+        selection_rects: Vec::new(),
         screen: None,
         replay: None,
         execution: None,
@@ -283,8 +294,8 @@ pub fn validate_target(target: &TargetIdentity) -> Result<(), String> {
         return Err("La cible a changé; remplacement refusé.".into());
     }
     if target.anchor.is_none() { return Ok(()); }
-    if let Ok((text, anchor, selection_len, _)) = selection(&element) {
-        if text != target.selected_text || selection_len != target.selection_len || Some(target.anchor) != Some(anchor) {
+    if let Ok((text, rects, selection_len, _)) = selection(&element) {
+        if text != target.selected_text || selection_len != target.selection_len || target.anchor != anchor_of(&rects) {
             return Err("La sélection a changé; remplacement refusé.".into());
         }
     }

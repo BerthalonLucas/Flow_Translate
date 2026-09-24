@@ -8,6 +8,7 @@ mod host;
 mod inference;
 mod menu_memory;
 mod placement;
+mod selection_lines;
 mod settings;
 mod system_motion;
 mod system_theme;
@@ -464,6 +465,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
         origin: CaptureOrigin::Replay,
         can_replace: false,
         anchor: None,
+        selection_rects: Vec::new(),
         replay: Some(Replay {
             request_id: result.request_id.clone(),
             translated_text: result.translated_text.clone(),
@@ -1707,7 +1709,7 @@ mod tests {
         assert!(!i.execution.as_mut().unwrap().claim_delivery("retry"));
     }
     fn menu_capture(i: &mut Inner, id: &str) {
-        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None });
+        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None });
         i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false });
         i.execution = None;
         i.visible = true;

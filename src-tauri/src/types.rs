@@ -160,7 +160,14 @@ pub struct Capture {
     /// How the text was obtained; shown nowhere, read by the real capture matrix.
     pub origin: CaptureOrigin,
     pub can_replace: bool,
+    /// The last visible rectangle of the selection, physical screen pixels.
     pub anchor: Option<Rect>,
+    /// The lines of a UI Automation selection (lot 5), physical screen pixels like
+    /// `anchor`, top to bottom (`selection_lines::lines`): one per line segment, at most
+    /// 64. Empty (absent) for a synthetic or user copy, a replay, or an application that
+    /// gives no usable rectangle: no effect is drawn on the text then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selection_rects: Vec<Rect>,
     /// The screen the capture opens on (its selection's, or the cursor's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<Screen>,
