@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(settings.menu_action_ids, ["correct", "translate", "professionalize", "shorten", "email"]);
         assert_eq!(settings.default_action_id, "correct");
         assert_eq!(settings.shortcut_bindings, [ShortcutBinding { id: "menu".into(), kind: BindingKind::Menu, shortcut: "Ctrl+Alt+Space".into(), action_id: "correct".into(), output_mode: OutputMode::Replace, enabled: true }]);
-        assert_eq!(settings.ui_version, crate::types::UiVersion::V4);
+        assert_eq!(settings.ui_version, crate::types::UiVersion::Ilot, "a fresh install opens the Îlot");
         assert!(validate(&settings).is_ok());
     }
     #[test]

@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(migrated.shortcut_bindings[..2], before[..], "Ctrl+Alt+T still translates into French, directly");
         assert_eq!(migrated.shortcut_bindings[2], ShortcutBinding { id: "menu".into(), kind: actions::BindingKind::Menu, shortcut: "Ctrl+Alt+Space".into(), action_id: "correct".into(), output_mode: actions::OutputMode::Replace, enabled: true });
         assert_eq!(migrated.default_action_id, "translate-fr");
-        assert_eq!(migrated.ui_version, crate::types::UiVersion::V4, "the Îlot stays hidden");
+        assert_eq!(migrated.ui_version, crate::types::UiVersion::Ilot, "0.5.0 opens the Îlot, its menu binding included");
         assert!(migrated.history_enabled && migrated.autostart && migrated.connection_expanded);
         assert_eq!((migrated.text_size, migrated.auto_close), (crate::types::TextSize::Large, crate::types::AutoClose::Slow));
         assert_eq!(migrated.profiles["quality"].model, "custom-quality");
@@ -495,13 +495,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
     #[test]
-    fn a_0_4_settings_file_without_the_ui_switch_keeps_the_0_4_journey() {
+    fn a_0_4_settings_file_without_the_ui_switch_opens_the_ilot_and_v4_stays_reachable() {
         let root = std::env::temp_dir().join(format!("flowtranslate-settings-test-{}", uuid::Uuid::new_v4()));
         let store = SettingsStore::new(&root);
         store.save(&Settings::default()).unwrap();
         let path = root.join("settings.json");
         let mut raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         raw.as_object_mut().unwrap().remove("uiVersion");
+        std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+        assert_eq!(store.load().unwrap().ui_version, crate::types::UiVersion::Ilot);
+        raw.as_object_mut().unwrap().insert("uiVersion".into(), "v4".into());
         std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
         assert_eq!(store.load().unwrap().ui_version, crate::types::UiVersion::V4);
         let _ = std::fs::remove_dir_all(root);

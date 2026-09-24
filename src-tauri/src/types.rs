@@ -288,12 +288,13 @@ pub enum AutoClose {
 /// Hidden switch of the « Îlot » art direction (docs/DA-PLAN.md, lot 0): `v4` keeps the
 /// 0.4 journey (a shortcut runs its action at once, the waiting pill, the glass),
 /// `ilot` the new one (the menu beside the selection, the pill, the check and Undo). Not
-/// shown in the settings window; kept while the migration lasts.
+/// shown in the settings window. The Îlot is the default since jalon B (0.5.0), a 0.4 file
+/// included (it has no `uiVersion`); `v4` stays reachable by editing settings.json.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum UiVersion {
-    #[default]
     V4,
+    #[default]
     Ilot,
 }
 
