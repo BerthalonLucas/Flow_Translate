@@ -73,6 +73,19 @@ describe('error codes', () => {
     expect(languages.map(language => translate(language, describeError('target_changed', { source: 'capture' }).message))).toEqual(['Window changed — try again', 'Fenêtre changée, réessayez']);
   });
 
+  it('says why an Undo could not be done in its own words, with no button: nothing else is pasted', () => {
+    const text = (code: ErrorCode, source: 'undo' | 'undo-sent') => languages.map(language => translate(language, describeError(code, { source }).message));
+    expect(text('target_changed', 'undo')).toEqual(['Text changed — can’t undo', 'Texte modifié, annulation impossible']);
+    expect(text('keys_held', 'undo')).toEqual(['Keys held down — can’t undo', 'Touches enfoncées, annulation impossible']);
+    expect(text('paste_blocked', 'undo')).toEqual(['This app blocked Undo', 'L’application a bloqué l’annulation']);
+    expect(text('internal', 'undo')).toEqual(['Can’t undo now', 'Annulation indisponible']);
+    expect(text('paste_blocked', 'undo-sent')).toEqual(['Undo not confirmed — check text', 'Annulation non confirmée, vérifiez']);
+    for (const code of errorCodes) for (const source of ['undo', 'undo-sent'] as const) {
+      const { action, actionLabel } = describeError(code, { source });
+      expect([action, actionLabel], `${code} ${source}`).toEqual([null, null]);
+    }
+  });
+
   it('says the Settings in front and nothing recent by their own codes, never from Rust’s words', () => {
     const text = (code: ErrorCode) => languages.map(language => translate(language, describeError(code, { source: 'capture' }).message));
     expect(text('no_selection')).toEqual(['Select some text first', 'Sélectionnez d’abord du texte']);
@@ -90,7 +103,8 @@ describe('error codes', () => {
   });
 
   it('says it in six words at most, in English and in French', () => {
-    const descriptions = [...errorCodes.map(kind => describeError(kind, { model: 'gemma-4-12b' })), ...errorCodes.map(kind => describeError(kind, { source: 'capture' }))];
+    const descriptions = [...errorCodes.map(kind => describeError(kind, { model: 'gemma-4-12b' })), ...errorCodes.map(kind => describeError(kind, { source: 'capture' })),
+      ...errorCodes.map(kind => describeError(kind, { source: 'undo' })), describeError('paste_blocked', { source: 'undo-sent' })];
     for (const { code: kind, message, actionLabel } of descriptions) {
       for (const language of languages) {
         const text = translate(language, message, { model: 'gemma-4-12b' });

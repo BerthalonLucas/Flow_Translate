@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Undo2, X } from 'lucide-react';
 import { useT } from '../i18n';
 import { IndicatorView } from '../loaders/indicators';
@@ -9,7 +9,7 @@ import { MorphSurface, type ShapeChange, type SurfaceOrigin, type SurfaceSize } 
 import { useReducedMotionSetting } from '../motion/MotionPreferences';
 import type { AfterReplace, ErrorCode, Indicator, Mode } from '../types';
 import { Icon, iconStroke } from '../ui';
-import { Countdown, resultTiming, type PauseReason } from './countdown';
+import { Countdown, resultTiming } from './countdown';
 import { describeError, errorFamily, type ErrorAction, type ErrorSource } from './errors';
 import '../menu/ilot.css';
 import './result.css';
@@ -46,9 +46,12 @@ import './result.css';
  *       its contentKey, `size` its fixed size (undefined: the content's natural size). null: no
  *       pill (done with neither check nor Undo, or a silent error such as cancelled).
  *       The Îlot (src/menu/Ilot.tsx) takes it as is for its pill shape (src/menu/IlotStage.tsx).
- *   Stages: { stage: 'working', indicator, delayMs? } | { stage: 'done', afterReplace }
+ *   Stages: { stage: 'working', indicator, delayMs? } | { stage: 'done', afterReplace, clock?, busy?, drawn? }
  *           | { stage: 'undone' } | { stage: 'error', error, mode?, model?, source? }
- *           source 'capture': a capture Rust refused (`capture-notice`), no button at all.
+ *           done: see DoneContent (a shared clock, Undo on its way, the check already drawn);
+ *           keyed 'done' with Undo, 'done-check' without.
+ *           source 'capture': a capture Rust refused (`capture-notice`), no button at all;
+ *           'undo' / 'undo-sent': an Undo that could not be done (src/result/errors.ts).
  *   onUndo()        Undo was clicked (the native side sends Ctrl+Z or pastes the original back,
  *                   after revalidation).
  *   onExpire()      the done or undone stage is over: let the surface leave.
@@ -64,7 +67,7 @@ import './result.css';
 
 export type ResultStage =
   | { stage: 'working'; indicator: Indicator; delayMs?: number }
-  | { stage: 'done'; afterReplace: AfterReplace }
+  | { stage: 'done'; afterReplace: AfterReplace; clock?: Countdown; busy?: boolean; drawn?: boolean }
   | { stage: 'undone' }
   | { stage: 'error'; error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource };
 export type ActionAnswer = void | boolean | Promise<void | boolean>;
@@ -101,27 +104,33 @@ export function WorkingContent({ indicator, delayMs = ORB_DELAY_MS }: { indicato
 }
 
 // The check and Undo (Simulator.jsx:279-284). durationMs: resultTiming(afterReplace).durationMs.
-export function DoneContent({ check, undo, durationMs, onUndo, onExpire }: { check: boolean; undo: boolean; durationMs: number; onUndo?: () => void; onExpire?: () => void }) {
+// clock: a countdown that outlives this content (the Îlot keeps one per replacement, so the check
+// alone that follows a withdrawn Undo ends when Undo would have); without it the content keeps
+// its own of durationMs. busy: Undo is on its way: the button waits and the time stands still.
+// drawn: the check is already drawn (it was, in the content this one follows).
+export function DoneContent({ check, undo, durationMs, clock: shared, busy = false, drawn = false, onUndo, onExpire }: { check: boolean; undo: boolean; durationMs: number; clock?: Countdown; busy?: boolean; drawn?: boolean; onUndo?: () => void; onExpire?: () => void }) {
   const t = useT();
   const reduced = useReducedMotionSetting();
+  const id = useId();
   const row = useRef<HTMLDivElement>(null);
   const ring = useRef<SVGCircleElement>(null);
   const countdown = useRef<Countdown | null>(null);
-  const wake = useRef<() => void>(() => undefined);
   const latest = useRef({ onExpire, reduced });
   latest.current = { onExpire, reduced };
   const [paused, setPaused] = useState(false);
+  const wake = useRef<() => void>(() => undefined);
 
   // The time is the countdown's (performance.now()); a timer ends it even without frames, and
-  // frames only draw the ring: none while paused, one per second in reduced motion.
+  // frames only draw the ring: none while paused, one per second in reduced motion. Any holder
+  // pausing or resuming the clock wakes this view.
   useLayoutEffect(() => {
-    const clock = new Countdown(durationMs, performance.now());
-    countdown.current = clock;
-    let frame = 0, timer = 0, over = false, drawn = -1;
+    const running = shared ?? new Countdown(durationMs, performance.now());
+    countdown.current = running;
+    let frame = 0, timer = 0, over = false, drawnArc = -1;
     const draw = (now: number) => {
-      const value = latest.current.reduced ? clock.steppedProgress(now) : clock.progress(now);
-      if (value === drawn || !ring.current) return;
-      drawn = value;
+      const value = latest.current.reduced ? running.steppedProgress(now) : running.progress(now);
+      if (value === drawnArc || !ring.current) return;
+      drawnArc = value;
       ring.current.setAttribute('stroke-dasharray', `${(circumference * value).toFixed(2)} 99`);
     };
     const run = () => {
@@ -130,33 +139,38 @@ export function DoneContent({ check, undo, durationMs, onUndo, onExpire }: { che
       if (over) return;
       const now = performance.now();
       draw(now);
-      if (clock.expired(now)) { over = true; latest.current.onExpire?.(); return; }
-      if (clock.paused) return;
-      const left = clock.remaining(now);
+      setPaused(running.paused);
+      if (running.expired(now)) { over = true; latest.current.onExpire?.(); return; }
+      if (running.paused) return;
+      const left = running.remaining(now);
       if (latest.current.reduced) { timer = window.setTimeout(run, Math.min(left, left % 1000 || 1000)); return; }
       timer = window.setTimeout(run, left);
       const paint = () => { draw(performance.now()); frame = window.requestAnimationFrame(paint); };
       frame = window.requestAnimationFrame(paint);
     };
     wake.current = run;
+    const unsubscribe = running.subscribe(run);
     run();
-    return () => { over = true; window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
-  }, [durationMs]);
+    return () => {
+      over = true; unsubscribe(); window.cancelAnimationFrame(frame); window.clearTimeout(timer);
+      // What this content held, it releases: the next content holds its own reasons.
+      for (const reason of ['hover', 'focus', 'busy']) running.resume(`${id}:${reason}`, performance.now());
+    };
+  }, [shared, durationMs, id]);
   useEffect(() => { wake.current(); }, [reduced]);
 
-  const hold = (reason: PauseReason, on: boolean) => {
-    const clock = countdown.current;
-    if (!clock) return;
-    if (on) clock.pause(reason, performance.now()); else clock.resume(reason, performance.now());
-    setPaused(clock.paused);
-    wake.current();
-  };
+  const hold = useCallback((reason: 'hover' | 'focus' | 'busy', on: boolean) => {
+    const running = countdown.current;
+    if (!running) return;
+    if (on) running.pause(`${id}:${reason}`, performance.now()); else running.resume(`${id}:${reason}`, performance.now());
+  }, [id]);
+  useLayoutEffect(() => { hold('busy', busy); }, [busy, hold]);
   const layout = check && undo ? '' : check ? ' is-check-only' : ' is-undo-only';
   return <div ref={row} className={`result-row${layout}`} role="group" aria-label={t('glass.replaced')} data-result-content="done" data-paused={paused || undefined}
     onMouseEnter={() => hold('hover', true)} onMouseLeave={() => hold('hover', false)}
     onFocus={() => hold('focus', true)} onBlur={event => { if (!row.current?.contains(event.relatedTarget as Node | null)) hold('focus', false); }}>
-    {check && <svg className="result-check" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path pathLength={1} d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-    {undo && <button type="button" className="result-btn result-undo" onClick={() => onUndo?.()}>
+    {check && <svg className={`result-check${drawn ? ' is-drawn' : ''}`} width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path pathLength={1} d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+    {undo && <button type="button" className="result-btn result-undo" aria-disabled={busy || undefined} aria-busy={busy || undefined} onClick={() => { if (!busy) onUndo?.(); }}>
       <Undo2 size={12} strokeWidth={iconStroke} aria-hidden="true" />{t('result.undo')}
       <svg className="result-ring" viewBox="0 0 14 14" aria-hidden="true"><circle className="track" cx="7" cy="7" r="5" /><circle ref={ring} cx="7" cy="7" r="5" /></svg>
     </button>}
@@ -223,7 +237,10 @@ export function resultContent(stage: ResultStage, handlers: ResultHandlers = {})
     case 'done': {
       const timing = resultTiming(stage.afterReplace);
       if (!timing.durationMs) return null;
-      return { key: 'done', node: <DoneContent check={timing.check} undo={timing.undo} durationMs={timing.durationMs} onUndo={handlers.onUndo} onExpire={handlers.onExpire} /> };
+      // Undo withdrawn: the check alone is a new content (it fades in while Undo fades out and the
+      // surface springs narrower), on the same clock.
+      return { key: timing.undo ? 'done' : 'done-check', node: <DoneContent check={timing.check} undo={timing.undo} durationMs={timing.durationMs} clock={stage.clock} busy={stage.busy} drawn={stage.drawn}
+        onUndo={handlers.onUndo} onExpire={handlers.onExpire} /> };
     }
     case 'undone':
       return { key: 'undone', node: <UndoneContent onExpire={handlers.onExpire} /> };

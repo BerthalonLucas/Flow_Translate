@@ -47,6 +47,26 @@ describe('Countdown', () => {
     expect(clock.expired(7000)).toBe(true);
   });
 
+  it('tells its views when it stops or starts again, and each holder releases only its own reasons', () => {
+    const clock = new Countdown(4000, 0);
+    const heard: boolean[] = [];
+    const stop = clock.subscribe(() => heard.push(clock.paused));
+    // Two contents on the same clock (the check and Undo, then the check alone), each holding.
+    clock.pause('a:hover', 1000);
+    clock.pause('b:hover', 1100);
+    clock.resume('a:hover', 1500);
+    expect(clock.paused).toBe(true);
+    clock.pause('busy', 1600);
+    clock.resume('b:hover', 1700);
+    expect(clock.paused).toBe(true);
+    clock.resume('busy', 2000);
+    expect(heard).toEqual([true, false]);
+    expect(clock.remaining(2000)).toBe(3000);
+    stop();
+    clock.pause('busy', 2500);
+    expect(heard).toEqual([true, false]);
+  });
+
   it('steps once a second for reduced motion', () => {
     const clock = new Countdown(8000, 0);
     expect([0, 999, 1000, 1001, 4000, 7999, 8000].map(now => clock.steppedProgress(now))).toEqual([1, 1, 7 / 8, 7 / 8, 4 / 8, 1 / 8, 0]);

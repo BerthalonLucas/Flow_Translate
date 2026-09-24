@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { initialTranslationState, type TranslationState } from '../reducer';
 import type { AfterReplace, Capture, ErrorCode, ExecutionInfo } from '../types';
-import { effectiveAfterReplace, ilotJourney, ilotOutcome, ownPasteRefusal, pasteCode, type OwnPaste } from './outcome';
+import { effectiveAfterReplace, ilotJourney, ilotOutcome, ownPasteRefusal, pasteCode, type OwnPaste, type UndoProgress } from './outcome';
 
 const execution: ExecutionInfo = { actionId: 'correct', actionName: 'Fix grammar', outputMode: 'replace', mode: 'fast' };
 const capture: Capture = { id: 'c', text: 'x', source: 'selection', canReplace: true, anchor: null, menu: { lastActionId: null }, execution };
 const state = (patch: Partial<TranslationState> = {}): TranslationState => ({ ...initialTranslationState, capture, requestId: 'r1', phase: 'streaming', delivery: 'pending', ...patch });
-const outcome = (patch: Partial<TranslationState> = {}, paste: OwnPaste | null = null, chosen = false, undone = false) => ilotOutcome(state(patch), { chosen, paste, undone });
+const outcome = (patch: Partial<TranslationState> = {}, paste: OwnPaste | null = null, chosen = false, undo: UndoProgress | null = null) => ilotOutcome(state(patch), { chosen, paste, undo });
 
 describe('the Îlot journey', () => {
   it('is a menu capture under uiVersion ilot, nothing else', () => {
@@ -26,9 +26,21 @@ describe('ilotOutcome', () => {
     expect(outcome({ phase: 'complete', delivery: 'pending' })).toEqual({ stage: 'working' });
   });
 
-  it('checks once Rust pasted, and says Undone after an Undo', () => {
-    expect(outcome({ phase: 'complete', delivery: 'applied' })).toEqual({ stage: 'done' });
-    expect(outcome({ phase: 'complete', delivery: 'applied' }, null, false, true)).toEqual({ stage: 'undone' });
+  it('checks once Rust pasted, keeps the check while Undo is on its way, and says Undone after it', () => {
+    const applied = { phase: 'complete', delivery: 'applied' } as const;
+    expect(outcome(applied)).toEqual({ stage: 'done' });
+    expect(outcome(applied, null, false, { status: 'pending' })).toEqual({ stage: 'done' });
+    expect(outcome(applied, null, false, { status: 'undone' })).toEqual({ stage: 'undone' });
+  });
+
+  it('says why an Undo could not be done, in its own words, and never as a paste to retry or copy', () => {
+    const applied = { phase: 'complete', delivery: 'applied' } as const;
+    // Refused: nothing was sent (the text changed, keys held, the application blocked it).
+    expect(outcome(applied, null, false, { status: 'refused', code: 'target_changed' })).toEqual({ stage: 'error', code: 'target_changed', source: 'undo' });
+    expect(outcome(applied, null, false, { status: 'refused', code: 'keys_held' })).toEqual({ stage: 'error', code: 'keys_held', source: 'undo' });
+    expect(outcome(applied, null, false, { status: 'refused' })).toEqual({ stage: 'error', code: 'internal', source: 'undo' });
+    // Failed: sent, and the original did not read back.
+    expect(outcome(applied, null, false, { status: 'failed', code: 'paste_blocked' })).toEqual({ stage: 'error', code: 'paste_blocked', source: 'undo-sent' });
   });
 
   it('turns a stream error into its code, an unknown or missing one into internal, a cancel into leaving', () => {
@@ -77,7 +89,7 @@ describe('ilotOutcome', () => {
 
 describe('effectiveAfterReplace', () => {
   const after: AfterReplace = { check: true, undo: true, undoSeconds: 8, changedWords: true };
-  it('keeps Undo only once the native side offers it', () => {
+  it('keeps Undo only while Rust offers it for this replacement', () => {
     expect(effectiveAfterReplace(after, false)).toEqual({ ...after, undo: false });
     expect(effectiveAfterReplace(after, true)).toEqual(after);
     expect(effectiveAfterReplace({ ...after, check: false }, false)).toEqual({ ...after, check: false, undo: false });

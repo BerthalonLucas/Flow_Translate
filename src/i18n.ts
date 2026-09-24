@@ -49,6 +49,13 @@ const dictionary = {
   // has one (design-lab/src/data.js:17-18, 66-72; Simulator.jsx:264, 285, 292), at most six words.
   'result.undo': { en: 'Undo', fr: 'Annuler' },
   'result.undone': { en: 'Undone', fr: 'Annulé' },
+  // An Undo that could not be done (lot 9, `undo_result`): refused before anything was sent, or
+  // sent and not read back. Nothing else is ever pasted.
+  'result.undo.target_changed': { en: 'Text changed — can’t undo', fr: 'Texte modifié, annulation impossible' },
+  'result.undo.keys_held': { en: 'Keys held down — can’t undo', fr: 'Touches enfoncées, annulation impossible' },
+  'result.undo.paste_blocked': { en: 'This app blocked Undo', fr: 'L’application a bloqué l’annulation' },
+  'result.undo.internal': { en: 'Can’t undo now', fr: 'Annulation indisponible' },
+  'result.undo.sent': { en: 'Undo not confirmed — check text', fr: 'Annulation non confirmée, vérifiez' },
   'result.copied': { en: 'Copied', fr: 'Copié' },
   'result.action.endpoint': { en: 'Open endpoint', fr: 'Voir l’adresse' },
   'result.action.apiKey': { en: 'Fix key', fr: 'Corriger la clé' },

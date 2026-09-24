@@ -16,11 +16,14 @@ export type TranslationState = {
   invalidated: boolean;
   comparing: boolean;
   delivery: null | 'pending' | 'applied' | 'fallback';
+  // Lot 9: Rust's own paste under the Îlot found its text and Undo is on (`result-delivery`
+  // applied, `undoable`), until `undo-state` withdraws it. False for anything else.
+  undoable: boolean;
 };
 
 export const initialTranslationState: TranslationState = {
   capture: null, requestId: null, mode: 'quality', result: '',
-  phase: 'idle', delivery: null, error: null, code: null, replacementValid: false, invalidated: false, comparing: false,
+  phase: 'idle', delivery: null, error: null, code: null, replacementValid: false, invalidated: false, comparing: false, undoable: false,
 };
 
 export type Action =
@@ -31,6 +34,7 @@ export type Action =
   | { type: 'TARGET'; captureId: string; canReplace: boolean }
   | { type: 'INVALIDATE'; message: string }
   | { type: 'DELIVERY'; event: ResultDelivery }
+  | { type: 'UNDO_LOST'; requestId: string }
   | { type: 'CANCEL' }
   | { type: 'DISMISS' }
   | { type: 'TOGGLE_COMPARE' };
@@ -38,7 +42,7 @@ export type Action =
 export function translationReducer(state: TranslationState, action: Action): TranslationState {
   switch (action.type) {
     case 'CAPTURE':
-      return { ...state, capture: action.capture, requestId: null, result: '', error: null, code: null, comparing: false,
+      return { ...state, capture: action.capture, requestId: null, result: '', error: null, code: null, comparing: false, undoable: false,
         replacementValid: false, invalidated: false, phase: 'idle', delivery: action.capture.execution?.outputMode === 'replace' && !action.capture.replay ? 'pending' : null };
     // Îlot: the menu capture received its execution (`choose_action`); the menu always
     // replaces, so the pill waits for the native delivery like a direct « replace » capture.
@@ -46,7 +50,7 @@ export function translationReducer(state: TranslationState, action: Action): Tra
       if (action.captureId !== state.capture?.id || state.capture.execution) return state;
       return { ...state, capture: { ...state.capture, execution: action.execution }, delivery: action.execution.outputMode === 'replace' ? 'pending' : null };
     case 'START':
-      return { ...state, requestId: action.requestId, mode: action.mode,
+      return { ...state, requestId: action.requestId, mode: action.mode, undoable: false,
         result: '', error: null, code: null, phase: 'streaming', replacementValid: false, delivery: state.requestId ? null : state.delivery };
     case 'STREAM':
       if (action.event.requestId !== state.requestId) return state;
@@ -57,7 +61,10 @@ export function translationReducer(state: TranslationState, action: Action): Tra
     case 'DELIVERY':
       if (action.event.requestId !== state.requestId) return state;
       return { ...state, delivery: action.event.status, code: action.event.status === 'fallback' && action.event.code !== undefined ? errorCodeOf(action.event.code) : null,
-        replacementValid: action.event.status === 'applied' ? false : state.replacementValid };
+        replacementValid: action.event.status === 'applied' ? false : state.replacementValid, undoable: action.event.status === 'applied' && action.event.undoable === true };
+    // Lot 9: Rust withdrew Undo (a key in the source, the user's own Ctrl+Z, the caret moved).
+    case 'UNDO_LOST':
+      return action.requestId === state.requestId && state.undoable ? { ...state, undoable: false } : state;
     case 'TARGET':
       // The native target arrives behind the shown window; a stale capture id is ignored.
       if (action.captureId !== state.capture?.id) return state;

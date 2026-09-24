@@ -2,7 +2,7 @@ import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds,
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
-import type { BindingState, Capture, ErrorCode, ExecutionInfo, HaloEvent, Settings, ShortcutStatus, TranslationRequest } from '../src/types';
+import type { BindingState, Capture, ErrorCode, ExecutionInfo, HaloEvent, Rect, Settings, ShortcutStatus, TranslationRequest, UndoLoss, UndoOutcome } from '../src/types';
 
 let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
@@ -10,7 +10,8 @@ let settings: Settings = { mode: 'quality', defaultActionId, actions: structured
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.
 const capture = (id: string, text = 'Example selection', execution?: ExecutionInfo): Capture => ({ id, text, source: 'selection', canReplace: false, anchor: { x: 400, y: 300, width: 120, height: 18 }, screen: { width: 1920, height: 1040, scale: 1 }, ...(execution ? { execution } : {}) });
 const replaceExecution: ExecutionInfo = { actionId: 'correct', actionName: 'Corriger', outputMode: 'replace', mode: 'quality' };
-const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
+// Every command the page invokes, with the page's clock when it did (performance.now()).
+const calls: Array<{ command: string; args: Record<string, unknown> | undefined; at: number }> = [];
 let request: TranslationRequest;
 let currentCapture = capture('first');
 let heldCopy = false;
@@ -20,6 +21,11 @@ let refuseShortcut = false;
 // Rust's refusal of the next `replace_result`: `{message, code}` (Refusal) since the review of
 // da-ilot, the French message for the 0.4 glass, the code for the Îlot.
 let refuseReplace: { message: string; code: ErrorCode } | null = null;
+// Lot 9: what `undo_result` answers (Rust's UndoOutcome, or a rejection: its French string), at
+// once or once released.
+let undoAnswer: { outcome?: Partial<UndoOutcome>; reject?: string } = {};
+let holdUndo = false;
+let releaseUndo: (() => void) | undefined;
 let resolveCopy: (() => void) | undefined;
 // Rust's reading of « Effets d'animation »: unknown until a test sets it.
 let windowsMotion: { reduced: boolean } | null = null;
@@ -50,7 +56,7 @@ const takenAtStart = new URLSearchParams(location.search).get('shortcutTaken');
 if (takenAtStart) shortcutStates[takenAtStart] = 'taken';
 const shortcutStatus = (): ShortcutStatus[] => settings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: shortcutStates[b.id] ?? (b.enabled ? 'registered' : 'disabled') }));
 mockIPC((command, args) => {
-  calls.push({ command, args });
+  calls.push({ command, args, at: performance.now() });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
   if (command === 'get_history') return [];
   if (command === 'system_motion') return windowsMotion;
@@ -93,6 +99,17 @@ mockIPC((command, args) => {
   if (command === 'start_drag') return Promise.reject('Synthetic drag failure');
   if (command === 'dismiss_overlay') return emit('overlay-dismiss-requested', { captureId: currentCapture.id });
   if (command === 'copy_result' && heldCopy) return new Promise<void>(resolve => { resolveCopy = resolve; });
+  // Lot 9: Rust undoes once, after revalidation; the marks it draws are counted, never shown here.
+  if (command === 'undo_result') {
+    const requestId = (args as { requestId: string }).requestId;
+    const answer = () => undoAnswer.reject !== undefined ? Promise.reject(undoAnswer.reject)
+      : Promise.resolve({ requestId, status: 'undone', confirmed: true, message: 'Remplacement annulé.', ...undoAnswer.outcome } satisfies UndoOutcome);
+    if (!holdUndo) return answer();
+    holdUndo = false;
+    return new Promise((resolve, reject) => { releaseUndo = () => { answer().then(resolve, reject); }; });
+  }
+  if (command === 'highlight_changes') { const ranges = (args as { ranges: unknown[] }).ranges; return { ranges: ranges.length, lines: ranges.length }; }
+  if (command === 'clear_highlight') return;
   if (command === 'replace_result' && refuseReplace !== null) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject(refuseReplace); }
 }, { shouldMockEvents: true });
 mockWindows('overlay');
@@ -109,6 +126,19 @@ Object.assign(window, { nativeFixture: {
   // A « replace » capture: Rust will paste the first complete result and report `result-delivery`.
   captureReplace: (id: string, text?: string) => { currentCapture = { ...capture(id, text, replaceExecution), canReplace: true }; return emit('capture', currentCapture); },
   deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.', code?: ErrorCode) => { await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message, ...(code ? { code } : {}) }); },
+  // Lot 9: Rust's own paste under the Îlot, its text found (`pastedRects`, physical) and Undo on
+  // (`undoable`), or not.
+  pasted: async ({ undoable = true, pastedRects = [{ x: 380, y: 300, width: 140, height: 18 }] }: { undoable?: boolean; pastedRects?: Rect[] } = {}) => {
+    await emit('capture-target', { captureId: currentCapture.id, canReplace: false });
+    await emit('result-delivery', { requestId: request.id, status: 'applied', confirmed: true, message: 'Sélection remplacée.', pastedRects, undoable });
+  },
+  // What the next `undo_result` answers: an outcome (undone by default), or a rejection.
+  undoWith: (outcome: Partial<UndoOutcome>) => { undoAnswer = { outcome }; },
+  undoRejects: (message = 'Ce résultat n’est plus actif.') => { undoAnswer = { reject: message }; },
+  holdUndo: () => { holdUndo = true; },
+  releaseUndo: () => { releaseUndo?.(); releaseUndo = undefined; },
+  // Rust withdrew Undo: a key in the source, the user's own Ctrl+Z, the caret moved.
+  undoState: (reason: UndoLoss = 'typed', requestId = request.id) => emit('undo-state', { requestId, available: false, reason }),
   delta: (text: string, requestId = request.id) => emit('translation', { requestId, kind: 'delta', text }),
   done: (text?: string) => emit('translation', { requestId: request.id, kind: 'done', ...(text === undefined ? {} : { text }) }),
   dismissEvent: (captureId: string) => emit('overlay-dismiss-requested', { captureId }),

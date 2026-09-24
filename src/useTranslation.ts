@@ -5,7 +5,7 @@ import { t } from './i18n';
 import { defaultActionId } from './actionDefaults';
 import { ilotJourney } from './menu/outcome';
 import { errorCodeOf } from './result/errors';
-import type { Capture, CaptureNotice, CaptureTarget, ErrorCode, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
+import type { Capture, CaptureNotice, CaptureTarget, ErrorCode, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery, UndoState } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
@@ -164,6 +164,11 @@ export function useTranslation(readyOnMount = false) {
         if (event.status === 'fallback' && !ilotJourney(settingsRef.current, captureRef.current)) showNotice(event.message);
       }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
+      // Lot 9: Undo is no longer safe (a key in the source, the user's own Ctrl+Z, the caret
+      // moved): the Îlot removes it, the pill stays until its time ends.
+      bridge.on<UndoState>('undo-state', event => {
+        if (event.requestId === requestRef.current && !closingRef.current && event.available === false) dispatch({ type: 'UNDO_LOST', requestId: event.requestId });
+      }),
       // Lot 4: the menu shortcut pressed twice within 400 ms runs, without the menu, the
       // last action of that application (else the default action). Handled here, not in
       // the menu, so it holds even before the menu has rendered.

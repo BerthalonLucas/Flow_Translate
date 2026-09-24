@@ -3,6 +3,7 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MotionConfig } from 'motion/react';
 import { DoneContent, ErrorContent, resultContent, showsResultPill, UndoneContent } from './ResultPill';
+import { Countdown } from './countdown';
 import type { AfterReplace } from '../types';
 
 // The contents of the result pill in jsdom, on a simulated clock (timers, frames and
@@ -102,6 +103,34 @@ describe('DoneContent', () => {
     expect(host!.querySelector('.result-check')).toBeNull();
   });
 
+  it('keeps a shared clock across the contents that follow each other, and holds it while Undo is on its way', async () => {
+    const onExpire = vi.fn();
+    const clock = new Countdown(4000, performance.now());
+    await mount(<DoneContent key="with-undo" check undo durationMs={4000} clock={clock} onExpire={onExpire} />);
+    await advance(1000);
+    // Undo on its way: the time stands still, the button waits.
+    await act(async () => root!.render(<MotionConfig reducedMotion="never"><DoneContent key="with-undo" check undo busy durationMs={4000} clock={clock} onExpire={onExpire} /></MotionConfig>));
+    expect(host!.querySelector('.result-undo')!.getAttribute('aria-disabled')).toBe('true');
+    await advance(10_000);
+    expect(onExpire).not.toHaveBeenCalled();
+    // Withdrawn: the check alone takes its place, already drawn, on the same clock (3 s left).
+    await act(async () => root!.render(<MotionConfig reducedMotion="never"><DoneContent key="check" check undo={false} drawn durationMs={1100} clock={clock} onExpire={onExpire} /></MotionConfig>));
+    expect(host!.querySelector('.result-undo')).toBeNull();
+    expect(host!.querySelector('.result-check')!.classList.contains('is-drawn')).toBe(true);
+    // The busy hold went with the content that held it.
+    await advance(2999);
+    expect(onExpire).not.toHaveBeenCalled();
+    await advance(1);
+    expect(onExpire).toHaveBeenCalledTimes(1);
+  });
+
+  it('never calls onUndo while Undo is on its way', async () => {
+    const waiting = vi.fn();
+    await mount(<DoneContent check undo busy durationMs={8000} onUndo={waiting} />);
+    await act(async () => host!.querySelector<HTMLButtonElement>('.result-undo')!.click());
+    expect(waiting).not.toHaveBeenCalled();
+  });
+
   it('calls onUndo from its button', async () => {
     const onUndo = vi.fn();
     await mount(<DoneContent check undo durationMs={8000} onUndo={onUndo} />);
@@ -167,6 +196,16 @@ describe('ErrorContent', () => {
     expect(host!.querySelectorAll('button').length).toBe(1);
   });
 
+  it('says why an Undo could not be done, in its own words, with ✕ only', async () => {
+    const onAction = vi.fn();
+    await mount(<ErrorContent error="target_changed" source="undo" onAction={onAction} onDismiss={() => undefined} />);
+    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Text changed — can’t undo');
+    expect([...host!.querySelectorAll('button')].map(button => button.getAttribute('aria-label'))).toEqual(['Close']);
+    await act(async () => root!.render(<ErrorContent error="paste_blocked" source="undo-sent" onDismiss={() => undefined} />));
+    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Undo not confirmed — check text');
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
   it('says a refused capture without any button: nothing to retry or copy, and no ✕ without onDismiss', async () => {
     const onAction = vi.fn();
     // The source window changed during the capture: nothing was tried, the capture's own words.
@@ -189,7 +228,7 @@ describe('resultContent', () => {
   it('keys each stage, sizes the work pill, and leaves the others to their content', () => {
     expect(resultContent({ stage: 'working', indicator: 'perle' })).toMatchObject({ key: 'working', size: { width: 44, height: 28 } });
     expect(resultContent({ stage: 'working', indicator: 'ruban' })).toMatchObject({ key: 'working', size: { width: 52, height: 28 } });
-    for (const [stage, key] of [[{ stage: 'done', afterReplace: after() }, 'done'], [{ stage: 'undone' }, 'undone'], [{ stage: 'error', error: 'busy' }, 'error-busy']] as const) {
+    for (const [stage, key] of [[{ stage: 'done', afterReplace: after() }, 'done'], [{ stage: 'done', afterReplace: after({ undo: false }) }, 'done-check'], [{ stage: 'undone' }, 'undone'], [{ stage: 'error', error: 'busy' }, 'error-busy']] as const) {
       const content = resultContent(stage)!;
       expect(content.key).toBe(key);
       expect(content.size).toBeUndefined();

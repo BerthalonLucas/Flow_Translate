@@ -7,7 +7,9 @@ import { ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, type
 import { indicatorOf } from '../loaders/pill';
 import { useMotionPreset, useReducedMotionSetting } from '../motion/MotionPreferences';
 import { animateSlide } from '../motion/surface';
-import { refusalCode, type ErrorAction } from '../result/errors';
+import { Countdown, resultTiming } from '../result/countdown';
+import { errorCodeOf, refusalCode, type ErrorAction } from '../result/errors';
+import { changedRanges } from '../result/highlight';
 import { resultContent, type ActionAnswer, type ResultStage } from '../result/ResultPill';
 import type { ActionDefinition, Capture, ErrorCode, HitRegion, Presentation, Settings } from '../types';
 import type { TranslationController } from '../useTranslation';
@@ -15,7 +17,7 @@ import { Ilot, type IlotHandle, type IlotKeyboard } from './Ilot';
 import { browserShortcut, keyInputOf, maxTiles, type KeyInput } from './keys';
 import { ilotMetrics } from './metrics';
 import { MorphSurface, type ShapeChange, type SurfaceSize } from './MorphSurface';
-import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } from './outcome';
+import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, type UndoProgress } from './outcome';
 
 /*
  * The Îlot in the overlay (lot 7, uiVersion 'ilot'): a menu capture (`capture.menu`, no execution
@@ -48,8 +50,17 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  *             delivers a capture's first request only; a refusal reads as its code, `{message,
  *             code}`, src/result/errors.ts refusalCode); paste → Copy result (copy_result), nothing
  *             replaced; content → ✕ only; cancelled → the Îlot leaves. ✕ and Escape close.
- *   Undo      bridge.undoResult (lot 9, native side): null today, so the check stays alone 1.1 s;
- *             once it exists, the button, its ring and its pauses are ResultPill's DoneContent.
+ *   Undo      lot 9: after Rust's own paste (`result-delivery` applied), the check, then Undo and
+ *             its ring while Rust offers it (`undoable`; `undo-state` withdraws it: the check alone
+ *             takes its place on the same clock, the surface's corner fixed). One click asks
+ *             `undo_result` once: `undone` → « Undone », then the Îlot leaves; refused or failed →
+ *             the error pill in Undo's words, ✕ only; nothing else is ever pasted. The time stands
+ *             still under the pointer, on the focus and while Undo is on its way; at its end the
+ *             Îlot leaves. A retried result the Îlot pasted itself has no Undo (Rust's own only).
+ *   marks     lot 9: the changed words (src/result/highlight.ts, afterReplace.changedWords) asked
+ *             once per replacement with `highlight_changes` while Undo is offered, cleared once
+ *             with `clear_highlight` at the countdown's end (Rust clears them itself on Undo, a
+ *             withdrawal or a dismissal).
  */
 
 // How long the Îlot waits for Rust's placement before it opens anyway (below the selection); the
@@ -238,10 +249,11 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     });
   };
 
-  // What the surface shows (src/menu/outcome.ts), and the frontend's own paste of a retry.
+  // What the surface shows (src/menu/outcome.ts), the frontend's own paste of a retry, and the
+  // Undo of Rust's replacement.
   const [paste, setPaste] = useState<OwnPaste | null>(null);
-  const [undone, setUndone] = useState(false);
-  const outcome = ilotOutcome(state, { chosen: choosing, paste, undone });
+  const [undo, setUndo] = useState<UndoProgress | null>(null);
+  const outcome = ilotOutcome(state, { chosen: choosing, paste, undo });
   const requestId = state.requestId;
   useEffect(() => {
     if (state.phase !== 'complete' || state.delivery !== null || !requestId || closingRef.current) return;
@@ -309,16 +321,59 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     // The Settings take the foreground on the request's field; the pill has said what it had to.
     return bridge.openSettings(action.field).then(() => { leave(); return true; }, () => false);
   };
-  const undo = bridge.undoResult;
-  const afterReplace = effectiveAfterReplace(settings?.afterReplace, Boolean(undo));
+  // Lot 9: Undo while Rust offers it for its own replacement (the pasted text found and
+  // afterReplace.undo on, until `undo-state`), and while one is on its way.
+  const rustPasted = state.delivery === 'applied';
+  const busy = undo?.status === 'pending';
+  const afterReplace = effectiveAfterReplace(settings?.afterReplace, rustPasted && (state.undoable || busy));
+  // One countdown per replacement, from the check's first frame: the check alone that takes the
+  // place of a withdrawn Undo keeps its time (src/result/countdown.ts).
+  const doneClock = useRef<{ requestId: string; clock: Countdown; withUndo: boolean } | null>(null);
+  if (outcome.stage === 'done' && requestId && doneClock.current?.requestId !== requestId) {
+    const timing = resultTiming(afterReplace);
+    doneClock.current = timing.durationMs ? { requestId, clock: new Countdown(timing.durationMs, performance.now()), withUndo: timing.undo } : null;
+  }
+  const clock = doneClock.current?.requestId === requestId ? doneClock.current : null;
+
+  // The changed words, marked by the halo while Undo is offered: asked once per replacement,
+  // never any text in the request (ranges of the result only), cleared once at the countdown's end.
+  const marks = useRef<{ requestId: string; live: boolean } | null>(null);
+  useEffect(() => {
+    const capture = state.capture;
+    if (!rustPasted || !state.undoable || !requestId || marks.current?.requestId === requestId || closingRef.current || !capture?.execution) return;
+    const { ranges } = changedRanges(capture.text, state.result, { actionId: capture.execution.actionId, enabled: settings?.afterReplace?.changedWords !== false });
+    marks.current = { requestId, live: ranges.length > 0 };
+    if (ranges.length) void bridge.highlightChanges(requestId, ranges).catch(() => undefined);
+  }, [rustPasted, state.undoable, state.capture, state.result, requestId, settings]);
+  // Withdrawn or used, Undo takes the marks with it (Rust fades them itself).
+  useEffect(() => { if (!state.undoable && !busy && marks.current) marks.current.live = false; }, [state.undoable, busy]);
+  const expire = useCallback(() => {
+    const current = marks.current;
+    if (current?.live) { current.live = false; void bridge.clearHighlight(current.requestId).catch(() => undefined); }
+    leave();
+  }, [leave]);
+
+  // Undo, once per replacement. A resolved answer may be a refusal: its status decides.
+  const undoAsked = useRef<string | null>(null);
+  const askUndo = () => {
+    if (!requestId || !rustPasted || !state.undoable || undoAsked.current === requestId || closingRef.current) return;
+    undoAsked.current = requestId;
+    if (marks.current) marks.current.live = false;
+    setUndo({ status: 'pending' });
+    bridge.undoResult(requestId).then(answer => {
+      if (!alive.current) return;
+      const status = answer?.status === 'undone' || answer?.status === 'failed' ? answer.status : 'refused';
+      setUndo({ status, ...(status === 'undone' ? {} : { code: errorCodeOf(answer?.code) }) });
+    }, () => { if (alive.current) setUndo({ status: 'refused', code: 'internal' }); });
+  };
+
   const stage: ResultStage | null = outcome.stage === 'working' ? { stage: 'working', indicator }
-    : outcome.stage === 'done' ? { stage: 'done', afterReplace }
+    : outcome.stage === 'done' ? { stage: 'done', afterReplace, clock: clock?.clock, busy, drawn: Boolean(clock?.withUndo) && !afterReplace.undo }
     : outcome.stage === 'undone' ? { stage: 'undone' }
-    : outcome.stage === 'error' ? { stage: 'error', error: outcome.code, mode: state.mode, model: settings?.profiles[state.mode]?.model }
+    : outcome.stage === 'error' ? { stage: 'error', error: outcome.code, source: outcome.source, mode: state.mode, model: settings?.profiles[state.mode]?.model }
     : null;
   const content = stage && resultContent(stage, {
-    onExpire: leave, onDismiss: leave, onAction,
-    onUndo: undo && requestId ? () => { void undo(requestId).then(() => { if (alive.current) setUndone(true); }, () => undefined); } : undefined,
+    onExpire: outcome.stage === 'done' ? expire : leave, onDismiss: leave, onAction, onUndo: askUndo,
   });
   // Nothing to show once chosen (cancelled, or pasted with the check turned off): the surface
   // leaves after the lab's 60 ms (Simulator.jsx:154), keeping its last content while it goes
@@ -348,7 +403,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   const right = reserve.width - frame.x - frame.width;
   const corner: CSSProperties = presentation === 'bottom' ? { left: 0, right: 0, bottom: reserve.height - frame.y - frame.height }
     : side === 'above' ? { right, bottom: reserve.height - frame.y - frame.height } : { right, top: frame.y };
-  const status = outcome.stage === 'working' ? t('pill.working') : outcome.stage === 'done' ? t('glass.replaced') : '';
+  const status = outcome.stage === 'working' ? t('pill.working') : outcome.stage === 'done' ? t('glass.replaced') : outcome.stage === 'undone' ? t('result.undone') : '';
   return <div className="ilot-stage" style={{ width: reserve.width, height: reserve.height }} data-capture-id={captureId} data-presentation={presentation} data-side={side ?? undefined}
     data-closing={closing} data-stage={outcome.stage} data-error={outcome.stage === 'error' ? outcome.code : undefined}>
     <div ref={cornerRef} className="ilot-corner" style={corner}>

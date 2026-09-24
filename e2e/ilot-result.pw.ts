@@ -342,7 +342,7 @@ test('the check after a paste stays 1.1 s on the simulated clock, without Undo w
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50));
   await on(page, f => f.deliver('applied'));
   await expect(page.locator('.result-check')).toBeAttached();
-  // Undo is on in the settings, but the native side has no Undo yet: the check alone.
+  // Undo is on in the settings, but Rust offers none for this paste (no `undoable`): the check alone.
   await expect(page.locator('.result-undo')).toHaveCount(0);
   await expect(page.locator('[data-result-content="done"]')).toHaveClass(/is-check-only/);
   expect(await sameSurface(page)).toBe(true);

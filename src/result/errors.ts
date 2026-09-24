@@ -28,6 +28,9 @@ import { errorCodes, type ErrorCode, type Mode, type ProfileField, type Settings
  *                               nothing was read, no result exists, so no button at all, and
  *                               the capture's own words where the request's would mislead
  *                               (target_changed: the source window changed, nothing was tried).
+ *                               source 'undo' / 'undo-sent': an Undo refused (nothing was sent: the
+ *                               text changed, keys held, the application blocked it) or sent and
+ *                               not read back; its own words, ✕ only.
  *   ErrorAction                 { type: 'settings', field } | { type: 'retry' } | { type: 'copy' }.
  *
  * Only codes decide. Rust's French words travel beside them for the 0.4 journey and are never
@@ -37,8 +40,10 @@ import { errorCodes, type ErrorCode, type Mode, type ProfileField, type Settings
 
 export type ErrorFamily = 'config' | 'transient' | 'paste' | 'content' | 'silent';
 export type ErrorAction = { type: 'settings'; field: SettingsField } | { type: 'retry' } | { type: 'copy' };
-// Where it failed: a request (translation, paste) or the capture itself.
-export type ErrorSource = 'request' | 'capture';
+// Where it failed: a request (translation, paste), the capture itself, or an Undo (lot 9,
+// `undo_result`): 'undo' refused before anything was sent, 'undo-sent' sent (Ctrl+Z or the
+// original pasted back) and not read back. An Undo that fails pastes nothing else: no button.
+export type ErrorSource = 'request' | 'capture' | 'undo' | 'undo-sent';
 
 type Entry = { family: ErrorFamily; field?: ProfileField };
 // Why each code sits in its family:
@@ -102,6 +107,11 @@ export type ErrorDescription = {
 // What a capture says in its own words (source 'capture'): target_changed there is the source
 // window changing during the capture (capture.rs), before anything was pasted.
 const captureMessage: Partial<Record<ErrorCode, MessageKey>> = { target_changed: 'result.notice.target_changed' };
+// Why an Undo was refused, in its own words (the request's would say « not replaced »): the text,
+// the caret, the field or the window changed, or Undo was already withdrawn; keys still held; the
+// source could not be brought back or the chord was blocked; anything else (the command refused:
+// the result no longer current). Sent and not read back: the text may not be the original.
+const undoMessage: Partial<Record<ErrorCode, MessageKey>> = { target_changed: 'result.undo.target_changed', keys_held: 'result.undo.keys_held', paste_blocked: 'result.undo.paste_blocked' };
 
 // mode: the profile the failed request used (its field then opens, else the default
 // profile's). model: the model's name from the settings, for « Model not found: … » (the lab's
@@ -113,6 +123,8 @@ export function describeError(code: ErrorCode, { mode, model, source = 'request'
   const params = named ? { model: model!.trim() } : undefined;
   const none = { code, family, message, params, action: null, actionLabel: null };
   if (source === 'capture') return { ...none, message: captureMessage[code] ?? message };
+  if (source === 'undo') return { ...none, message: undoMessage[code] ?? 'result.undo.internal' };
+  if (source === 'undo-sent') return { ...none, message: 'result.undo.sent' };
   if (family === 'config' && field) return { ...none, action: { type: 'settings', field: mode ? `${mode}.${field}` : field }, actionLabel: fieldLabel[field] };
   if (family === 'transient') return { ...none, action: { type: 'retry' }, actionLabel: 'common.retry' };
   if (family === 'paste') return { ...none, action: { type: 'copy' }, actionLabel: 'result.action.copy' };

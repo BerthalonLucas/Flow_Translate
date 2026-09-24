@@ -8,9 +8,17 @@ import type { AfterReplace } from '../types';
  * leaves (and the changed words' marks with it). Without Undo, the check alone stays 1.1 s
  * (Simulator.jsx:155). Pure: every call takes the current time, so the tests drive a simulated
  * clock.
+ *
+ * One clock may outlive the content that draws it: when Rust withdraws Undo (`undo-state`), the
+ * Îlot swaps the check and Undo for the check alone and the time goes on (src/menu/IlotStage.tsx).
+ * Each holder pauses for reasons of its own (a pointer on one content, the focus on another, an
+ * Undo on its way), so one resuming never releases another's; `subscribe` tells every view that
+ * the clock stopped or started again.
  */
 
-export type PauseReason = 'hover' | 'focus';
+// Why the time stands still: 'hover', 'focus', 'busy' (an Undo on its way), or any key a holder
+// makes its own (DoneContent prefixes its reasons with its instance id).
+export type PauseReason = string;
 
 // Simulator.jsx:155: the check alone stays 1100 ms.
 export const checkOnlyMs = 1100;
@@ -29,6 +37,7 @@ export class Countdown {
   private spent = 0;
   private since: number | null;
   private readonly reasons = new Set<PauseReason>();
+  private readonly listeners = new Set<() => void>();
 
   constructor(durationMs: number, now: number) {
     this.durationMs = Math.max(0, durationMs);
@@ -57,9 +66,17 @@ export class Countdown {
     if (this.since === null) return;
     this.spent = this.elapsed(now);
     this.since = null;
+    this.notify();
   }
   resume(reason: PauseReason, now: number): void {
     if (!this.reasons.delete(reason) || this.reasons.size || this.since !== null) return;
     this.since = now;
+    this.notify();
   }
+  // Called whenever the clock stops or starts again; returns the unsubscribe.
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+  private notify() { for (const listener of [...this.listeners]) listener(); }
 }
