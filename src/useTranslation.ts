@@ -3,7 +3,7 @@ import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
 import { t } from './i18n';
 import { defaultActionId } from './actionDefaults';
-import type { Capture, CaptureNotice, CaptureTarget, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
+import type { Capture, CaptureNotice, CaptureTarget, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
@@ -27,6 +27,16 @@ export function useTranslation(readyOnMount = false) {
   const settingsRef = useRef<Settings | null>(null);
   const settingsReadyRef = useRef<Promise<boolean>>(Promise.resolve(false));
   const handledCaptureRef = useRef<string | null>(null);
+  // Lot 7: the menu keys Rust forwards while the source keeps the keyboard (`menu-key`). They may
+  // come before the Îlot has rendered, so they wait here for the menu capture they belong to;
+  // `menuKeys` counts them per capture and IlotStage takes them with `takeMenuKeys`.
+  const menuKeysRef = useRef<MenuKey[]>([]);
+  const [menuKeys, setMenuKeys] = useState({ captureId: '', count: 0 });
+  const takeMenuKeys = useCallback((captureId: string) => {
+    const keys = menuKeysRef.current.filter(key => key.captureId === captureId);
+    menuKeysRef.current = [];
+    return keys;
+  }, []);
   // Deltas are buffered until the stream ends: the glass shows a ring, then the whole
   // result lands at once (one native resize instead of one per line). An error or an
   // interruption still surfaces the partial text through flush().
@@ -69,6 +79,8 @@ export function useTranslation(readyOnMount = false) {
     handledCaptureRef.current = capture.id;
     captureRef.current = capture;
     closingRef.current = null;
+    menuKeysRef.current = [];
+    setMenuKeys({ captureId: capture.id, count: 0 });
     setClosingCaptureId(null);
     window.clearTimeout(noticeTimer.current);
     setNotice(null);
@@ -147,6 +159,12 @@ export function useTranslation(readyOnMount = false) {
         if (capture?.id !== captureId || !capture.menu || capture.execution) return;
         void choose(capture.menu.lastActionId ?? settingsRef.current?.defaultActionId ?? defaultActionId).catch(() => undefined);
       }),
+      bridge.on<MenuKey>('menu-key', key => {
+        const capture = captureRef.current;
+        if (capture?.id !== key.captureId || !capture.menu || capture.execution || closingRef.current) return;
+        menuKeysRef.current.push(key);
+        setMenuKeys(current => ({ captureId: key.captureId, count: current.captureId === key.captureId ? current.count + 1 : 1 }));
+      }),
     ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
       else {
@@ -185,7 +203,7 @@ export function useTranslation(readyOnMount = false) {
     void bridge.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
-  return { state, settings, screen, dispatch, receiveCapture, start, choose, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
+  return { state, settings, screen, dispatch, receiveCapture, start, choose, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;
