@@ -1,7 +1,7 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useT } from '../i18n';
 import { Icon, iconFromLucide } from '../ui';
-import { ilotKeyContext, resolveIlotKey, tileCommand, type CompactItem, type IlotAction, type IlotCommand, type IlotMode, type IlotTile, type KeyInput } from './keys';
+import { ilotKeyContext, keyInputOf, resolveIlotKey, tileCommand, type CompactItem, type IlotAction, type IlotCommand, type IlotMode, type IlotTile, type KeyInput } from './keys';
 import { ilotMetrics } from './metrics';
 import { MorphSurface, type ShapeChange, type SurfaceOrigin, type SurfaceSize } from './MorphSurface';
 import './ilot.css';
@@ -151,11 +151,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
       if (target instanceof HTMLElement && target.matches('input, textarea, select, [contenteditable]') && !target.closest('[data-ilot]')) return;
-      const used = latest.current({
-        key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey,
-        altGraph: event.getModifierState?.('AltGraph') ?? false, isComposing: event.isComposing || event.keyCode === 229,
-      });
-      if (used) { event.preventDefault(); event.stopPropagation(); }
+      if (latest.current(keyInputOf(event))) { event.preventDefault(); event.stopPropagation(); }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);

@@ -12,7 +12,7 @@ import { resultContent, type ActionAnswer, type ResultStage } from '../result/Re
 import type { ActionDefinition, Capture, ErrorCode, HitRegion, Presentation, Settings } from '../types';
 import type { TranslationController } from '../useTranslation';
 import { Ilot, type IlotHandle, type IlotKeyboard } from './Ilot';
-import { maxTiles } from './keys';
+import { browserShortcut, keyInputOf, maxTiles } from './keys';
 import { ilotMetrics } from './metrics';
 import { MorphSurface, type ShapeChange, type SurfaceSize } from './MorphSurface';
 import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } from './outcome';
@@ -26,7 +26,8 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  * code's family (src/result/errors.ts). The glass never opens for this journey. docs/BRIDGE.md, Îlot.
  *   keyboard  `focus_overlay` once: true, the WebView has the keys; false, Rust forwards them as
  *             `menu-key` (Îlot 'injected' mode), kept by useTranslation until the Îlot shows. The
- *             last of the two signals wins.
+ *             last of the two signals wins. The browser's own shortcuts (F5, Ctrl+R, Ctrl+P,
+ *             Ctrl+F, zoom, Alt+←) and Ctrl + wheel do nothing (keys.ts browserShortcut).
  *   window    reserved once for the largest shape (src/layout.ts, ilotReserve): shapes only change
  *             the hit-test region, published at the start of a change on both shapes and at its
  *             end on the new one; the window never resizes while the surface springs.
@@ -175,6 +176,18 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     const answer = (mode: IlotKeyboard) => { if (alive.current) setFocus({ keyboard: mode, after: forwardedNow.current }); };
     void bridge.focusOverlay().then(focused => answer(focused ? 'focused' : 'injected'), () => answer('injected'));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per capture
+
+  // The browser's own shortcuts (reload, print, find, zoom, history: keys.ts browserShortcut) and
+  // Ctrl + wheel do nothing while the overlay has the keyboard, the field included: a reload would
+  // empty the overlay while Rust keeps its menu open (review of bc57857, finding 2). Rust turns the
+  // WebView's browser accelerators off too; this holds whatever the WebView does.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (browserShortcut(keyInputOf(event))) event.preventDefault(); };
+    const onWheel = (event: WheelEvent) => { if (event.ctrlKey) event.preventDefault(); };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('wheel', onWheel, true); };
+  }, []);
 
   // Forwarded keys go through the Îlot's table in order, once it shows (useTranslation keeps them).
   const shown = side !== null && !closing;

@@ -259,6 +259,54 @@ test('Îlot: the selection lost before any choice closes the menu; a choice on i
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
 });
 
+// Review of bc57857, finding 2: F5 or Ctrl+R in the focused Îlot reloaded the overlay (an empty
+// window, a menu scope left armed in Rust). Every browser shortcut reaches the page's last listener
+// already prevented, in the menu and in its field, while the menu keys and the field's editing keep
+// working. Rust turns the WebView's accelerators off as well; headless Chromium would not reload on
+// a synthetic F5 anyway, so the test reads `defaultPrevented`.
+test('Îlot: the browser\'s shortcuts do nothing in the menu or its field; editing keys still work', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('browser', 'correct'));
+  await settled(page);
+  await page.evaluate(() => {
+    const seen: Array<{ key: string; ctrl: boolean; prevented: boolean }> = [];
+    Object.assign(window, { keysSeen: seen, wheelsSeen: [] as boolean[] });
+    window.addEventListener('keydown', event => seen.push({ key: event.key, ctrl: event.ctrlKey, prevented: event.defaultPrevented }));
+    window.addEventListener('wheel', event => (window as unknown as { wheelsSeen: boolean[] }).wheelsSeen.push(event.defaultPrevented), { passive: false });
+  });
+  const shortcuts = ['F5', 'Control+r', 'Control+Shift+R', 'Control+F5', 'Control+p', 'Control+f', 'F3', 'Control+g', 'F7', 'Alt+ArrowLeft', 'Alt+ArrowRight', 'Control+Equal', 'Control+Minus', 'Control+0'];
+  const seen = () => page.evaluate(() => (window as unknown as { keysSeen: Array<{ key: string; ctrl: boolean; prevented: boolean }> }).keysSeen.filter(key => !['Control', 'Shift', 'Alt'].includes(key.key)));
+  for (const shortcut of shortcuts) await page.keyboard.press(shortcut);
+  expect((await seen()).map(key => key.prevented)).toEqual(shortcuts.map(() => true));
+  await page.keyboard.down('Control');
+  await page.mouse.move(600, 150);
+  await page.mouse.wheel(0, -100);
+  await page.keyboard.up('Control');
+  await expect.poll(() => page.evaluate(() => (window as unknown as { wheelsSeen: boolean[] }).wheelsSeen)).toEqual([true]);
+  const ilot = page.locator('[data-ilot]');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  expect(await chosen(page, 'browser')).toHaveLength(0);
+
+  // In the field: the same shortcuts are swallowed; typing and the editing chords still work
+  // (none that touches the clipboard: the test never writes the user's).
+  await page.keyboard.press('Space');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  await expect(field).toBeFocused();
+  await page.evaluate(() => { (window as unknown as { keysSeen: unknown[] }).keysSeen.length = 0; });
+  for (const shortcut of ['F5', 'Control+r', 'Control+p', 'Control+f']) await page.keyboard.press(shortcut);
+  expect((await seen()).map(key => key.prevented)).toEqual([true, true, true, true]);
+  // A synthetic instruction, invented for the test.
+  await page.keyboard.type('plus court');
+  await page.keyboard.press('Control+Backspace');
+  await expect(field).toHaveValue('plus ');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('x');
+  await expect(field).toHaveValue('x');
+  expect((await seen()).filter(key => key.ctrl && ['Backspace', 'a'].includes(key.key)).map(key => key.prevented)).toEqual([false, false]);
+  await expect(ilot).toHaveAttribute('data-mode', 'prompt');
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+});
+
 test('Îlot: a refused choice gives the menu back, and the next choice goes through', async ({ page }) => {
   await openIlot(page);
   await on(page, f => { f.refuseChoice(); return f.captureMenu('refused', 'translate'); });
