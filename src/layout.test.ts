@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bottomReserve, countWords, decideForm, decidePlacement, ilotBox, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
+import { bottomReserve, countWords, decideForm, decidePlacement, frameSide, ilotBox, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
 import { ilotMetrics } from './menu/metrics';
 
 describe('reading forms (2026-09-14)', () => {
@@ -143,5 +143,13 @@ describe('Îlot window (lot 7)', () => {
     // At 150 %, the window's offsets are physical as well.
     expect(ilotSide(318 + 8 - 156, 1.5, anchor)).toBe('below');
     expect(ilotSide(300 - 8 - 48 - 156, 1.5, anchor)).toBe('above');
+  });
+  it('reads the side of any anchored frame the same way (the glass\'s footprint, review of bc57857 finding 8)', () => {
+    const anchor = { x: 400, y: 300, width: 120, height: 18 };
+    // The glass's footprint 34 px down its window: 8 px under the selection, or ending 8 px over it.
+    expect(frameSide(318 + 8 - 34, 34, 1, anchor)).toBe('below');
+    expect(frameSide(300 - 8 - 58 - 34, 34, 1, anchor)).toBe('above');
+    expect(frameSide(318 + 8 - 51, 34, 1.5, anchor)).toBe('below');
+    expect(ilotSide(222, 1, anchor)).toBe(frameSide(222, ilotReserve('anchored').frame.y, 1, anchor));
   });
 });

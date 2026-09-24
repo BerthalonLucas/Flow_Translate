@@ -50,8 +50,9 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  *             once it exists, the button, its ring and its pauses are ResultPill's DoneContent.
  */
 
-// How long the Îlot waits for Rust's placement before it opens anyway (below the selection).
-const SIDE_WAIT_MS = 400;
+// How long the Îlot waits for Rust's placement before it opens anyway (below the selection); the
+// glass's working pill waits as long for its side (GlassOverlay).
+export const SIDE_WAIT_MS = 400;
 
 // The menu's actions, in the user's order (settings.menuActionIds). An empty list is the user's
 // choice (the Settings say « only the free instruction »): no action tile, only « Ask ». Only a

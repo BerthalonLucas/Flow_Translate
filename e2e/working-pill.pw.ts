@@ -291,3 +291,47 @@ test('the lab frame shows the working pill in each indicator', async ({ page }) 
     }
   }
 });
+
+// Review of bc57857, finding 8: a direct capture's working pill always rose from below, away from
+// the selection when the glass hangs under it. It now waits, unseen, for the side Rust chose, then
+// glides from the selection: down below it, up above it; up from the bottom edge without an anchor.
+test('the working pill enters from the selection\'s side: down below it, up above it, up at the bottom', async ({ page }) => {
+  await openIlot(page, { indicator: 'perle' });
+  // The fixture's anchor spans y 300 to 318 (scale 1); the glass's footprint sits a few dozen
+  // pixels down its window: at 330 the window is below the selection, at 0 above it.
+  const cases = [
+    { id: 'pill-below', windowY: 330, kind: 'capture', grow: 'down' },
+    { id: 'pill-above', windowY: 0, kind: 'capture', grow: 'up' },
+    { id: 'pill-bottom', windowY: 0, kind: 'unanchored', grow: 'up' },
+  ] as const;
+  for (const { id, windowY, kind, grow } of cases) {
+    const frames = await page.evaluate(async ({ id, windowY, kind }) => {
+      const fixture = (window as any).nativeFixture;
+      fixture.windowAt(0, windowY);
+      const seen: Array<{ opacity: number; y: number; grow: string | null }> = [];
+      const start = performance.now();
+      const sampled = new Promise<void>(resolve => {
+        const tick = () => {
+          const pill = document.querySelector<HTMLElement>(`[data-capture-id="${id}"] .working-pill`);
+          if (pill) {
+            const style = getComputedStyle(pill);
+            seen.push({ opacity: Number(style.opacity), y: style.transform === 'none' ? 0 : new DOMMatrix(style.transform).f, grow: pill.getAttribute('data-grow') });
+          }
+          if (performance.now() - start < 700) requestAnimationFrame(tick); else resolve();
+        };
+        requestAnimationFrame(tick);
+      });
+      await fixture[kind](id);
+      await sampled;
+      return seen;
+    }, { id, windowY, kind });
+    const visible = frames.filter(frame => frame.opacity > 0.02);
+    expect(visible.length, id).toBeGreaterThan(5);
+    // The first visible frames stand on the selection's side of the resting place, then settle.
+    expect(Math.sign(visible[0].y), id).toBe(grow === 'down' ? -1 : 1);
+    expect(visible[0].grow, id).toBe(grow);
+    expect(frames.at(-1)!.y, id).toBeCloseTo(0, 1);
+    // Before the side is known, the pill never shows.
+    expect(frames.filter(frame => frame.grow === 'waiting').every(frame => frame.opacity === 0), id).toBe(true);
+  }
+});

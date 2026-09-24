@@ -141,11 +141,15 @@ export function ilotRegion(presentation: Presentation, side: IlotSide, ...shapes
   const y = side === 'below' ? frame.y : Math.max(0, bottomEdge - height);
   return { x, y, width, height: Math.min(reserve.height - y, height), radius: round(width) };
 }
-// Which side Rust chose, read back from where it put the window (physical pixels, like the
-// anchor): the strip below the middle of the selection means below.
+// Which side of its anchor Rust put a window's `frame` (the region it anchors: the Îlot's strip,
+// the glass or its footprint), read back from the window's top (physical pixels, like the anchor)
+// and the frame's top in the window (logical): the frame below the middle of the selection means
+// below.
+export function frameSide(windowTop: number, frameTop: number, scale: number, anchor: Rect): IlotSide {
+  return windowTop + frameTop * scale >= anchor.y + anchor.height / 2 ? 'below' : 'above';
+}
 export function ilotSide(windowTop: number, scale: number, anchor: Rect): IlotSide {
-  const stripTop = windowTop + ilotReserve('anchored').frame.y * scale;
-  return stripTop >= anchor.y + anchor.height / 2 ? 'below' : 'above';
+  return frameSide(windowTop, ilotReserve('anchored').frame.y, scale, anchor);
 }
 
 // Reading budget: orientation plus 350 ms per word, between 5 s and 30 s (short) or 90 s

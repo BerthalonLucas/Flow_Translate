@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { AnimatePresence, motion } from 'motion/react';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { bridge } from './bridge';
-import { anchoredFloor, anchoredReserve, bottomReserve, countWords, decideForm, decidePlacement, dimming, glass, halo, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics, type ShortMetrics } from './layout';
+import { anchoredFloor, anchoredReserve, bottomReserve, countWords, decideForm, decidePlacement, dimming, frameSide, glass, halo, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics, type IlotSide, type ShortMetrics } from './layout';
 import { breakable } from './text';
 import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton } from './ui';
 import { t as tNow, useT } from './i18n';
@@ -10,7 +10,7 @@ import { useContentPresence, useMotionPreset, useReducedMotionSetting, useSurfac
 import { curveTransition, emilOut, exitScale, reducedFade } from './motion/tokens';
 import { WorkingPill } from './loaders/WorkingPill';
 import { indicatorOf } from './loaders/pill';
-import { IlotNotice, IlotStage } from './menu/IlotStage';
+import { IlotNotice, IlotStage, SIDE_WAIT_MS } from './menu/IlotStage';
 import { ilotJourney } from './menu/outcome';
 import type { Form, HitRegion, Presentation, Screen, TextSize } from './types';
 import type { TranslationController } from './useTranslation';
@@ -245,6 +245,26 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   // reaches this glass (GlassOverlay renders IlotStage for it).
   const ilot = settings?.uiVersion === 'ilot';
   const indicator = indicatorOf(settings?.indicator);
+  // Under the Îlot the working pill enters from the selection's side, as the lab's surfaces do
+  // (Surface.jsx:46, Simulator.jsx:68): down from it when the glass hangs below the selection, up
+  // toward it above, up from the bottom edge (review of bc57857, finding 8). The side is read once
+  // from where Rust put the window, before the pill enters (frameSide); at most SIDE_WAIT_MS, then
+  // below. The browser preview has no window: below.
+  const [pillSide, setPillSide] = useState<IlotSide | null>(() => ilot && bridge.native && placement === 'anchored' ? null : 'below');
+  const sideAsked = useRef(false);
+  const readPillSide = (frameTop: number) => {
+    const anchor = state.capture?.anchor;
+    if (sideAsked.current || pillSide || !anchor) return;
+    sideAsked.current = true;
+    const scale = state.capture?.screen?.scale ?? screen.scale;
+    void bridge.windowPosition().then(position => setPillSide(known => known ?? (position ? frameSide(position.y, frameTop, scale, anchor) : 'below')), () => setPillSide(known => known ?? 'below'));
+  };
+  useEffect(() => {
+    if (pillSide) return;
+    const timer = window.setTimeout(() => setPillSide(known => known ?? 'below'), SIDE_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [pillSide]);
+  const pillGrow = placement === 'bottom' ? 'up' : pillSide === null ? null : pillSide === 'above' ? 'up' : 'down';
 
   // Decide the form on the real text, once per result (a relaunch may change it).
   useLayoutEffect(() => {
@@ -423,7 +443,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
         const signature = JSON.stringify({ width, height, ...geometry });
         if (signature !== previousGeometry.current) {
           previousGeometry.current = signature;
-          void bridge.resize(width, height, geometry).then(placed, () => {
+          void bridge.resize(width, height, geometry).then(() => { placed(); if (ilot && !bottom) readPillSide(frameRegion.y); }, () => {
             if (previousGeometry.current === signature) previousGeometry.current = '';
             if (!disposed) setFeedback(tNow('feedback.displayUnavailable'));
             placed();
@@ -490,7 +510,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: t('menu.close'), run: cancelAndDismiss, close: true },
     ]}>
       <div className="glass-body">
-        {form === 'pending' ? ilot ? <WorkingPill indicator={indicator} done={state.delivery === 'applied'} /> : <WaitPill slow={slow} done={state.delivery === 'applied'} /> : <>
+        {form === 'pending' ? ilot ? <WorkingPill indicator={indicator} grow={pillGrow} done={state.delivery === 'applied'} /> : <WaitPill slow={slow} done={state.delivery === 'applied'} /> : <>
           <div className="translation-bubble" style={{ borderRadius: glass.radius, maxHeight: metrics.maxHeight }} data-reveal={state.phase === 'complete' && Boolean(state.result) && !moving}
             onPointerDown={event => { if (placement === 'anchored') dragSurface(event, () => setFeedback(t('feedback.moveUnavailable')), setDragging); }}>
             <ReadingSurface streaming={streaming} onEnter={() => void invokeResult('copy')}>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { motion } from 'motion/react';
 import { useT } from '../i18n';
 import { useSurfacePresence } from '../motion/MotionPreferences';
@@ -50,12 +50,19 @@ function useWorking({ indicator, done = false, delayMs = ORB_DELAY_MS }: Working
   return { attributes, content };
 }
 
-export function WorkingPill({ grow = 'up', ...props }: WorkingProps & { grow?: Grow }) {
-  const enter = useSurfacePresence(grow);
+// `grow`: the side it enters from (src/motion/presence.ts). null: not known yet (the glass waits for
+// Rust's placement to learn on which side of the selection it hangs): the pill waits unseen where
+// it rests, then enters from that side once told (review of bc57857, finding 8).
+export function WorkingPill({ grow = 'up', ...props }: WorkingProps & { grow?: Grow | null }) {
+  const enter = useSurfacePresence(grow ?? 'up');
+  const bornWaiting = useRef(grow === null).current;
+  // Born waiting, it glides from the side learnt since, not from where it first stood unseen.
+  const from = (enter.initial as { y?: number }).y;
+  const animate = grow === null ? enter.initial : bornWaiting && from !== undefined ? { ...enter.animate, y: [from, 0] } : enter.animate;
   const { attributes, content } = useWorking(props);
   const shape = workingPillShape(props.indicator);
   const style = { width: shape.width, height: shape.height, borderRadius: shape.borderRadius, '--working-pill-width': `${shape.width}px` } as CSSProperties;
-  return <motion.span {...enter} className="working-pill" style={style} {...attributes}>
+  return <motion.span initial={enter.initial} animate={animate} exit={enter.exit} className="working-pill" style={style} {...attributes} data-grow={grow ?? 'waiting'}>
     <span className="shape-clip"><span className="shape-layer working-layer">{content}</span></span>
   </motion.span>;
 }
