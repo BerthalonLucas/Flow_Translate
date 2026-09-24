@@ -73,6 +73,7 @@ const dictionary = {
   'demo.openSettings': { en: 'Open settings', fr: 'Voir les réglages' },
   // Settings window.
   'settings.title': { en: 'Settings', fr: 'Réglages' },
+  'settings.windowTitle': { en: 'FlowTranslate Settings', fr: 'Réglages FlowTranslate' },
   'settings.close': { en: 'Close', fr: 'Fermer' },
   'settings.loading': { en: 'Loading settings…', fr: 'Chargement des réglages…' },
   'settings.loadError': { en: 'Settings are unavailable. Try again or restart FlowTranslate.', fr: 'Les réglages sont indisponibles. Réessayez ou redémarrez FlowTranslate.' },

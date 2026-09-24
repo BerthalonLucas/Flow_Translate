@@ -72,6 +72,7 @@ describe('theme tokens', () => {
       const row = over(token('--settings-row'), bg);
       const pairs: Array<[string, string, Rgba]> = [];
       for (const text of ['--text', '--text-muted', '--text-subtle', '--link', '--error-text', '--warning-text']) pairs.push([text, 'window', bg], [text, 'row', row]);
+      // --text-subtle on a field: the placeholders (styles.css, .settings-window input::placeholder).
       pairs.push(['--text', 'field', over(token('--settings-field'), row)], ['--text-subtle', 'field', over(token('--settings-field'), row)]);
       pairs.push(['--text-muted', 'segment track', over(token('--segment-track'), row)], ['--segment-on-text', 'segment on', over(token('--segment-on-bg'), row)]);
       pairs.push(['--primary-text', 'primary', token('--primary-bg')], ['--text', 'quiet', over(token('--quiet-bg'), bg)], ['--link', 'hover', over(token('--hover'), row)]);

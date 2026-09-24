@@ -9,6 +9,7 @@ mod inference;
 mod placement;
 mod settings;
 mod system_theme;
+mod tray_text;
 mod types;
 use arboard::Clipboard;
 use chrono::Utc;
@@ -231,6 +232,7 @@ fn save_settings(
     }
 
     state.inner.lock().map_err(|_| lock_error())?.settings = settings.clone();
+    if settings.language != old.language { tray_text::apply(&app, settings.language, state.simulated); }
     for key in old_keys { if !new_keys.iter().any(|new| new.id() == key.id()) { let _ = app.global_shortcut().unregister(key); } }
     let _ = app.emit_to("settings", "settings-changed", &settings);
     let mut public = settings;
@@ -1193,13 +1195,9 @@ fn finish_position(
     }).map_err(|_| "Placement indisponible.".to_string())
 }
 fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
-    if let Some(tray) = app.tray_by_id("flowtranslate") {
-        let tooltip = if simulated {
-            "FlowTranslate — Démonstration simulée"
-        } else {
-            "FlowTranslate"
-        };
-        let _ = tray.set_tooltip(Some(tooltip));
+    let Some(language) = app.state::<AppState>().inner.lock().ok().map(|i| i.settings.language) else { return };
+    if let Some(tray) = app.tray_by_id(tray_text::TRAY_ID) {
+        let _ = tray.set_tooltip(Some(tray_text::tooltip(language, simulated)));
     }
 }
 fn capture_error(app: &AppHandle, message: &str, notify: bool) {
@@ -1302,6 +1300,7 @@ pub fn run() {
             std::fs::create_dir_all(&root)?;
             let store = SettingsStore::new(&root);
             let settings = store.load()?;
+            let language = settings.language;
             let history = HistoryStore::new(&root)?;
             let args = std::env::args().collect::<Vec<_>>();
             let demo = args.iter().any(|a| {
@@ -1328,20 +1327,10 @@ pub fn run() {
             for config in app.config().app.windows.clone() {
                 tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
             }
-            use tauri::{
-                menu::{Menu, MenuItem},
-                tray::TrayIconBuilder,
-            };
-            let replay = MenuItem::with_id(app, "replay", "Revoir la dernière traduction", true, None::<&str>)?;
-            let settings_item = MenuItem::with_id(app, "settings", "Réglages", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&replay, &settings_item, &quit])?;
-            let mut tray = TrayIconBuilder::with_id("flowtranslate")
-                .tooltip(if simulated {
-                    "FlowTranslate — Démonstration simulée"
-                } else {
-                    "FlowTranslate"
-                })
+            use tauri::tray::TrayIconBuilder;
+            let menu = tray_text::menu(app.handle(), language)?;
+            let mut tray = TrayIconBuilder::with_id(tray_text::TRAY_ID)
+                .tooltip(tray_text::tooltip(language, simulated))
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "replay" => {

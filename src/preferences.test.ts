@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTheme } from './theme';
+import { applyTheme, resolveTheme, type SystemThemeSource } from './theme';
 import { reducedMotionConfig, resolveMotion } from './motion/preference';
 
 describe('document preferences', () => {
@@ -8,6 +8,47 @@ describe('document preferences', () => {
     expect(resolveTheme('system', false)).toBe('light');
     expect(resolveTheme('light', true)).toBe('light');
     expect(resolveTheme('dark', false)).toBe('dark');
+  });
+  // WebView2 answers prefers-color-scheme: light whatever Windows says: in « follow Windows »
+  // the mode Rust reads wins, live, and the media query stays the answer when Rust has none.
+  it('follows the Windows app mode that Rust reports, live, only while the theme follows Windows', async () => {
+    const root = document.createElement('div');
+    let emitSystem: ((payload: unknown) => void) | undefined;
+    let unlistened = 0;
+    let answer: unknown = null;
+    const source: SystemThemeSource = {
+      current: () => Promise.resolve(answer),
+      listen: handler => { emitSystem = handler; return Promise.resolve(() => { unlistened += 1; }); },
+    };
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+    // No value in the registry (or no Rust at all): the media query decides (none in jsdom: light).
+    let stop = applyTheme('system', root, source);
+    await settle();
+    expect(root.dataset.theme).toBe('light');
+    stop();
+    expect(unlistened).toBe(1);
+    // Windows in dark mode: dark at once, then light when the mode flips while the window is open.
+    answer = { dark: true };
+    stop = applyTheme('system', root, source);
+    await settle();
+    expect(root.dataset.theme).toBe('dark');
+    emitSystem?.({ dark: false });
+    expect(root.dataset.theme).toBe('light');
+    emitSystem?.({ unexpected: true });
+    expect(root.dataset.theme).toBe('light');
+    stop();
+    // A forced theme ignores Windows and does not listen.
+    emitSystem = undefined;
+    stop = applyTheme('dark', root, source);
+    await settle();
+    expect(root.dataset.theme).toBe('dark');
+    expect(emitSystem).toBeUndefined();
+    stop();
+    // Back to « follow Windows »: the last reported mode applies before Rust answers again.
+    answer = new Promise(() => undefined);
+    stop = applyTheme('system', root, { ...source, current: () => new Promise(() => undefined) });
+    expect(root.dataset.theme).toBe('light');
+    stop();
   });
   it('reduces motion when Windows asks, unless the user chose always or reduced', () => {
     expect(resolveMotion('system', true)).toBe('reduced');

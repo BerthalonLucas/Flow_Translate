@@ -47,6 +47,7 @@ test('the settings window switches language and theme the moment they are chosen
   await openFixture(page, 'settings');
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   await expect(page.getByRole('radio', { name: 'English', exact: true })).toHaveAttribute('data-state', 'on');
+  const actionName = await page.locator('.action-card summary > span').first().textContent();
   await page.getByRole('radio', { name: 'Français', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Réglages', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Actions et consignes', exact: true })).toBeVisible();
@@ -54,8 +55,8 @@ test('the settings window switches language and theme the moment they are chosen
   await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
   const saved = () => page.evaluate(() => (window as any).nativeFixture.calls.filter((c: any) => c.command === 'save_settings').at(-1)?.args.settings);
   await expect.poll(saved).toMatchObject({ language: 'fr' });
-  // Action names are user data: the built-in names stay as they are in both languages.
-  await expect(page.locator('.action-card summary').first()).toContainText('Traduire en français');
+  // Action names are user data: the switch never renames an action, built-in ones included.
+  await expect(page.locator('.action-card summary > span').first()).toHaveText(actionName ?? '');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.getByRole('radio', { name: 'Sombre', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');

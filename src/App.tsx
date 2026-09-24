@@ -55,6 +55,7 @@ export function SettingsWindow() {
   const show = (next: Settings) => { latest.current = next; setSettings(next); shareSettings(next); };
   const loadSettings = () => { setLoadError(false); void bridge.getSettings().then(show).catch(() => setLoadError(true)); };
   useEffect(() => { loadSettings(); void bridge.getHistory().then(setHistory).catch(() => undefined); }, []);
+  useEffect(() => { void bridge.setSettingsTitle(t('settings.windowTitle')).catch(() => undefined); }, [t]);
   useEffect(() => () => { window.clearTimeout(saveTimer.current); window.clearTimeout(settledTimer.current); }, []);
   const commit = async (next: Settings): Promise<boolean> => {
     setSaveStatus('saving');
@@ -131,7 +132,7 @@ export function SettingsWindow() {
   };
   return <main className="settings-window" onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); void closeSettings(); } }}>
     <header className="settings-titlebar" onPointerDown={event => { if (bridge.native && event.button === 0 && !(event.target as HTMLElement).closest('button')) void bridge.dragSettings().catch(() => undefined); }}>
-      <span className="settings-mark" aria-hidden="true"><svg viewBox="0 0 512 512" width="18" height="18"><rect width="512" height="512" rx="160" fill="#f2f5fa" /><path d="M140 182h208M140 254h144M140 326h84" fill="none" stroke="#1d1f24" strokeWidth="36" strokeLinecap="round" /><path d="m298 298 42 42 62-78" fill="none" stroke="#3b6fc4" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+      <span className="settings-mark" aria-hidden="true"><svg viewBox="0 0 512 512" width="18" height="18"><rect width="512" height="512" rx="160" fill="#f2f5fa" stroke="rgb(29 29 31 / .16)" strokeWidth="24" /><path d="M140 182h208M140 254h144M140 326h84" fill="none" stroke="#1d1f24" strokeWidth="36" strokeLinecap="round" /><path d="m298 298 42 42 62-78" fill="none" stroke="#3b6fc4" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
       <span className="settings-brand">FlowTranslate</span><h1>{t('settings.title')}</h1>
       <button className="close-settings" onClick={() => void closeSettings()} aria-label={t('settings.close')}><Icon name="close" /></button>
     </header>
@@ -159,7 +160,7 @@ export function SettingsWindow() {
           <SettingSwitch label={t('settings.history')} checked={settings.historyEnabled} onCheckedChange={checked => update('historyEnabled', checked)} /></div>
         {settings.historyEnabled && <div className="history">
           {history.length ? history.map(item => <article key={item.id}><div><p>{item.translatedText}</p><small>{item.actionName} · {t(modeKey(item.mode))} · {historyDate(item.createdAt)}</small></div><button className="icon-button history-remove" onClick={() => void removeHistory(item.id)} aria-label={t('settings.historyRemove')}><Icon name="close" size={14} /></button></article>) : <p className="empty-history">{t('settings.historyEmpty')}</p>}
-          <div className="history-foot"><small>{t(history.length > 1 ? 'settings.historyCountOther' : 'settings.historyCountOne', { count: history.length })}</small><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>{t('settings.historyClear')}</button></div>
+          <div className="history-foot"><small>{t(new Intl.PluralRules(locales[language]).select(history.length) === 'one' ? 'settings.historyCountOne' : 'settings.historyCountOther', { count: history.length })}</small><button className="text-button" onClick={() => void removeHistory(null)} disabled={!history.length}>{t('settings.historyClear')}</button></div>
         </div>}
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.autostart')}</strong><small>{t('settings.autostartHelp')}</small></div>
           <SettingSwitch label={t('settings.autostart')} checked={settings.autostart} onCheckedChange={checked => update('autostart', checked)} /></div>

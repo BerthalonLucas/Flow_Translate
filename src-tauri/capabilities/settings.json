@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings-resize",
-  "description": "Resize the settings window from its corner grip",
+  "description": "Resize the settings window from its corner grip and title it in the interface language",
   "windows": [
     "settings"
   ],
   "permissions": [
-    "core:window:allow-start-resize-dragging"
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-set-title"
   ]
 }

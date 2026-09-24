@@ -135,7 +135,10 @@ test('IPC fixture: a new capture during exit cannot be closed by the old animati
   await openNativeFixture(page);
   await page.evaluate(async () => {
     await window.nativeFixture.dismissEvent('first');
-    await new Promise(resolve => setTimeout(resolve, 35));
+    // Mid-exit whatever the machine's load: a fixed 35 ms wait could outlast the 120 ms exit
+    // on a busy runner (1 failure in 12 before the Îlot branch). The capture lands on the first
+    // frame where the glass is closing.
+    await new Promise<void>(resolve => { const check = () => document.querySelector('.glass-overlay[data-closing="true"]') ? resolve() : requestAnimationFrame(check); check(); });
     await window.nativeFixture.capture('new-capture');
     await window.nativeFixture.delta('Nouvelle traduction');
     await window.nativeFixture.done();
