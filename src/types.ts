@@ -66,6 +66,12 @@ export type ActionDefinition = { id: string; name: string; promptTemplate: strin
 // kind: one action at once (0.4), or the Îlot menu beside the selection. Absent means 'action'.
 export type BindingKind = 'action' | 'menu';
 export type ShortcutBinding = { id: string; kind?: BindingKind; shortcut: string; actionId: string; outputMode: OutputMode; enabled: boolean };
+// A direct link to one field of the Settings window (lot 13, for the errors of lot 10): the
+// `field=` parameter of its URL, or the `settings-focus-field` event while it is open. A bare
+// profile field means the default profile's.
+export type ProfileField = 'endpoint' | 'apiKey' | 'model';
+export type SettingsField = 'menuShortcut' | ProfileField | `${Mode}.${ProfileField}`;
+export type SettingsFocus = { field: SettingsField };
 export type ExecutionInfo = { actionId: string; actionName: string; outputMode: OutputMode; mode: Mode };
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
 export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string };

@@ -44,6 +44,8 @@ mockIPC((command, args) => {
     return { actionId, actionName: action?.name ?? instructionActionName, outputMode: 'replace', mode: settings.mode } satisfies ExecutionInfo;
   }
   if (command === 'shortcut_conflict') return (args as { shortcut: string }).shortcut === 'Ctrl+Alt+E' ? { altGr: true, character: '€' } : { altGr: false };
+  // Lot 10's `open_settings({ field })` on an open Settings window: the event it will send.
+  if (command === 'open_settings' && args?.field) return emit('settings-focus-field', { field: args.field });
   if (command === 'start_drag') return Promise.reject('Synthetic drag failure');
   if (command === 'dismiss_overlay') return emit('overlay-dismiss-requested', { captureId: currentCapture.id });
   if (command === 'copy_result' && heldCopy) return new Promise<void>(resolve => { resolveCopy = resolve; });
@@ -74,6 +76,8 @@ Object.assign(window, { nativeFixture: {
   workArea: (width: number, height: number, scale = 1) => emit('work-area', { width, height, scale }),
   systemMotion: (reduced: boolean) => { windowsMotion = { reduced }; return emit('system-motion', windowsMotion); },
   settings: (next: Partial<Settings>) => { settings = { ...settings, ...next }; return emit('settings-changed', settings); },
+  // Lot 13: a direct link to a field of the open Settings window.
+  focusField: (field: string) => emit('settings-focus-field', { field }),
   unanchored: (id: string) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null }; return emit('capture', currentCapture); },
   // A `menu` capture under the Îlot: no execution until choose_action.
   captureMenu: (id: string, lastActionId: string | null = null, text?: string) => { currentCapture = { ...capture(id, text), canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },

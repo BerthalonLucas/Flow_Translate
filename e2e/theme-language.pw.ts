@@ -50,7 +50,7 @@ test('the settings window switches language and theme the moment they are chosen
   const actionName = await page.locator('.action-card summary > span').first().textContent();
   await page.getByRole('radio', { name: 'Français', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Réglages', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Actions et consignes', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Consignes', exact: true })).toBeVisible();
   await expect(page.locator('.save-status')).toHaveText('Enregistré à l’instant');
   await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
   const saved = () => page.evaluate(() => (window as any).nativeFixture.calls.filter((c: any) => c.command === 'save_settings').at(-1)?.args.settings);

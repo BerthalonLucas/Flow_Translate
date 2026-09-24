@@ -1,10 +1,10 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, ShortcutConflict, StreamEvent, SystemMotion, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, SettingsField, ShortcutConflict, StreamEvent, SystemMotion, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -126,9 +126,10 @@ export const bridge = {
   replace: (requestId: string) => command<void>('replace_result', { requestId }),
   dismiss: () => command<void>('dismiss_overlay'),
   completeDismiss: (captureId: string) => command<void>('complete_overlay_dismiss', { captureId }),
-  openSettings: async () => {
-    if (native) return command<void>('open_settings');
-    location.assign('?window=settings&demo=1');
+  // field (lot 10): the Settings open on that field (Rust's side comes with lot 10).
+  openSettings: async (field?: SettingsField) => {
+    if (native) return command<void>('open_settings', field ? { field } : undefined);
+    location.assign(`?window=settings&demo=1${field ? `&field=${encodeURIComponent(field)}` : ''}`);
   },
   // Îlot (lots 3–4): true when the overlay really holds the foreground; false leaves the
   // menu to the native keyboard fallback (`menu-key` events, no free field).
