@@ -45,6 +45,8 @@ struct MenuSession {
     process: Option<String>,
     last_action_id: Option<String>,
     chosen: bool,
+    /// The watcher dropped its selection (review n°6): no choice runs on it any more.
+    invalidated: bool,
 }
 /// The last press of a menu shortcut (lot 4). A second press of the same binding within
 /// 400 ms is a double press: never a new capture, the menu runs its last action.
@@ -210,6 +212,7 @@ impl Inner {
         }
         let menu = self.menu.as_mut().filter(|menu| menu.capture_id == capture_id).ok_or("Cette capture n’attend pas de choix.")?;
         if menu.chosen { return Err("Une action a déjà été choisie pour cette sélection.".into()); }
+        if menu.invalidated { return Err("La sélection a changé; le menu est fermé.".into()); }
         let execution = Execution::chosen(&menu.settings, action_id, instruction)?;
         menu.chosen = true;
         let info = execution.info.clone();
@@ -589,6 +592,11 @@ const SURFACES: [&str; 2] = ["overlay", "halo"];
 fn ours(app: &AppHandle, handle: isize) -> bool {
     handle != 0 && ["overlay", "halo", "settings"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, handle)))
 }
+/// Review n°2 and n°6: the open menu had the foreground and something else than our windows
+/// holds it now (the user clicked back into his document, or switched application).
+fn leaves_menu(open: bool, focused: bool, fg: isize, ours: bool) -> bool {
+    open && focused && fg != 0 && !ours
+}
 /// None when nothing was captured on purpose: a press while one of our windows holds
 /// the foreground (the Îlot has the keyboard) never captures our own window.
 fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32, std::time::Instant)>) -> Result<Option<Capture>, AppError> {
@@ -659,7 +667,7 @@ fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Resul
             let last_action_id = process.as_deref()
                 .and_then(|process| state.menu_memory.lock().ok().and_then(|memory| memory.get(process).map(String::from)))
                 .filter(|id| settings.actions.iter().any(|action| &action.id == id));
-            let session = MenuSession { capture_id: String::new(), settings: *settings, process, last_action_id, chosen: false };
+            let session = MenuSession { capture_id: String::new(), settings: *settings, process, last_action_id, chosen: false, invalidated: false };
             store_capture(&app, state, captured, source, None, Some(session))
         }
     }.map_err(AppError::internal);
@@ -1334,6 +1342,7 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
     // cannot be provoked on demand, so FLOWTRANSLATE_REFUSE_FOCUS exercises the fallback.
     let refuse = std::env::var_os("FLOWTRANSLATE_CDP_URL").is_some() && std::env::var_os("FLOWTRANSLATE_REFUSE_FOCUS").is_some();
     let focused = if refuse { false } else { host::activate(&w)? };
+    if focused { host::set_menu_focused(); }
     let (current, should_hide) = {
         let state = app.state::<AppState>();
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -1828,6 +1837,16 @@ fn watch_context(app: AppHandle) {
                 let _ = dismiss(&app, &state);
             }
             escape_was_down = down;
+            // Review n°2 and n°6: the Îlot had the keyboard and the user went back to his document
+            // (or to another application): he left the menu, like a click outside it. Closed at
+            // once, nothing pasted, and the hook no longer takes his keys.
+            if leaves_menu(host::menu_open(), host::menu_focused(), fg, ours) {
+                let waiting = state.inner.lock().is_ok_and(|i| i.visible && i.menu.as_ref().is_some_and(|m| !m.chosen));
+                if waiting {
+                    let _ = dismiss(&app, &state);
+                    continue;
+                }
+            }
             // Every 420 ms; every 105 ms while the halo sweeps over the lines: a scroll or a
             // move must not leave it over other text for long.
             // After a paste under the Îlot (lot 9) too: the pill and the marks stand on the
@@ -1888,6 +1907,14 @@ fn watch_context(app: AppHandle) {
                         continue;
                     }
                     i.side = None;
+                    // Review n°6: a menu that still waits has nothing left to act on: it closes
+                    // (its scope with it), and a choice already in flight is refused.
+                    if let Some(menu) = i.menu.as_mut().filter(|m| m.capture_id == id && !m.chosen) {
+                        menu.invalidated = true;
+                        drop(i);
+                        let _ = dismiss(&app, &state);
+                        continue;
+                    }
                 }
                 let _ = app.emit_to(
                     "overlay",
@@ -2101,7 +2128,7 @@ mod tests {
     }
     fn menu_capture(i: &mut Inner, id: &str) {
         i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None, invalidated: false });
-        i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false });
+        i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false, invalidated: false });
         i.execution = None;
         i.visible = true;
     }
@@ -2165,6 +2192,22 @@ mod tests {
         i.pending_dismiss = None;
         i.menu = None;
         assert!(i.choose("closing", "correct", None).is_err());
+    }
+    #[test]
+    fn a_menu_left_or_invalidated_closes_and_never_runs_a_choice() {
+        // The Îlot had the keyboard; the user clicked back into the source: he left the menu.
+        assert!(leaves_menu(true, true, 10, false));
+        // Still in the Îlot, or the activation was refused (the hook's fallback), or closed.
+        assert!(!leaves_menu(true, true, 10, true));
+        assert!(!leaves_menu(true, false, 10, false));
+        assert!(!leaves_menu(false, true, 10, false));
+        assert!(!leaves_menu(true, true, 0, false));
+        // The watcher dropped the selection of a menu that still waited: no choice runs.
+        let mut i = Inner::new(Settings::default());
+        menu_capture(&mut i, "menu");
+        i.menu.as_mut().unwrap().invalidated = true;
+        assert!(i.choose("menu", "correct", None).is_err());
+        assert!(!i.menu.as_ref().unwrap().chosen);
     }
     #[test]
     fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {

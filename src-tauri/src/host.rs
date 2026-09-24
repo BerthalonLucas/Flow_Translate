@@ -165,6 +165,9 @@ static SOURCE:AtomicIsize=AtomicIsize::new(0);
 static OVERLAY:AtomicIsize=AtomicIsize::new(0);
 /// The Îlot menu is open and waits for a choice (lot 3): its keys belong to the frontend.
 static MENU_OPEN:AtomicBool=AtomicBool::new(false);
+/// The overlay held the foreground for this menu (review of da-ilot, n°2 and n°6): the keys of
+/// the source are then the user's again, the hook's fallback only serves a refused activation.
+static MENU_FOCUSED:AtomicBool=AtomicBool::new(false);
 /// Where the hook hands the menu keys it took from the source (a worker emits them).
 static MENU_KEYS:OnceLock<std::sync::mpsc::SyncSender<MenuKey>>=OnceLock::new();
 /// After a paste the Îlot can undo (lot 9): the source window whose keys end that offer. A
@@ -201,9 +204,18 @@ pub fn handle(window:&WebviewWindow)->isize{window.hwnd().map(|h|h.0 as isize).u
 /// the overlay has the foreground, the frontend receives it as a `menu-key` otherwise.
 pub fn set_menu_open(open:bool,source:isize,overlay:isize){
     if open{SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+    MENU_FOCUSED.store(false,Ordering::Release);
     MENU_OPEN.store(open,Ordering::Release);
 }
 pub fn menu_open()->bool{MENU_OPEN.load(Ordering::Acquire)}
+/// The overlay took the foreground for the open menu (`focus_overlay`, or seen by the hook).
+pub fn set_menu_focused(){if MENU_OPEN.load(Ordering::Acquire){MENU_FOCUSED.store(true,Ordering::Release);}}
+pub fn menu_focused()->bool{MENU_FOCUSED.load(Ordering::Acquire)}
+/// Whether the hook takes a menu key from the source: only while the menu waits over a source
+/// that kept the foreground because the overlay never got it. Once the overlay had it, the
+/// user coming back to the source (a click in the document) means he left the menu: his keys
+/// are his (the context watcher then closes the menu).
+pub fn takes_source_keys(fg:isize,source:isize,focused:bool)->bool{fg!=0&&fg==source&&!focused}
 
 /// A menu key taken from the source window while the overlay could not hold the
 /// foreground: `key` is written like `KeyboardEvent.key` (« Enter », « Tab », « ArrowDown »,
@@ -336,9 +348,10 @@ pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static,on_typed:
             let message=wparam.0 as u32;
             let fg=foreground();
             if MENU_OPEN.load(Ordering::Acquire){
+                if fg!=0&&fg==OVERLAY.load(Ordering::Relaxed){MENU_FOCUSED.store(true,Ordering::Release);}
                 // The source kept the foreground (the overlay could not take it, or not yet):
                 // the menu keys go to the frontend, down and up, and never reach the source.
-                if fg!=0&&fg==SOURCE.load(Ordering::Relaxed){
+                if takes_source_keys(fg,SOURCE.load(Ordering::Relaxed),MENU_FOCUSED.load(Ordering::Acquire)){
                     let other=held(VK_CONTROL)||held(VK_MENU)||held(VK_LWIN)||held(VK_RWIN);
                     let shift=held(VK_SHIFT);
                     if let Some(name)=menu_key(key.vkCode,shift,other,||layout_letter(key.vkCode,key.scanCode,fg)){
@@ -1055,6 +1068,16 @@ mod tests {
         }
         let sequence = std::thread::spawn(clipboard_sequence).join().unwrap();
         assert_ne!(sequence, 0);
+    }
+
+    #[test]
+    fn the_hook_takes_the_source_keys_only_while_the_overlay_never_had_the_foreground() {
+        // Review n°2 and n°6: activation refused, the source kept the foreground: the fallback.
+        assert!(takes_source_keys(10, 10, false));
+        // The overlay had it and the user came back to his document: his keys are his.
+        assert!(!takes_source_keys(10, 10, true));
+        assert!(!takes_source_keys(20, 10, false), "another window in front");
+        assert!(!takes_source_keys(0, 0, false), "no foreground");
     }
 
     #[test]
