@@ -1,10 +1,10 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, SettingsField, ShortcutConflict, StreamEvent, SystemMotion, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -88,6 +88,8 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
     const character = parts.includes('ctrl') && parts.includes('alt') && !parts.includes('shift') ? azertyAltGr[key] : undefined;
     return (character ? { altGr: true, character } : { altGr: false }) satisfies ShortcutConflict as T;
   }
+  // Lot 10: the preview registers every enabled chord.
+  if (name === 'shortcut_status') return demoSettings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: b.enabled ? 'registered' : 'disabled' })) satisfies ShortcutStatus[] as T;
   if (name === 'dismiss_overlay') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); emit('overlay-dismiss-requested', { captureId: demoCapture.id }); return undefined as T; }
   if (name === 'cancel_translation') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); return undefined as T; }
   return undefined as T;
@@ -164,5 +166,7 @@ export const bridge = {
   demoNotice: (message: string) => { if (!native) emit('capture-notice', { message }); },
   // Browser preview only: what Rust emits when the cursor changes screen under a bottom form.
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
+  // Lot 10: the state of every binding (a chord another application holds is 'taken').
+  shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
 };
 

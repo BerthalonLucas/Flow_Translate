@@ -3,6 +3,8 @@ use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
 mod clipboard_guard;
 mod crypto;
+mod error;
+use error::{AppError, ErrorKind};
 mod halo;
 mod history;
 mod host;
@@ -226,6 +228,9 @@ struct AppState {
     settings_store: SettingsStore,
     settings_lock: Mutex<()>,
     menu_memory: Mutex<MenuMemory>,
+    /// Chords Windows refused to register (another application holds them, lot 10), by
+    /// shortcut id: the settings window shows which binding does not work.
+    refused_shortcuts: Mutex<std::collections::HashMap<u32, BindingState>>,
     history: HistoryStore,
     demo: bool,
     demo_clipboard: bool,
@@ -242,8 +247,48 @@ fn get_settings(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Res
     Ok(settings)
 }
 
+/// Why Windows refused a chord: `RegisterHotKey` answered ERROR_HOTKEY_ALREADY_REGISTERED
+/// (global-hotkey's `AlreadyRegistered`: another application holds it), or anything else.
+fn refusal_state(error: &str) -> BindingState {
+    if error.starts_with("HotKey already registered") { BindingState::Taken } else { BindingState::Failed }
+}
+/// What the settings window shows per binding (lot 10): registered, refused by Windows
+/// (taken by another application, or failed), or disabled.
+fn shortcut_statuses(settings: &Settings, refused: &std::collections::HashMap<u32, BindingState>) -> Vec<ShortcutStatus> {
+    settings.shortcut_bindings.iter().map(|binding| {
+        let state = if !binding.enabled {
+            BindingState::Disabled
+        } else {
+            actions::parse_shortcut(&binding.shortcut).ok()
+                .and_then(|key| refused.get(&key.id()).copied())
+                .unwrap_or(BindingState::Registered)
+        };
+        ShortcutStatus { binding_id: binding.id.clone(), shortcut: binding.shortcut.clone(), state }
+    }).collect()
+}
+fn current_shortcut_statuses(state: &AppState) -> Result<Vec<ShortcutStatus>, String> {
+    let settings = state.inner.lock().map_err(|_| lock_error())?.settings.clone();
+    let refused = state.refused_shortcuts.lock().map_err(|_| lock_error())?;
+    Ok(shortcut_statuses(&settings, &refused))
+}
+fn emit_shortcut_statuses(app: &AppHandle) {
+    if let Ok(statuses) = current_shortcut_statuses(&app.state::<AppState>()) {
+        let _ = app.emit_to("settings", "shortcut-status", statuses);
+    }
+}
+/// The state of every binding: the settings window asks at load and follows the
+/// `shortcut-status` event (startup refusals, saves).
+#[tauri::command]
+fn shortcut_status(state: State<'_, AppState>) -> Result<Vec<ShortcutStatus>, String> {
+    current_shortcut_statuses(&state)
+}
+
 fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
-    let shortcut = actions::parse_shortcut(value)?;
+    register_shortcut_state(app, value).map_err(|(_, message)| message)
+}
+/// Registers a chord; on a refusal, why (for the status) and the French message of 0.4.
+fn register_shortcut_state(app: &AppHandle, value: &str) -> Result<(), (BindingState, String)> {
+    let shortcut = actions::parse_shortcut(value).map_err(|message| (BindingState::Failed, message))?;
     let shortcut_id = shortcut.id();
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
@@ -256,13 +301,13 @@ fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
                     let state = app.state::<AppState>();
                     // Every press translates the current selection (clipboard fallback
                     // included); the docked tab brings the previous glass back on hover.
-                    if let Err(message) = capture_with_binding(app.clone(), &state, Some((shortcut_id, pressed_at))) {
-                        capture_error(&app, &message, true);
+                    if let Err(error) = capture_with_binding(app.clone(), &state, Some((shortcut_id, pressed_at))) {
+                        capture_error(&app, &error, true);
                     }
                 });
             }
         })
-        .map_err(|_| "Le raccourci est déjà utilisé ou indisponible.".into())
+        .map_err(|error| (refusal_state(&error.to_string()), "Le raccourci est déjà utilisé ou indisponible.".into()))
 }
 #[tauri::command]
 fn save_settings(
@@ -280,10 +325,13 @@ fn save_settings(
         .clone();
     let old_keys = old.shortcut_bindings.iter().filter(|b| b.enabled).map(|b| actions::parse_shortcut(&b.shortcut)).collect::<Result<Vec<_>, _>>()?;
     let new_keys = settings.shortcut_bindings.iter().filter(|b| b.enabled).map(|b| actions::parse_shortcut(&b.shortcut)).collect::<Result<Vec<_>, _>>()?;
+    // A chord Windows refused at startup, still wanted: tried again (the other application
+    // may have let it go), never a reason to refuse the save.
+    let refused_before = state.refused_shortcuts.lock().map_err(|_| lock_error())?.clone();
     let mut added: Vec<Shortcut> = Vec::new();
     for binding in settings.shortcut_bindings.iter().filter(|b| b.enabled) {
         let key = actions::parse_shortcut(&binding.shortcut)?;
-        if old_keys.iter().any(|old| old.id() == key.id()) { continue; }
+        if old_keys.iter().any(|old| old.id() == key.id()) || added.iter().any(|done| done.id() == key.id()) { continue; }
         if let Err(error) = register_shortcut(&app, &binding.shortcut) {
             for key in added { let _ = app.global_shortcut().unregister(key); }
             return Err(error);
@@ -316,6 +364,20 @@ fn save_settings(
     state.inner.lock().map_err(|_| lock_error())?.settings = settings.clone();
     if settings.language != old.language { tray_text::apply(&app, settings.language, state.simulated); }
     for key in old_keys { if !new_keys.iter().any(|new| new.id() == key.id()) { let _ = app.global_shortcut().unregister(key); } }
+    {
+        let mut retried = refused_before.clone();
+        retried.retain(|id, _| new_keys.iter().any(|key| key.id() == *id));
+        for binding in settings.shortcut_bindings.iter().filter(|b| b.enabled) {
+            let Ok(key) = actions::parse_shortcut(&binding.shortcut) else { continue };
+            if !retried.contains_key(&key.id()) { continue; }
+            match register_shortcut_state(&app, &binding.shortcut) {
+                Ok(()) => { retried.remove(&key.id()); }
+                Err((refusal, _)) => { retried.insert(key.id(), refusal); }
+            }
+        }
+        if let Ok(mut refused) = state.refused_shortcuts.lock() { *refused = retried; }
+    }
+    emit_shortcut_statuses(&app);
     let _ = app.emit_to("settings", "settings-changed", &settings);
     let mut public = settings;
     for profile in public.profiles.values_mut() { profile.api_key.clear(); }
@@ -405,14 +467,14 @@ fn store_capture(
 /// MessageBox any more (2026-09-14).
 const NOTICE_SIZE: (f64, f64) = (420., 64.);
 const NOTICE_MS: u64 = 4_000;
-fn show_notice(app: &AppHandle, message: &str) {
+fn show_notice(app: &AppHandle, message: &str, code: Option<ErrorKind>) {
     let state = app.state::<AppState>();
     let generation = {
         let Ok(mut i) = state.inner.lock() else { return };
         i.notice_generation = i.notice_generation.wrapping_add(1);
         if i.visible { None } else { Some(i.notice_generation) }
     };
-    let notice = CaptureNotice { message: message.to_string() };
+    let notice = CaptureNotice { message: message.to_string(), code };
     let Some(generation) = generation else {
         let _ = app.emit_to("overlay", "capture-notice", notice);
         return;
@@ -453,7 +515,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             .or_else(|| i.last_result.clone().filter(|(_, at)| at.elapsed() <= REPLAY_WINDOW).map(|(r, _)| r))
     };
     let Some(result) = last else {
-        show_notice(app, "Aucune traduction récente.");
+        show_notice(app, "Aucune traduction récente.", Some(ErrorKind::NoSelection));
         return Ok(());
     };
     let public = Capture {
@@ -474,7 +536,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
         menu: None,
     };
     let capture_id = public.id.clone();
-    store_capture(app, &state, StoredCapture { public, target: None }, host::foreground(), None, None)?;
+    store_capture(app, &state, StoredCapture { public, target: None, invalidated: false }, host::foreground(), None, None)?;
     let mut i = state.inner.lock().map_err(|_| lock_error())?;
     if i.capture.as_ref().is_some_and(|c| c.public.id == capture_id) {
         i.completed = Some(CompletedResult { capture_id, ..result });
@@ -483,7 +545,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
-    capture_with_binding(app, &state, None)?.ok_or_else(|| "Sélectionnez un texte dans une autre application.".into())
+    capture_with_binding(app, &state, None).map_err(String::from)?.ok_or_else(|| "Sélectionnez un texte dans une autre application.".into())
 }
 /// What a shortcut opens: one action at once, or (a `menu` binding under the Îlot) the
 /// menu beside the selection, with the settings of the moment frozen for the choice.
@@ -499,16 +561,17 @@ fn ours(app: &AppHandle, handle: isize) -> bool {
 }
 /// None when nothing was captured on purpose: a press while one of our windows holds
 /// the foreground (the Îlot has the keyboard) never captures our own window.
-fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32, std::time::Instant)>) -> Result<Option<Capture>, String> {
+fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32, std::time::Instant)>) -> Result<Option<Capture>, AppError> {
     if let Some(window) = app.get_webview_window("settings") {
         // The hidden settings window can hold the foreground for an instant at startup
         // (the demo capture of the probe met it): only the shown one refuses a capture.
-        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err("Fermez les réglages avant d’utiliser un raccourci.".into()); }
+        // Nothing of another application is selected then: nothing to act on.
+        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err(AppError::new(ErrorKind::NoSelection, "Fermez les réglages avant d’utiliser un raccourci.")); }
     }
     let opening = {
-        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        let mut i = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?;
         let binding = if let Some((id, _)) = shortcut {
-            Some(i.settings.shortcut_bindings.iter().find(|b| b.enabled && actions::parse_shortcut(&b.shortcut).is_ok_and(|key| key.id() == id)).ok_or("Ce raccourci n’est plus actif.")?.clone())
+            Some(i.settings.shortcut_bindings.iter().find(|b| b.enabled && actions::parse_shortcut(&b.shortcut).is_ok_and(|key| key.id() == id)).ok_or_else(|| AppError::internal("Ce raccourci n’est plus actif."))?.clone())
         } else { None };
         match binding {
             Some(binding) if binding.kind == BindingKind::Menu && i.settings.ui_version == UiVersion::Ilot => {
@@ -535,7 +598,7 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
     let result = capture_opening(&app, state, opening);
     if let Some(at) = pressed_at {
         let stored = result.as_ref().ok().and_then(|capture| capture.as_ref()).map(|capture| capture.id.clone());
-        let repeat = state.inner.lock().map_err(|_| lock_error())?.settle_press(at, stored.as_deref());
+        let repeat = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?.settle_press(at, stored.as_deref());
         if let Some(capture_id) = repeat {
             let _ = app.emit_to("overlay", "menu-repeat", MenuRepeatEvent { capture_id });
         }
@@ -543,7 +606,7 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
     result
 }
 /// Takes the capture of a press (or of `capture_text`) and stores it with what it opens.
-fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Result<Option<Capture>, String> {
+fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Result<Option<Capture>, AppError> {
     let app = app.clone();
     let source = host::foreground();
     // The demo capture reads no window; any other never takes one of ours as its source.
@@ -569,7 +632,7 @@ fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Resul
             let session = MenuSession { capture_id: String::new(), settings: *settings, process, last_action_id, chosen: false };
             store_capture(&app, state, captured, source, None, Some(session))
         }
-    };
+    }.map_err(AppError::internal);
     if result.is_ok() {
         reset_tray_tooltip(&app, state.simulated);
     }
@@ -670,6 +733,7 @@ fn translate(
                                 kind: StreamKind::Delta,
                                 text: Some(word.into()),
                                 message: None,
+                                code: None,
                             },
                         );
                     }
@@ -677,7 +741,7 @@ fn translate(
                 tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(word_ms))=>{}}
             }
             if cancel.is_cancelled() {
-                Err("Traduction annulée.".into())
+                Err(AppError::new(ErrorKind::Cancelled, "Traduction annulée."))
             } else {
                 Ok(out)
             }
@@ -688,9 +752,10 @@ fn translate(
                 request.text.clone(),
                 cancel,
                 |chunk| {
-                    let i = inner.lock().map_err(|_| lock_error())?;
+                    let i = inner.lock().map_err(|_| AppError::internal(lock_error()))?;
+                    // A newer request or a cancel overtook this one: the stream just stops.
                     if !i.current(&id) {
-                        return Err("Requête remplacée.".into());
+                        return Err(AppError::new(ErrorKind::Cancelled, "Requête remplacée."));
                     }
                     app.emit_to(
                         "overlay",
@@ -700,9 +765,10 @@ fn translate(
                             kind: chunk.kind,
                             text: chunk.text,
                             message: chunk.message,
+                            code: None,
                         },
                     )
-                    .map_err(|_| "Flux d’affichage indisponible.".into())
+                    .map_err(|_| AppError::internal("Flux d’affichage indisponible."))
                 },
             )
             .await
@@ -749,12 +815,13 @@ fn translate(
                         kind: StreamKind::Done,
                         text: Some(text),
                         message: None,
+                        code: None,
                     },
                 );
                 drop(i);
                 schedule_auto_delivery(&app);
             }
-            Err(message) => {
+            Err(error) => {
                 i.active = None;
                 let _ = app.emit_to(
                     "overlay",
@@ -763,7 +830,8 @@ fn translate(
                         request_id: id,
                         kind: StreamKind::Error,
                         text: None,
-                        message: Some(message),
+                        message: Some(error.message),
+                        code: Some(error.kind),
                     },
                 );
             }
@@ -808,29 +876,39 @@ fn schedule_auto_delivery(app: &AppHandle) {
         let Some(result) = i.completed.clone() else { return };
         let Some(run) = i.execution.as_mut() else { return };
         if !run.claim_delivery(&result.request_id) { return; }
+        // Why there is nothing to paste over: the watcher dropped a selection that moved, or
+        // the capture never had one that could be written (a console, a copy of the user's).
+        let invalidated = i.capture.as_ref().is_some_and(|c| c.public.id == result.capture_id && c.invalidated);
         let target = i.capture.as_mut().filter(|c| c.public.id == result.capture_id && c.public.can_replace).and_then(|c| {
             c.public.can_replace = false;
             c.target.take()
         });
         let fg = host::foreground();
         let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
-        let outcome = target.as_ref().ok_or_else(|| "Aucune sélection à remplacer; le résultat reste dans la bulle.".to_string())
-            .and_then(|target| if fg != target.native_window && !ours { Err("La fenêtre source a changé; remplacement refusé.".to_string()) } else { Ok(target) })
+        let outcome = target.as_ref().ok_or_else(|| nothing_to_paste(invalidated))
+            .and_then(|target| if fg != target.native_window && !ours { Err(AppError::new(ErrorKind::TargetChanged, "La fenêtre source a changé; remplacement refusé.")) } else { Ok(target) })
             .and_then(|target| capture::paste(target, &result.translated_text, true));
         let capture_id = result.capture_id.clone();
         drop(i);
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
-        let _ = app.emit_to("overlay", "result-delivery", serde_json::json!({
-            "requestId": result.request_id,
-            "status": if outcome.is_ok() { "applied" } else { "fallback" },
-            "confirmed": outcome.as_ref().is_ok_and(|d| d.confirmed),
-            "message": match &outcome {
+        let _ = app.emit_to("overlay", "result-delivery", ResultDelivery {
+            request_id: result.request_id.clone(),
+            status: if outcome.is_ok() { DeliveryStatus::Applied } else { DeliveryStatus::Fallback },
+            confirmed: outcome.as_ref().is_ok_and(|d| d.confirmed),
+            message: match &outcome {
                 Ok(d) if d.confirmed => "Sélection remplacée.".to_string(),
                 Ok(_) => "Résultat collé dans la sélection.".to_string(),
-                Err(message) => message.clone(),
-            }
-        }));
+                Err(error) => error.message.clone(),
+            },
+            code: outcome.as_ref().err().map(|error| error.kind),
+        });
     });
+}
+/// A « replace » result without a target to paste over: the watcher dropped a selection
+/// that moved or changed (`target_changed`), or the capture never had one that could be
+/// written (`not_editable`: a console, a password field, a copy the user made himself).
+fn nothing_to_paste(invalidated: bool) -> AppError {
+    AppError::new(if invalidated { ErrorKind::TargetChanged } else { ErrorKind::NotEditable }, "Aucune sélection à remplacer; le résultat reste dans la bulle.")
 }
 #[tauri::command]
 fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
@@ -863,7 +941,7 @@ async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: 
         let capture_id = c.public.id.clone();
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
         if fg != target.native_window && !ours { return Err("La fenêtre source a changé; remplacement refusé.".into()); }
-        capture::paste(&target, &r.translated_text, true).map(|_| ())
+        capture::paste(&target, &r.translated_text, true).map(|_| ()).map_err(String::from)
     }).await.map_err(|_| "Le remplacement a été interrompu; utilisez Copier.".to_string())?
 }
 fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
@@ -940,14 +1018,28 @@ fn system_theme() -> Option<system_theme::SystemTheme> {
 fn system_motion() -> Option<system_motion::SystemMotion> {
     system_motion::current()
 }
+/// The fields an error may open (lot 13's `data-field` identifiers, `SettingsField`): the
+/// menu shortcut, and a profile's address, key or model, of the default profile when bare.
+fn settings_field(field: &str) -> bool {
+    const PROFILE: [&str; 3] = ["endpoint", "apiKey", "model"];
+    field == "menuShortcut"
+        || PROFILE.contains(&field)
+        || field.split_once('.').is_some_and(|(mode, name)| matches!(mode, "quality" | "fast") && PROFILE.contains(&name))
+}
+/// Shows the settings window; with `field` (lot 10) it then asks the page to scroll to that
+/// field, focus it and make it pulse (`settings-focus-field`). An unknown field only opens.
 #[tauri::command]
-fn open_settings(app: AppHandle) -> Result<(), String> {
+fn open_settings(app: AppHandle, field: Option<String>) -> Result<(), String> {
     let w = app
         .get_webview_window("settings")
         .ok_or_else(|| "Réglages indisponibles.".to_string())?;
     w.show()
         .and_then(|_| w.set_focus())
-        .map_err(|_| "Ouverture des réglages impossible.".into())
+        .map_err(|_| "Ouverture des réglages impossible.".to_string())?;
+    if let Some(field) = field.filter(|field| settings_field(field)) {
+        let _ = app.emit_to("settings", "settings-focus-field", SettingsFocus { field });
+    }
+    Ok(())
 }
 #[tauri::command]
 fn drag_settings(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -1298,10 +1390,12 @@ async fn check_connection(
         Ok(_) => ConnectionStatus {
             connected: true,
             message: "Connexion réussie.".into(),
+            code: None,
         },
-        Err(message) => ConnectionStatus {
+        Err(error) => ConnectionStatus {
             connected: false,
-            message,
+            message: error.message,
+            code: Some(error.kind),
         },
     })
 }
@@ -1448,12 +1542,12 @@ fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
         let _ = tray.set_tooltip(Some(tray_text::tooltip(language, simulated)));
     }
 }
-fn capture_error(app: &AppHandle, message: &str, notify: bool) {
+fn capture_error(app: &AppHandle, error: &AppError, notify: bool) {
     if let Some(tray) = app.tray_by_id("flowtranslate") {
-        let _ = tray.set_tooltip(Some(format!("FlowTranslate — {message}")));
+        let _ = tray.set_tooltip(Some(format!("FlowTranslate — {}", error.message)));
     }
     if notify {
-        show_notice(app, message);
+        show_notice(app, &error.message, Some(error.kind));
     }
 }
 fn watch_context(app: AppHandle) {
@@ -1517,6 +1611,7 @@ fn watch_context(app: AppHandle) {
                         c.public.anchor = None;
                         c.public.can_replace = false;
                         c.target = None;
+                        c.invalidated = true;
                     } else {
                         continue;
                     }
@@ -1529,6 +1624,7 @@ fn watch_context(app: AppHandle) {
                         capture_id: id,
                         anchor_lost: true,
                         message: "La sélection a changé. Utilisez Copier.".into(),
+                        code: ErrorKind::TargetChanged,
                     },
                 );
                 let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None);
@@ -1540,7 +1636,7 @@ fn watch_context(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            let _ = open_settings(app.clone());
+            let _ = open_settings(app.clone(), None);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
@@ -1572,6 +1668,7 @@ pub fn run() {
                 settings_store: store,
                 settings_lock: Mutex::new(()),
                 menu_memory: Mutex::new(MenuMemory::load(&root)),
+                refused_shortcuts: Mutex::new(std::collections::HashMap::new()),
                 history,
                 demo,
                 demo_clipboard,
@@ -1592,12 +1689,12 @@ pub fn run() {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             if let Err(message) = replay_last(&app) {
-                                capture_error(&app, &message, true);
+                                capture_error(&app, &AppError::internal(message), true);
                             }
                         });
                     }
                     "settings" => {
-                        let _ = open_settings(app.clone());
+                        let _ = open_settings(app.clone(), None);
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -1635,11 +1732,16 @@ pub fn run() {
                 });
             }
             for shortcut in shortcuts {
-                if let Err(message) = register_shortcut(app.handle(), &shortcut) {
-                    capture_error(app.handle(), &message, false);
-                    let _ = open_settings(app.handle().clone());
+                if let Err((refusal, message)) = register_shortcut_state(app.handle(), &shortcut) {
+                    if let Ok(key) = actions::parse_shortcut(&shortcut) {
+                        if let Ok(mut refused) = app.state::<AppState>().refused_shortcuts.lock() { refused.insert(key.id(), refusal); }
+                    }
+                    capture_error(app.handle(), &AppError::internal(message), false);
+                    let _ = open_settings(app.handle().clone(), None);
                 }
             }
+            // The page may already listen (it asks `shortcut_status` at load anyway).
+            emit_shortcut_statuses(app.handle());
             let keys = app.handle().clone();
             host::install_keyboard_hook(move |key| {
                 // The keyboard fallback of the Îlot: only while its capture still waits.
@@ -1660,7 +1762,7 @@ pub fn run() {
                 });
             }
             if args.iter().any(|a| a == "--settings") {
-                let _ = open_settings(app.handle().clone());
+                let _ = open_settings(app.handle().clone(), None);
             }
             Ok(())
         })
@@ -1676,6 +1778,7 @@ pub fn run() {
             dismiss_overlay,
             complete_overlay_dismiss,
             open_settings,
+            shortcut_status,
             focus_overlay,
             choose_action,
             shortcut_conflict,
@@ -1715,7 +1818,7 @@ mod tests {
         assert!(!i.execution.as_mut().unwrap().claim_delivery("retry"));
     }
     fn menu_capture(i: &mut Inner, id: &str) {
-        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None });
+        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None, invalidated: false });
         i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false });
         i.execution = None;
         i.visible = true;
@@ -1798,6 +1901,32 @@ mod tests {
         assert_eq!(clipped.len(), 2);
         assert_eq!((clipped[0].y, clipped[0].height), (0., 140.));
         assert_eq!(shift_regions(&regions, -730.).len(), 1);
+    }
+    #[test]
+    fn a_result_without_target_says_why_and_the_settings_open_only_known_fields() {
+        assert_eq!(nothing_to_paste(true).kind, ErrorKind::TargetChanged);
+        assert_eq!(nothing_to_paste(false).kind, ErrorKind::NotEditable);
+        for field in ["menuShortcut", "endpoint", "apiKey", "model", "quality.endpoint", "fast.apiKey", "fast.model"] {
+            assert!(settings_field(field), "{field}");
+        }
+        for field in ["", "history", "slow.model", "model.fast", "quality.model.x", "quality.", "../x"] {
+            assert!(!settings_field(field), "{field}");
+        }
+    }
+    #[test]
+    fn every_binding_reports_whether_windows_registered_its_chord() {
+        let mut settings = Settings::default();
+        let menu = settings.shortcut_bindings[0].clone();
+        settings.shortcut_bindings.push(actions::ShortcutBinding { id: "direct".into(), shortcut: "Ctrl+Alt+Shift+T".into(), enabled: false, ..menu.clone() });
+        let mut refused = std::collections::HashMap::new();
+        let states = |refused: &std::collections::HashMap<u32, BindingState>| shortcut_statuses(&settings, refused).into_iter().map(|s| (s.binding_id, s.state)).collect::<Vec<_>>();
+        assert_eq!(states(&refused), vec![(menu.id.clone(), BindingState::Registered), ("direct".into(), BindingState::Disabled)]);
+        // Ctrl+Alt+Space held by another application at startup (measured on 2026-09-24).
+        refused.insert(actions::parse_shortcut(&menu.shortcut).unwrap().id(), refusal_state("HotKey already registered: HotKey { mods: ALT | CONTROL, key: Space, id: 1 }"));
+        assert_eq!(states(&refused)[0], (menu.id.clone(), BindingState::Taken));
+        assert_eq!(refusal_state("Unable to register hotkey: Unknown VKCode for F24"), BindingState::Failed);
+        let json = serde_json::to_value(shortcut_statuses(&settings, &refused)).unwrap();
+        assert_eq!(json[0], serde_json::json!({"bindingId": menu.id, "shortcut": menu.shortcut, "state": "taken"}));
     }
     #[test]
     fn stale_cancel_preserves_current() {

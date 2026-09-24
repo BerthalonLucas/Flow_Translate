@@ -1,4 +1,5 @@
 use crate::actions::{ActionDefinition, ExecutionInfo, ShortcutBinding};
+use crate::error::ErrorKind;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -218,6 +219,54 @@ pub struct ShortcutConflict {
     pub character: Option<String>,
 }
 
+/// Whether a « replace » result was pasted (`applied`) or stays in the glass (`fallback`).
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DeliveryStatus {
+    Applied,
+    Fallback,
+}
+
+/// `result-delivery` (0.4.0): after the automatic paste of a « replace » capture. `code`
+/// (lot 10) says why a fallback happened.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultDelivery {
+    pub request_id: String,
+    pub status: DeliveryStatus,
+    pub confirmed: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorKind>,
+}
+
+/// `settings-focus-field` (lot 13, sent from lot 10): the field of the Settings to show.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsFocus {
+    pub field: String,
+}
+
+/// Whether a binding's chord works (lot 10): registered, refused because another
+/// application holds it (`taken`), refused for another reason (`failed`), or disabled.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BindingState {
+    Registered,
+    Taken,
+    Failed,
+    Disabled,
+}
+
+/// `shortcut_status` and the `shortcut-status` event: one per binding, in the settings order.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutStatus {
+    pub binding_id: String,
+    pub shortcut: String,
+    pub state: BindingState,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Replay {
@@ -236,11 +285,14 @@ pub struct CaptureTarget {
 }
 
 /// A short message in place of the old MessageBox: shown in the glass when one is open,
-/// otherwise as a pill alone at the bottom of the cursor's screen.
+/// otherwise as a pill alone at the bottom of the cursor's screen. `code` (lot 10): why
+/// nothing was captured, for the Îlot's error pill.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureNotice {
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorKind>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -423,6 +475,9 @@ pub struct StreamEvent {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// With `kind: error` (lot 10): what failed, beside the French message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorKind>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -450,6 +505,9 @@ pub struct HistoryEntry {
 pub struct ConnectionStatus {
     pub connected: bool,
     pub message: String,
+    /// When not connected (lot 10): which field to fix, or Try again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorKind>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -458,6 +516,8 @@ pub struct TargetInvalidated {
     pub capture_id: String,
     pub anchor_lost: bool,
     pub message: String,
+    /// Always `target_changed` (lot 10).
+    pub code: ErrorKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -485,6 +545,9 @@ pub struct TargetIdentity {
 pub struct StoredCapture {
     pub public: Capture,
     pub target: Option<TargetIdentity>,
+    /// The context watcher dropped the target (the selection moved, changed or left): a
+    /// paste then fails as `target_changed`, not as a field that cannot be written.
+    pub invalidated: bool,
 }
 
 #[derive(Clone, Debug)]
