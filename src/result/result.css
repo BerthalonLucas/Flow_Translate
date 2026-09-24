@@ -16,6 +16,9 @@
 .result-check path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: result-check-draw 260ms cubic-bezier(.65, 0, .35, 1) 80ms forwards; }
 @keyframes result-check-draw { to { stroke-dashoffset: 0; } }
 :root[data-motion="reduced"] .result-check path { animation: none; stroke-dashoffset: 0; }
+/* The check alone that follows a withdrawn Undo keeps the check already drawn: no second stroke. */
+.result-check.is-drawn path { animation: none; stroke-dashoffset: 0; }
+.result-undo[aria-disabled="true"] { cursor: default; }
 
 /* Buttons in the pill (app.css:159-160): 22 high, radius 11, a light ink fill. */
 .result-btn { appearance: none; display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 5px; height: 22px; padding: 0 8px; border: 0; border-radius: 11px; background: rgb(var(--ink-rgb) / .07); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }

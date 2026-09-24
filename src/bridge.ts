@@ -195,12 +195,13 @@ export const bridge = {
   moveOverlay: (captureId: string, dx: number, dy: number) => command<void>('move_overlay', { captureId, dx, dy }),
   highlightChanges: (requestId: string, ranges: TextRange[]) => command<HighlightResult>('highlight_changes', { requestId, ranges }),
   clearHighlight: (requestId: string) => command<void>('clear_highlight', { requestId }),
-  // Lot 9: undo a pasted result, after revalidation. The native command exists (`undo_result` →
-  // UndoOutcome: `undone`, `refused` or `failed`, with a code); null keeps the Îlot's check alone
-  // until the front handles those outcomes. Then: `(requestId: string) => command<UndoOutcome>('undo_result', { requestId })`.
-  undoResult: null as ((requestId: string) => Promise<UndoOutcome>) | null,
+  // Lot 9: undo a pasted result, once, after revalidation (`undo_result` → UndoOutcome). Read its
+  // status: a resolved promise may be a refusal (`refused`: nothing was sent; `failed`: sent, the
+  // original did not read back); a rejection is a French string (the result no longer current).
+  undoResult: (requestId: string) => command<UndoOutcome>('undo_result', { requestId }),
   // `replace_result` with its refusal as Rust sends it, `{message, code}` (Refusal): the code says
-  // why (target_changed, keys_held, not_editable, paste_blocked); `replace` keeps the message only.
+  // why (target_changed, keys_held, not_editable, paste_blocked); `replace` keeps the message only,
+  // for the glass of 0.4. The Îlot's own paste of a retried result reads the code (IlotStage).
   replaceResult: (requestId: string) => command<void>('replace_result', { requestId }),
 };
 

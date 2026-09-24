@@ -128,6 +128,29 @@ describe('Ilot', () => {
     expect(calls.onChoose).toHaveBeenCalledWith('translate');
   });
 
+  // Lot 9 (Sol's measure): the keys the window received before the Îlot listened are replayed
+  // through press() once it shows, with their modifiers; those after the one that opened the
+  // field are its text.
+  it('replays the keys typed before it showed: a chord is not a letter, and the characters after the field opened are its text', async () => {
+    const { calls, mode, present } = await mount();
+    const ref = createRef<IlotHandle>();
+    await act(async () => root!.render(<Ilot ref={ref} actions={actions} lastActionId="translate" {...calls} />));
+    // Ctrl+T is the system's, never the letter of Translate.
+    let used = true;
+    await act(async () => { used = ref.current!.press('t', { ctrlKey: true }); });
+    expect(used).toBe(false);
+    expect(calls.onChoose).not.toHaveBeenCalled();
+    // Replayed together (one frame): « q » opens the field, « u », « i » and an AltGr « € » join it.
+    await act(async () => { for (const [key, modifiers] of [['q', {}], ['u', {}], ['i', { shiftKey: true }], ['€', { ctrlKey: true, altKey: true, altGraph: true }]] as const) ref.current!.press(key, modifiers); });
+    expect(mode()).toBe('prompt');
+    const input = present().querySelector('input')!;
+    expect(input.value).toBe('qui€');
+    // A key replayed once the field shows is typed into it too; a chord or a named key is not.
+    await act(async () => { ref.current!.press('x'); ref.current!.press('v', { ctrlKey: true }); ref.current!.press('ArrowLeft'); });
+    expect(input.value).toBe('qui€x');
+    expect(calls.onInstruction).not.toHaveBeenCalled();
+  });
+
   // Review of bc57857, finding 3: the dimmed ✦ and « Ask » did nothing once the keys came from Rust.
   it('asks for the keyboard when the pastille or the « Ask » tile is clicked without it, and opens the field once granted', async () => {
     const onRequestKeyboard = vi.fn(async () => false);

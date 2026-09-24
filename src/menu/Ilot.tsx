@@ -38,7 +38,10 @@ import './ilot.css';
  *   onRequestKeyboard()  'injected' only: the pastille or the « Ask » tile clicked asks for the
  *                  keyboard; the field opens once the promise answers true (the parent then
  *                  passes keyboard 'focused').
- *   ref            IlotHandle: press(key, { shiftKey }) → whether the menu used the key.
+ *   ref            IlotHandle: press(key, modifiers) → whether the menu used the key: a key Rust
+ *                  forwards (`menu-key`), or one the window received before the Îlot listened
+ *                  (src/menu/IlotStage.tsx replays them in order). A character pressed while the
+ *                  field is open (a key after the one that opened it) is typed into the field.
  *   initialMode    'compact' by default (the lab scenarios open on 'grid' or 'prompt').
  *   shape          'menu' (default) or 'pill': the same surface, never unmounted, springs to the
  *                  shape of the `pill` content. Coming back to 'menu' starts again from the
@@ -55,7 +58,7 @@ export type IlotKeyboard = 'focused' | 'injected';
 export type IlotShape = 'menu' | 'pill';
 // The content of the pill shape (the same as src/result/ResultPill.tsx ResultContent).
 export type PillContent = { key: string; size?: SurfaceSize; node: ReactNode };
-export type IlotHandle = { press: (key: string, modifiers?: Pick<KeyInput, 'shiftKey'>) => boolean };
+export type IlotHandle = { press: (key: string, modifiers?: Omit<KeyInput, 'key'>) => boolean };
 export type IlotProps = {
   actions: readonly IlotAction[];
   knownActions?: readonly IlotAction[];
@@ -146,11 +149,26 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
   const latest = useRef(handle);
   latest.current = handle;
 
-  useImperativeHandle(ref, () => ({ press: (key, modifiers) => latest.current({ key, ...modifiers }) }), []);
+  // A key replayed while the field is open types into it: the field is a real <input> that takes
+  // the window's own keys, so only keys that came before it existed (replayed together, the first
+  // one opening it) reach this, and join the text it opens with (or its value, once shown).
+  const field = useRef<FieldHandle>(null);
+  const typeInto = (input: KeyInput): boolean => {
+    if (shape !== 'menu' || live.current.mode !== 'prompt' || !promptAvailable || input.isComposing) return false;
+    if ([...input.key].length !== 1 || ((input.ctrlKey || input.metaKey || input.altKey) && !input.altGraph)) return false;
+    if (field.current) field.current.insert(input.key);
+    else setSeed(previous => ({ ...previous, text: previous.text + input.key }));
+    return true;
+  };
+  const typeLatest = useRef(typeInto);
+  typeLatest.current = typeInto;
+  useImperativeHandle(ref, () => ({ press: (key, modifiers) => latest.current({ key, ...modifiers }) || typeLatest.current({ key, ...modifiers }) }), []);
 
   // menus.jsx:15-27: the window's keys, caught before anything else, while the window has the
-  // keyboard. A field outside the Îlot keeps its own keys.
-  useEffect(() => {
+  // keyboard. A field outside the Îlot keeps its own keys. Installed with the Îlot's first frame
+  // (a layout effect): a key the window receives right after it shows is never missed (the keys
+  // before that are IlotStage's).
+  useLayoutEffect(() => {
     if (keyboard !== 'focused') return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
@@ -190,7 +208,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
 
   let content: ReactNode;
   if (shape === 'pill') content = pill?.node;
-  else if (mode === 'prompt') content = <PromptField seed={seed.text} label={describe} onSubmit={onInstruction} />;
+  else if (mode === 'prompt') content = <PromptField ref={field} seed={seed.text} label={describe} onSubmit={onInstruction} />;
   else if (mode === 'grid') content = <div role="menu" aria-label={t('ilot.menu')} className="ilot-grid" style={{ gridTemplateColumns: `repeat(${context.columns}, ${ilotMetrics.tile.width}px)` }}>
     {context.tiles.map((tile, index) => {
       const isHot = index === safeHot;
@@ -241,9 +259,11 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
 // to the compact state (the Îlot's table, keys.ts, wherever the focus is). A press anywhere else in
 // the field (its dot, its ↵, its padding) keeps the focus in the input (review of bc57857,
 // finding 5).
-function PromptField({ seed, label, onSubmit }: { seed: string; label: string; onSubmit: (text: string) => void }) {
+type FieldHandle = { insert: (text: string) => void };
+function PromptField({ seed, label, onSubmit, ref }: { seed: string; label: string; onSubmit: (text: string) => void; ref?: Ref<FieldHandle> }) {
   const [value, setValue] = useState(seed);
   const input = useRef<HTMLInputElement>(null);
+  useImperativeHandle(ref, () => ({ insert: text => setValue(current => [...current + text].slice(0, ilotMetrics.instructionMax).join('')) }), []);
   useLayoutEffect(() => {
     const field = input.current;
     if (!field) return;

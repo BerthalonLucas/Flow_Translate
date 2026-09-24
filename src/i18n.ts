@@ -49,6 +49,13 @@ const dictionary = {
   // has one (design-lab/src/data.js:17-18, 66-72; Simulator.jsx:264, 285, 292), at most six words.
   'result.undo': { en: 'Undo', fr: 'Annuler' },
   'result.undone': { en: 'Undone', fr: 'Annulé' },
+  // An Undo that could not be done (lot 9, `undo_result`): refused before anything was sent, or
+  // sent and not read back. Nothing else is ever pasted.
+  'result.undo.target_changed': { en: 'Text changed — can’t undo', fr: 'Texte modifié, annulation impossible' },
+  'result.undo.keys_held': { en: 'Keys held down — can’t undo', fr: 'Touches enfoncées, annulation impossible' },
+  'result.undo.paste_blocked': { en: 'This app blocked Undo', fr: 'L’application a bloqué l’annulation' },
+  'result.undo.internal': { en: 'Can’t undo now', fr: 'Annulation indisponible' },
+  'result.undo.sent': { en: 'Undo not confirmed — check text', fr: 'Annulation non confirmée, vérifiez' },
   'result.copied': { en: 'Copied', fr: 'Copié' },
   'result.action.endpoint': { en: 'Open endpoint', fr: 'Voir l’adresse' },
   'result.action.apiKey': { en: 'Fix key', fr: 'Corriger la clé' },
@@ -72,13 +79,14 @@ const dictionary = {
   'result.error.too_long': { en: 'Selection too long (max 6,000 characters)', fr: 'Sélection trop longue (6 000 caractères max)' },
   'result.error.no_selection': { en: 'Select some text first', fr: 'Sélectionnez d’abord du texte' },
   'result.error.protected_field': { en: 'Protected field, not read', fr: 'Champ protégé, rien lu' },
+  // Capture notices with a code of their own: the Settings window was in front, the tray's
+  // « Revoir » found nothing recent.
+  'result.error.settings_open': { en: 'Close Settings first', fr: 'Fermez d’abord les Réglages' },
+  'result.error.nothing_recent': { en: 'No recent translation', fr: 'Aucune traduction récente' },
   'result.error.cancelled': { en: 'Cancelled', fr: 'Annulé' },
   // A capture Rust refused (capture-notice), where the request's words would mislead: the source
-  // window changed during the capture (nothing was tried), the Settings window was in front, the
-  // tray's « Revoir » found nothing recent (src/result/errors.ts, noticeCause).
+  // window changed during the capture, nothing was tried (src/result/errors.ts, source 'capture').
   'result.notice.target_changed': { en: 'Window changed — try again', fr: 'Fenêtre changée, réessayez' },
-  'result.notice.settings_open': { en: 'Close Settings first', fr: 'Fermez d’abord les Réglages' },
-  'result.notice.nothing_recent': { en: 'No recent translation', fr: 'Aucune traduction récente' },
   'init.connection': { en: 'The connection to FlowTranslate is unavailable.', fr: 'La connexion à FlowTranslate est indisponible.' },
   'init.close': { en: 'Closing failed. Try again.', fr: 'La fermeture a échoué. Réessayez.' },
   'init.restart': { en: 'Restart the app if the problem persists.', fr: 'Relancez l’application si le problème persiste.' },

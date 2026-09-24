@@ -47,6 +47,52 @@ describe('Countdown', () => {
     expect(clock.expired(7000)).toBe(true);
   });
 
+  it('tells its views when it stops or starts again, and each holder releases only its own reasons', () => {
+    const clock = new Countdown(4000, 0);
+    const heard: boolean[] = [];
+    const stop = clock.subscribe(() => heard.push(clock.paused));
+    // Two contents on the same clock (the check and Undo, then the check alone), each holding.
+    clock.pause('a:hover', 1000);
+    clock.pause('b:hover', 1100);
+    clock.resume('a:hover', 1500);
+    expect(clock.paused).toBe(true);
+    clock.pause('busy', 1600);
+    clock.resume('b:hover', 1700);
+    expect(clock.paused).toBe(true);
+    clock.resume('busy', 2000);
+    expect(heard).toEqual([true, false]);
+    expect(clock.remaining(2000)).toBe(3000);
+    stop();
+    clock.pause('busy', 2500);
+    expect(heard).toEqual([true, false]);
+  });
+
+  it('keeps at most 1.1 s once Undo is withdrawn by a key or the caret, never more than it had, the pauses still holding', () => {
+    const clock = new Countdown(8000, 0);
+    const heard: boolean[] = [];
+    clock.subscribe(() => heard.push(clock.paused));
+    clock.limit(checkOnlyMs, 3000);
+    expect(heard).toEqual([false]);
+    expect(clock.remaining(3000)).toBe(1100);
+    expect(clock.expired(4099)).toBe(false);
+    expect(clock.expired(4100)).toBe(true);
+    // Less left than the limit: unchanged, nobody told.
+    const late = new Countdown(8000, 0);
+    late.subscribe(() => heard.push(late.paused));
+    late.limit(checkOnlyMs, 7500);
+    expect(late.remaining(7500)).toBe(500);
+    expect(heard).toEqual([false]);
+    // Paused (the pointer on the pill, the pill out of sight): the 1.1 s start once it resumes.
+    const held = new Countdown(8000, 0);
+    held.pause('place', 1000);
+    held.limit(checkOnlyMs, 2000);
+    expect(held.paused).toBe(true);
+    expect(held.remaining(9000)).toBe(1100);
+    held.resume('place', 9000);
+    expect(held.expired(10099)).toBe(false);
+    expect(held.expired(10100)).toBe(true);
+  });
+
   it('steps once a second for reduced motion', () => {
     const clock = new Countdown(8000, 0);
     expect([0, 999, 1000, 1001, 4000, 7999, 8000].map(now => clock.steppedProgress(now))).toEqual([1, 1, 7 / 8, 7 / 8, 4 / 8, 1 / 8, 0]);

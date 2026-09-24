@@ -8,9 +8,17 @@ import type { AfterReplace } from '../types';
  * leaves (and the changed words' marks with it). Without Undo, the check alone stays 1.1 s
  * (Simulator.jsx:155). Pure: every call takes the current time, so the tests drive a simulated
  * clock.
+ *
+ * One clock may outlive the content that draws it: when Rust withdraws Undo (`undo-state`), the
+ * Îlot swaps the check and Undo for the check alone and the time goes on (src/menu/IlotStage.tsx).
+ * Each holder pauses for reasons of its own (a pointer on one content, the focus on another, an
+ * Undo on its way), so one resuming never releases another's; `subscribe` tells every view that
+ * the clock stopped or started again.
  */
 
-export type PauseReason = 'hover' | 'focus';
+// Why the time stands still: 'hover', 'focus', 'busy' (an Undo on its way), or any key a holder
+// makes its own (DoneContent prefixes its reasons with its instance id).
+export type PauseReason = string;
 
 // Simulator.jsx:155: the check alone stays 1100 ms.
 export const checkOnlyMs = 1100;
@@ -29,6 +37,7 @@ export class Countdown {
   private spent = 0;
   private since: number | null;
   private readonly reasons = new Set<PauseReason>();
+  private readonly listeners = new Set<() => void>();
 
   constructor(durationMs: number, now: number) {
     this.durationMs = Math.max(0, durationMs);
@@ -50,6 +59,14 @@ export class Countdown {
     return total ? Math.ceil(this.remaining(now) / 1000) / total : 0;
   }
 
+  // At most `ms` left from now (never more than there was): Undo withdrawn by a key or the caret,
+  // the check alone leaves within the lab's 1.1 s. The pauses still hold.
+  limit(ms: number, now: number): void {
+    if (this.remaining(now) <= ms) return;
+    this.spent = this.durationMs - Math.max(0, ms);
+    if (this.since !== null) this.since = now;
+    this.notify();
+  }
   // Pausing for a reason already held, or resuming one not held, changes nothing.
   pause(reason: PauseReason, now: number): void {
     if (this.reasons.has(reason)) return;
@@ -57,9 +74,17 @@ export class Countdown {
     if (this.since === null) return;
     this.spent = this.elapsed(now);
     this.since = null;
+    this.notify();
   }
   resume(reason: PauseReason, now: number): void {
     if (!this.reasons.delete(reason) || this.reasons.size || this.since !== null) return;
     this.since = now;
+    this.notify();
   }
+  // Called whenever the clock stops or starts again; returns the unsubscribe.
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+  private notify() { for (const listener of [...this.listeners]) listener(); }
 }

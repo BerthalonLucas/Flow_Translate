@@ -20,29 +20,30 @@ import { errorCodes, type ErrorCode, type Mode, type ProfileField, type Settings
  *
  * API
  *   errorCodeOf(value)          a code from the bridge; anything unknown is 'internal'.
- *   describeError(code, { mode, model, source, cause })  → { family, message, params, action, actionLabel }:
+ *   refusalCode(reason)         the code of a command refused with `{message, code}` (Refusal:
+ *                               `replace_result`); anything else is 'internal'.
+ *   describeError(code, { mode, model, source })  → { family, message, params, action, actionLabel }:
  *                               the i18n keys to show and the one action of its button.
  *                               source 'capture': a capture Rust refused (`capture-notice`):
  *                               nothing was read, no result exists, so no button at all, and
  *                               the capture's own words where the request's would mislead
- *                               (`cause`, from noticeCause; target_changed: nothing was tried).
- *   noticeCause(code, message)  which of the situations sharing a notice's code Rust meant.
- *   refusedPasteCode(reason)    the paste code of a `replace_result` refusal (a French string).
+ *                               (target_changed: the source window changed, nothing was tried).
+ *                               source 'undo' / 'undo-sent': an Undo refused (nothing was sent: the
+ *                               text changed, keys held, the application blocked it) or sent and
+ *                               not read back; its own words, ✕ only.
  *   ErrorAction                 { type: 'settings', field } | { type: 'retry' } | { type: 'copy' }.
  *
- * Rust's words. Two failures still reach the front without a code of their own: a notice's code
- * is shared by several situations (no_selection: nothing selected, the Settings in front, the
- * tray's « Revoir » with nothing recent; docs/BRIDGE.md « Capture »), and `replace_result`
- * rejects with a French string (the 0.4 contract). Until Rust gives each its own code, the front
- * reads the situation from a fragment of those words, only to choose its own text: they are never
- * shown nor logged. errors.test.ts checks each fragment is still in src-tauri, so a rewording on
- * the native side fails the tests instead of silently falling back to the generic text.
+ * Only codes decide. Rust's French words travel beside them for the 0.4 journey and are never
+ * read here: each situation the Îlot tells apart has its own code (settings_open and
+ * nothing_recent for the notices, the Refusal of replace_result; docs/BRIDGE.md « error codes »).
  */
 
 export type ErrorFamily = 'config' | 'transient' | 'paste' | 'content' | 'silent';
 export type ErrorAction = { type: 'settings'; field: SettingsField } | { type: 'retry' } | { type: 'copy' };
-// Where it failed: a request (translation, paste) or the capture itself.
-export type ErrorSource = 'request' | 'capture';
+// Where it failed: a request (translation, paste), the capture itself, or an Undo (lot 9,
+// `undo_result`): 'undo' refused before anything was sent, 'undo-sent' sent (Ctrl+Z or the
+// original pasted back) and not read back. An Undo that fails pastes nothing else: no button.
+export type ErrorSource = 'request' | 'capture' | 'undo' | 'undo-sent';
 
 type Entry = { family: ErrorFamily; field?: ProfileField };
 // Why each code sits in its family:
@@ -55,7 +56,8 @@ type Entry = { family: ErrorFamily; field?: ProfileField };
 //                    perhaps on less text); a partial result is never offered for copy.
 //   internal         anything unexpected on our side, and any code this front does not know.
 //   paste_blocked, target_changed, not_editable, keys_held: the paste did not happen: paste.
-//   too_long, no_selection, protected_field: nothing was read or sent: content, ✕ only.
+//   too_long, no_selection, protected_field, settings_open, nothing_recent: nothing was read or
+//                    sent: content, ✕ only (the last two are capture notices, no button at all).
 //   cancelled        the user's own Escape: silent.
 const table: Record<ErrorCode, Entry> = {
   unreachable: { family: 'config', field: 'endpoint' },
@@ -75,11 +77,18 @@ const table: Record<ErrorCode, Entry> = {
   too_long: { family: 'content' },
   no_selection: { family: 'content' },
   protected_field: { family: 'content' },
+  settings_open: { family: 'content' },
+  nothing_recent: { family: 'content' },
   cancelled: { family: 'silent' },
 };
 
 export function errorCodeOf(value: unknown): ErrorCode {
   return (errorCodes as readonly unknown[]).includes(value) ? value as ErrorCode : 'internal';
+}
+// A command refused with its code (`replace_result` since the review of da-ilot: `{message, code}`).
+// The message is Rust's French sentence for the 0.4 journey: never read here.
+export function refusalCode(reason: unknown): ErrorCode {
+  return errorCodeOf(typeof reason === 'object' && reason !== null ? (reason as { code?: unknown }).code : undefined);
 }
 export const errorFamily = (code: ErrorCode): ErrorFamily => table[code].family;
 
@@ -95,50 +104,27 @@ export type ErrorDescription = {
   actionLabel: MessageKey | null;
 };
 
-// The situations a capture's code does not tell apart (Rust's `no_selection` also means these).
-export type NoticeCause = 'settings_open' | 'nothing_recent';
-// Where Rust says them (src-tauri/src/lib.rs): « Fermez les réglages avant d’utiliser un
-// raccourci. » (a shortcut pressed while the Settings window is in front) and « Aucune traduction
-// récente. » (the tray's « Revoir la dernière traduction » with nothing within ten minutes).
-export const noticeWords: ReadonlyArray<{ code: ErrorCode; words: string; cause: NoticeCause }> = [
-  { code: 'no_selection', words: 'Fermez les réglages', cause: 'settings_open' },
-  { code: 'no_selection', words: 'Aucune traduction récente', cause: 'nothing_recent' },
-];
-export function noticeCause(code: ErrorCode, message: string | undefined): NoticeCause | null {
-  return noticeWords.find(entry => entry.code === code && message?.includes(entry.words))?.cause ?? null;
-}
 // What a capture says in its own words (source 'capture'): target_changed there is the source
 // window changing during the capture (capture.rs), before anything was pasted.
 const captureMessage: Partial<Record<ErrorCode, MessageKey>> = { target_changed: 'result.notice.target_changed' };
-const causeMessage: Record<NoticeCause, MessageKey> = { settings_open: 'result.notice.settings_open', nothing_recent: 'result.notice.nothing_recent' };
-
-// `replace_result` rejects with Rust's French string (lib.rs replace_result, capture.rs paste and
-// validate_target): the target moved (« La fenêtre source a changé; remplacement refusé. », the
-// same for the active field, the target, the selection; « La sélection n’est plus disponible;
-// utilisez Copier. »), the shortcut's keys are still held, or the field cannot be written.
-// Anything else (the paste blocked, the source not brought back, the clipboard taken meanwhile,
-// an interrupted command) is paste_blocked.
-export const refusalWords: ReadonlyArray<{ words: string; code: ErrorCode }> = [
-  { words: 'a changé; remplacement refusé', code: 'target_changed' },
-  { words: 'plus disponible; utilisez Copier', code: 'target_changed' },
-  { words: 'Relâchez les touches', code: 'keys_held' },
-  { words: 'pas modifiable', code: 'not_editable' },
-];
-export function refusedPasteCode(reason: unknown): ErrorCode {
-  const text = typeof reason === 'string' ? reason : '';
-  return refusalWords.find(entry => text.includes(entry.words))?.code ?? 'paste_blocked';
-}
+// Why an Undo was refused, in its own words (the request's would say « not replaced »): the text,
+// the caret, the field or the window changed, or Undo was already withdrawn; keys still held; the
+// source could not be brought back or the chord was blocked; anything else (the command refused:
+// the result no longer current). Sent and not read back: the text may not be the original.
+const undoMessage: Partial<Record<ErrorCode, MessageKey>> = { target_changed: 'result.undo.target_changed', keys_held: 'result.undo.keys_held', paste_blocked: 'result.undo.paste_blocked' };
 
 // mode: the profile the failed request used (its field then opens, else the default
 // profile's). model: the model's name from the settings, for « Model not found: … » (the lab's
-// wording); never anything from the server's answer. cause: see noticeCause (capture only).
-export function describeError(code: ErrorCode, { mode, model, source = 'request', cause }: { mode?: Mode; model?: string; source?: ErrorSource; cause?: NoticeCause | null } = {}): ErrorDescription {
+// wording); never anything from the server's answer.
+export function describeError(code: ErrorCode, { mode, model, source = 'request' }: { mode?: Mode; model?: string; source?: ErrorSource } = {}): ErrorDescription {
   const { family, field } = table[code];
   const named = code === 'model_not_found' && model?.trim();
   const message = (named ? 'result.error.model_not_found_named' : `result.error.${code}`) as MessageKey;
   const params = named ? { model: model!.trim() } : undefined;
   const none = { code, family, message, params, action: null, actionLabel: null };
-  if (source === 'capture') return { ...none, message: (cause && causeMessage[cause]) ?? captureMessage[code] ?? message };
+  if (source === 'capture') return { ...none, message: captureMessage[code] ?? message };
+  if (source === 'undo') return { ...none, message: undoMessage[code] ?? 'result.undo.internal' };
+  if (source === 'undo-sent') return { ...none, message: 'result.undo.sent' };
   if (family === 'config' && field) return { ...none, action: { type: 'settings', field: mode ? `${mode}.${field}` : field }, actionLabel: fieldLabel[field] };
   if (family === 'transient') return { ...none, action: { type: 'retry' }, actionLabel: 'common.retry' };
   if (family === 'paste') return { ...none, action: { type: 'copy' }, actionLabel: 'result.action.copy' };

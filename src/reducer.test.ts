@@ -85,6 +85,40 @@ describe('translationReducer', () => {
     // A relaunch with the other profile shows its result: no second delivery.
     expect(translationReducer(state, { type: 'START', requestId: 'r2', mode: 'fast' }).delivery).toBeNull();
   });
+  it('offers Undo only after Rust’s own paste found its text, until undo-state withdraws it for that request', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { id: 'c1', text: 'x', source: 'selection', canReplace: true, anchor: null, execution: { actionId: 'correct', actionName: 'Fix', outputMode: 'replace', mode: 'quality' } } });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done', text: 'y' } });
+    expect(state.undoable).toBe(false);
+    expect(translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '' } }).undoable).toBe(false);
+    expect(translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'fallback', confirmed: false, message: '', undoable: true } }).undoable).toBe(false);
+    const pasted = translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '', undoable: true, pastedRects: [{ x: 0, y: 0, width: 10, height: 10 }] } });
+    expect(pasted.undoable).toBe(true);
+    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'stale', reason: 'typed' })).toBe(pasted);
+    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'r1', reason: 'typed' })).toMatchObject({ undoable: false, undoLost: 'typed' });
+    // A retry starts without Undo.
+    expect(translationReducer(pasted, { type: 'START', requestId: 'r2', mode: 'quality' }).undoable).toBe(false);
+  });
+
+  it('keeps why Undo was withdrawn, the first reason only, even when undo-state comes before the delivery', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { id: 'c1', text: 'x', source: 'selection', canReplace: true, anchor: null, execution: { actionId: 'correct', actionName: 'Fix', outputMode: 'replace', mode: 'quality' } } });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done', text: 'y' } });
+    const delivered = { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '', undoable: true } } as const;
+    // Rust watched the caret move between its paste and the delivery reaching the page.
+    const early = translationReducer(state, { type: 'UNDO_LOST', requestId: 'r1', reason: 'caret_moved' });
+    expect(early).toMatchObject({ undoable: false, undoLost: 'caret_moved' });
+    expect(translationReducer(early, delivered)).toMatchObject({ delivery: 'applied', undoable: false, undoLost: 'caret_moved' });
+    // The first reason stays.
+    const pasted = translationReducer(state, delivered);
+    const undone = translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'r1', reason: 'undo_key' });
+    expect(undone).toMatchObject({ undoable: false, undoLost: 'undo_key' });
+    expect(translationReducer(undone, { type: 'UNDO_LOST', requestId: 'r1', reason: 'typed' })).toBe(undone);
+    // Another request, another capture: nothing withdrawn yet.
+    expect(translationReducer(undone, { type: 'START', requestId: 'r2', mode: 'quality' }).undoLost).toBeNull();
+    expect(translationReducer(undone, { type: 'CAPTURE', capture: { id: 'c2', text: 'x', source: 'selection', canReplace: true, anchor: null } }).undoLost).toBeNull();
+  });
+
   it('keeps the code of lot 10 beside the message, an unknown one read as internal, none as null', () => {
     const replace = { ...selected, execution: { actionId: 'correct', actionName: 'Corriger', outputMode: 'replace' as const, mode: 'quality' as const } };
     let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: replace });

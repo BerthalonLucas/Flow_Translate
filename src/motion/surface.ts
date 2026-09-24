@@ -1,6 +1,6 @@
 import { animate } from 'motion';
 import { toMotionSpring } from './spring';
-import type { MotionTokens } from './tokens';
+import { curveTransition, reducedFade, surfaceMove, type MotionTokens } from './tokens';
 
 // A surface that changes shape (lots 7-9: menu → pill) inside the reserved window (plan §4.3):
 // width, height and radius follow the spring on the element itself, never Motion's `layout`
@@ -29,13 +29,26 @@ export function animateSurface(element: HTMLElement, shape: SurfaceShape, tokens
   return controls;
 }
 
-// The Îlot's corner slides right, on the same spring as the shape it holds, when a shape wider
-// than the room left of the selection's end would leave the work area (lot 10's error pill near
-// the screen's left edge; src/layout.ts ilotShift). A translation only; `instant` (the first
-// shape) and reduced motion set it at once.
-export function animateSlide(element: HTMLElement, x: number, tokens: MotionTokens, reduced: boolean, instant = false) {
-  if (!reduced && !instant) return animate(element, { x }, toMotionSpring(tokens.morph));
-  const controls = animate(element, { x }, { duration: 0 });
-  element.style.transform = x ? `translateX(${x}px)` : 'none';
+// The Îlot's corner moves (a translation only) in the reserved window:
+//   'morph'    with a shape that changes, on the same spring: the slide right when a shape wider
+//              than the room left of the selection's end would leave the work area (lot 10's error
+//              pill near the screen's left edge; src/layout.ts ilotShift);
+//   'move'     the pill going to its place under the new text after Rust's paste (lot 9): the
+//              lab's own move of a surface, a 420 ms curve (design-lab/src/app.css:149, tokens
+//              surfaceMove), not the morph spring;
+//   'instant'  the first shape, a place taken while the pill is faded out.
+// Reduced motion sets it at once (no movement, plan §9).
+export type CornerOffset = { x: number; y: number };
+export type CornerMove = 'morph' | 'move' | 'instant';
+export function animateCorner(element: HTMLElement, to: CornerOffset, tokens: MotionTokens, reduced: boolean, how: CornerMove = 'morph') {
+  if (!reduced && how !== 'instant') return animate(element, { x: to.x, y: to.y }, how === 'morph' ? toMotionSpring(tokens.morph) : curveTransition(surfaceMove));
+  const controls = animate(element, { x: to.x, y: to.y }, { duration: 0 });
+  element.style.transform = to.x || to.y ? `translateX(${to.x}px) translateY(${to.y}px)` : 'none';
   return controls;
+}
+
+// The corner fades out before the window moves under it (lot 9, `move_overlay`: never while
+// anything animates) and back in at its place: the exit and content curves, or the reduced fade.
+export function fadeCorner(element: HTMLElement, visible: boolean, tokens: MotionTokens, reduced: boolean) {
+  return animate(element, { opacity: visible ? 1 : 0 }, reduced ? reducedFade : curveTransition(visible ? tokens.content : tokens.exit));
 }

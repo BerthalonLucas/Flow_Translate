@@ -4,7 +4,8 @@ import { initialTranslationState, translationReducer } from './reducer';
 import { t } from './i18n';
 import { defaultActionId } from './actionDefaults';
 import { ilotJourney } from './menu/outcome';
-import type { Capture, CaptureNotice, CaptureTarget, ErrorCode, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
+import { errorCodeOf } from './result/errors';
+import type { Capture, CaptureNotice, CaptureTarget, ErrorCode, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery, UndoState } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
@@ -153,7 +154,8 @@ export function useTranslation(readyOnMount = false) {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       }),
       bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
-      bridge.on<CaptureNotice>('capture-notice', ({ message, code }) => showNotice(message, code)),
+      // A code this front does not know reads as internal (src/result/errors.ts errorCodeOf).
+      bridge.on<CaptureNotice>('capture-notice', ({ message, code }) => showNotice(message, code === undefined ? undefined : errorCodeOf(code))),
       bridge.on<ResultDelivery>('result-delivery', event => {
         if (event.requestId !== requestRef.current || closingRef.current) return;
         dispatch({ type: 'DELIVERY', event });
@@ -162,6 +164,12 @@ export function useTranslation(readyOnMount = false) {
         if (event.status === 'fallback' && !ilotJourney(settingsRef.current, captureRef.current)) showNotice(event.message);
       }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
+      // Lot 9: Undo is no longer safe; the reason decides what the Îlot says (src/menu/outcome.ts):
+      // the user's own Ctrl+Z undid the paste (« Undone »), a key or the caret moved (the pill
+      // leaves soon). Kept even when it comes before `result-delivery`.
+      bridge.on<UndoState>('undo-state', event => {
+        if (event.requestId === requestRef.current && !closingRef.current && event.available === false) dispatch({ type: 'UNDO_LOST', requestId: event.requestId, reason: event.reason });
+      }),
       // Lot 4: the menu shortcut pressed twice within 400 ms runs, without the menu, the
       // last action of that application (else the default action). Handled here, not in
       // the menu, so it holds even before the menu has rendered.

@@ -1398,7 +1398,8 @@ fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
         host::close_escape_scope();
         host::set_menu_open(false, 0, 0);
     }
-    halo::hide(app);
+    // Marks already fading out (the end of Undo's countdown) finish their fade.
+    halo::dismiss(app);
     backdrop::hide(app);
     host::disarm_undo_watch();
     // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
@@ -2105,14 +2106,16 @@ fn watch_context(app: AppHandle) {
                 suspected = None;
                 let moved = host::window_rect(window) != window_rect;
                 let switched = switched_away(fg, window, ours);
+                // The marks no longer stand on the text: gone at once, even while they fade.
                 if moved || switched {
+                    halo::hide(&app);
                     let _ = dismiss(&app, &state);
                     continue;
                 }
                 if let Some(located) = located.filter(|_| fg == window) {
                     match pasted::relocate(&located) {
                         Some(rects) if same_rects(&rects, &located.rects) => {}
-                        Some(_) => { let _ = dismiss(&app, &state); }
+                        Some(_) => { halo::hide(&app); let _ = dismiss(&app, &state); }
                         None => lose_undo(&app, Some(&request_id), UndoLoss::CaretMoved, true),
                     }
                 } else if !undo && halo::marking() {
