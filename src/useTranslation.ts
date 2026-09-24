@@ -106,13 +106,16 @@ export function useTranslation(readyOnMount = false) {
   // Îlot (lots 3–4): the choice made in the menu, once per menu capture. Rust returns the
   // execution (always « replace »); the translation then starts like any capture's.
   const choosingRef = useRef<string | null>(null);
+  // The same, for the Îlot: a choice on its way (the double press included) is not an abandon.
+  const [choosingCaptureId, setChoosingCaptureId] = useState<string | null>(null);
   const choose = useCallback(async (actionId: string, instruction?: string) => {
     const capture = captureRef.current;
     if (!capture?.menu || capture.execution || closingRef.current || choosingRef.current === capture.id) return;
     choosingRef.current = capture.id;
+    setChoosingCaptureId(capture.id);
     let execution;
     try { execution = await bridge.chooseAction(capture.id, actionId, instruction); }
-    finally { if (choosingRef.current === capture.id) choosingRef.current = null; }
+    finally { if (choosingRef.current === capture.id) { choosingRef.current = null; setChoosingCaptureId(null); } }
     if (captureRef.current?.id !== capture.id || closingRef.current) return;
     const chosen = { ...capture, execution };
     captureRef.current = chosen;
@@ -206,7 +209,7 @@ export function useTranslation(readyOnMount = false) {
     void bridge.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
-  return { state, settings, screen, dispatch, receiveCapture, start, choose, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
+  return { state, settings, screen, dispatch, receiveCapture, start, choose, choosingCaptureId, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;

@@ -17,6 +17,9 @@ type Fixture = {
   capture: (id: string) => Promise<void>;
   refuseFocus: () => void;
   refuseChoice: () => void;
+  holdChoice: () => void;
+  releaseChoice: () => void;
+  invalidate: (anchorLost?: boolean, captureId?: string) => Promise<void>;
   windowAt: (x: number, y: number) => void;
   menuKey: (key: string, shiftKey?: boolean, captureId?: string) => Promise<void>;
   menuRepeat: (captureId?: string) => Promise<void>;
@@ -220,6 +223,40 @@ test('Îlot: Escape goes back from the grid first, then closes without choosing 
   await expect(ilot).toHaveCount(0);
   expect(await chosen(page, 'escape')).toHaveLength(0);
   expect(await translations(page, 'escape')).toHaveLength(0);
+});
+
+// Review of bc57857, finding 1: a menu left armed after the user went back to the source
+// (a click that dropped the selection) took the keys typed there. Rust closes a menu that had the
+// keyboard; the Îlot closes on `target-invalidated` whenever no choice is made or on its way.
+test('Îlot: the selection lost before any choice closes the menu; a choice on its way keeps its journey', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('lost'));
+  await settled(page);
+  await on(page, f => f.invalidate(true, 'stale-capture'));
+  await page.waitForTimeout(100);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+  await on(page, f => f.invalidate());
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await expect.poll(() => calls(page, 'complete_overlay_dismiss')).toEqual([{ captureId: 'lost' }]);
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  expect(await chosen(page, 'lost')).toHaveLength(0);
+  expect(await translations(page, 'lost')).toHaveLength(0);
+
+  // A double press whose `choose_action` has not answered yet: the invalidation leaves it be.
+  await on(page, f => f.captureMenu('racing', 'shorten'));
+  await settled(page);
+  await on(page, f => { f.holdChoice(); return f.menuRepeat(); });
+  await expect.poll(() => chosen(page, 'racing')).toHaveLength(1);
+  await on(page, f => f.invalidate());
+  await page.waitForTimeout(100);
+  await on(page, f => f.releaseChoice());
+  await expect.poll(() => translations(page, 'racing')).toEqual([expect.objectContaining({ actionId: 'shorten' })]);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+  // Chosen: a later invalidation is the paste's to report (target_changed), not an abandon.
+  await on(page, f => f.invalidate());
+  await page.waitForTimeout(100);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
 });
 
 test('Îlot: a refused choice gives the menu back, and the next choice goes through', async ({ page }) => {

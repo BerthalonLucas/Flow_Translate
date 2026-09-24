@@ -36,6 +36,7 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste } fr
  *             left (the error pill, near the screen's left edge) slides right by what it
  *             overhangs, on the shape's own spring (ilotShift); the region follows.
  *   outcome   src/menu/outcome.ts: the stage the surface shows, derived from the translation.
+ *   lost      `target-invalidated` before any choice (none on its way either): the Îlot leaves.
  *   buttons   configuration → open_settings on the request's field, then the Îlot leaves;
  *             transient → Try again: the same action on the same capture (useTranslation.start,
  *             the v4 relaunch), whose result the Îlot pastes itself (replace_result, once: Rust
@@ -58,7 +59,7 @@ export function menuActions(settings: Settings | null): ActionDefinition[] {
 }
 
 export function IlotStage({ controller, capture }: { controller: TranslationController; capture: Capture }) {
-  const { state, settings, screen, choose, start, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
+  const { state, settings, screen, choose, choosingCaptureId, start, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId } = controller;
   const t = useT();
   const captureId = capture.id;
   const presentation: Presentation = capture.anchor ? 'anchored' : 'bottom';
@@ -217,6 +218,14 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     leaving.current = true;
     cancelAndDismiss();
   }, [cancelAndDismiss]);
+  // The watcher dropped the selection before any choice (a click in the source, another
+  // application): the menu could only end in a refused paste, so it leaves. Rust closes a menu
+  // that had the keyboard when the foreground leaves it (docs/BRIDGE.md, Îlot); this covers the
+  // others. A choice on its way, a double press included, keeps its journey and its error pill.
+  const choiceOnItsWay = choosingCaptureId === captureId;
+  useEffect(() => {
+    if (state.invalidated && outcome.stage === 'menu' && !choiceOnItsWay) leave();
+  }, [state.invalidated, outcome.stage, choiceOnItsWay, leave]);
   // Try again: the same action on the same capture, once per failed request.
   const retried = useRef<string | null>(null);
   const retry = () => {

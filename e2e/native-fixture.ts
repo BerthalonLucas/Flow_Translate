@@ -35,6 +35,9 @@ let workArea = { x: 0, y: 0, width: 1920, height: 1040 };
 const monitor = () => ({ name: 'fixture', scaleFactor: 1, position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 }, workArea: { position: { x: workArea.x, y: workArea.y }, size: { width: workArea.width, height: workArea.height } } });
 // The next `choose_action` is refused, as when the chosen action was deleted meanwhile.
 let refuseChoice = false;
+// The next `choose_action` answers only once released: a choice still on its way.
+let holdChoice = false;
+let releaseChoice: (() => void) | undefined;
 // Lot 10: what Windows answered for each binding (`shortcut_status`); by default every enabled
 // chord is registered. A test sets a binding's state (another application holds the chord: 'taken'),
 // or the URL does before the window opens (`&shortcutTaken=<binding id>`).
@@ -71,7 +74,9 @@ mockIPC((command, args) => {
     const action = settings.actions.find(item => item.id === actionId);
     if (instruction !== undefined ? actionId !== instructionActionId || instructionError(instruction) : !action) return Promise.reject('L’action n’existe plus.');
     chosen.add(captureId);
-    return { actionId, actionName: action?.name ?? instructionActionName, outputMode: 'replace', mode: settings.mode } satisfies ExecutionInfo;
+    const execution = { actionId, actionName: action?.name ?? instructionActionName, outputMode: 'replace', mode: settings.mode } satisfies ExecutionInfo;
+    if (holdChoice) { holdChoice = false; return new Promise<ExecutionInfo>(resolve => { releaseChoice = () => resolve(execution); }); }
+    return execution;
   }
   if (command === 'shortcut_status') return shortcutStatus();
   if (command === 'shortcut_conflict') return (args as { shortcut: string }).shortcut === 'Ctrl+Alt+E' ? { altGr: true, character: '€' } : { altGr: false };
@@ -119,6 +124,8 @@ Object.assign(window, { nativeFixture: {
   captureMenu: (id: string, lastActionId: string | null = null, text?: string) => { currentCapture = { ...capture(id, text), canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   refuseFocus: () => { overlayFocus = false; },
   refuseChoice: () => { refuseChoice = true; },
+  holdChoice: () => { holdChoice = true; },
+  releaseChoice: () => { releaseChoice?.(); releaseChoice = undefined; },
   // A menu capture without an anchor (clipboard): the Îlot opens at the bottom of the screen.
   unanchoredMenu: (id: string, lastActionId: string | null = null) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null, canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   // Rust placed the window elsewhere (above the selection, another screen): physical pixels.
