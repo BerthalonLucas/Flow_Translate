@@ -27,6 +27,8 @@ Le plan GitLab rédigé au travail est remplacé par ce document (décision de L
 5. Les décisions esthétiques finales restent à Lucas : chaque lot visuel se termine par une
    capture ou une courte vidéo de la vraie fenêtre à lui montrer.
 
+Errata et écarts constatés en implémentation : `docs/DA-RAPPORT.md`.
+
 ---
 
 ## 1. Synthèse des décisions retenues (état au 24 septembre)

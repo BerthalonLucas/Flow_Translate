@@ -1,5 +1,7 @@
 # Glass frontend C
 
+> Historique : remplacé par la DA Îlot ([docs/DA-PLAN.md](DA-PLAN.md), [design-lab/](../design-lab/README.md)).
+
 Implementation of the approved `docs/design/glass-reader/c-overlapping-pill.png` reference. This replaces the earlier inline-action bubble. No dependency or package version changed: Motion, Radix and Lucide remain the interaction foundation.
 
 ## Surfaces

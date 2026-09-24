@@ -1,5 +1,7 @@
 # Glass material refinement
 
+> Historique : remplacé par la DA Îlot ([docs/DA-PLAN.md](DA-PLAN.md), [design-lab/](../design-lab/README.md)).
+
 The approved C composition remains unchanged: contextual glass 280 px, reader 560 px (responsive preview), radius 26 px, action pill 60 × 28 px overlapping by 14 px. Native hit regions, region-zero anchoring, resize caching and dismissal acknowledgement are unchanged.
 
 ## Material
