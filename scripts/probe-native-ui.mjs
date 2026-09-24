@@ -219,7 +219,20 @@ try {
     for (const [x, y] of outside) {
       const point = toScreen(win, dpr, x, y);
       const hit = await pointCursor(point.x, point.y);
-      expect(hit.root.hwnd, `${step}: the cursor passes through at ${Math.round(x)},${Math.round(y)} outside the shape`).not.toBe(win.hwnd);
+      // A point taken outside the shape fails at once; before failing, the report says whether the
+      // shape's region came late (the point lets the cursor through 0.25 to 2 s later) or never.
+      let later = '';
+      if (hit.root.hwnd === win.hwnd) {
+        const retries = [];
+        for (const wait of [250, 500, 1000, 2000]) {
+          await page.waitForTimeout(wait - (retries.at(-1)?.wait ?? 0));
+          retries.push({ wait, taken: (await pointCursor(point.x, point.y)).root.hwnd === win.hwnd });
+        }
+        (report.regionRetries ??= []).push({ step, x: Math.round(x), y: Math.round(y), retries });
+        const through = retries.find(retry => !retry.taken);
+        later = through ? ` (region late: let through after ${through.wait} ms)` : ' (region never published: still taken after 2 s)';
+      }
+      expect(hit.root.hwnd, `${step}: the cursor passes through at ${Math.round(x)},${Math.round(y)} outside the shape${later}`).not.toBe(win.hwnd);
       through.push({ x: Math.round(x), y: Math.round(y), root: hit.root.hwnd });
     }
     expect(through.length, `${step}: at least one point outside the shape inside the window`).toBeGreaterThan(0);
