@@ -1859,11 +1859,14 @@ fn watch_context(app: AppHandle) {
                 continue;
             }
             let Some(captured) = snapshot.2 else { continue };
-            if captured.public.anchor.is_none() {
+            // A capture without anchor (a copy, a selection without drawable rectangle) has no
+            // place to lose; its target is still checked while the source is in front (review n°1).
+            let anchored = captured.public.anchor.is_some();
+            if !anchored && captured.target.is_none() {
                 continue;
             }
-            let moved = host::window_rect(snapshot.0) != snapshot.1;
-            let switched = fg != snapshot.0 && !ours;
+            let moved = anchored && host::window_rect(snapshot.0) != snapshot.1;
+            let switched = anchored && fg != snapshot.0 && !ours;
             let changed = fg == snapshot.0
                 && captured
                     .target
@@ -1891,7 +1894,7 @@ fn watch_context(app: AppHandle) {
                     "target-invalidated",
                     TargetInvalidated {
                         capture_id: id,
-                        anchor_lost: true,
+                        anchor_lost: anchored,
                         message: "La sélection a changé. Utilisez Copier.".into(),
                         code: ErrorKind::TargetChanged,
                     },

@@ -12,7 +12,7 @@
 use crate::capture::{self, canonical};
 use crate::error::{AppError, ErrorKind};
 use crate::selection_lines;
-use crate::types::{Rect, TargetIdentity, UndoStrategy};
+use crate::types::{Rect, TargetCheck, TargetIdentity, UndoStrategy};
 use std::time::{Duration, Instant};
 use uiautomation::patterns::{UITextPattern, UITextRange};
 use uiautomation::types::{TextPatternRangeEndpoint, TextUnit};
@@ -291,6 +291,7 @@ pub fn undo(target: &UndoTarget, strategy: UndoStrategy, reactivate: bool) -> Re
                 anchor: capture::anchor_of(&rects),
                 selection_len,
                 editable: true,
+                check: TargetCheck::Uia,
             };
             // Every refusal of the paste comes before its chord: nothing was written.
             let delivery = capture::paste(&identity, target.original, false).map_err(UndoFailure::Refused)?;

@@ -627,6 +627,16 @@ pub struct TargetIdentity {
     pub anchor: Option<Rect>,
     pub selection_len: usize,
     pub editable: bool,
+    pub check: TargetCheck,
+}
+
+/// How the text of a target is checked again before a paste (review of da-ilot, n°1): through
+/// UI Automation, the selection it reads (with or without a drawable anchor), or, for a text
+/// only a synthetic copy gave, by a second copy made right before the paste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetCheck {
+    Uia,
+    Copy,
 }
 
 #[derive(Clone, Debug)]
