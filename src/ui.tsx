@@ -26,6 +26,16 @@ export function Icon({ name, size = 15 }: { name: IconName; size?: 14 | 15 | 16 
   return <Glyph aria-hidden="true" size={size} strokeWidth={iconStroke} />;
 }
 
+// An action stores its icon by Lucide name (ActionDefinition.icon, « SpellCheck »): the registry
+// entry drawn with that glyph (lucide-react names each glyph so), none when the registry lacks it.
+const byLucideName = new Map<string, IconName>();
+for (const [name, glyph] of Object.entries(icons) as Array<[IconName, (typeof icons)[IconName]]>) {
+  if (glyph.displayName && !byLucideName.has(glyph.displayName)) byLucideName.set(glyph.displayName, name);
+}
+export function iconFromLucide(lucideName: string | undefined): IconName | undefined {
+  return lucideName ? byLucideName.get(lucideName) : undefined;
+}
+
 export function AnimatedIcon({ name }: { name: IconName }) {
   const fade = useContentPresence();
   return <span className="action-glyph" aria-hidden="true"><AnimatePresence initial={false}>
