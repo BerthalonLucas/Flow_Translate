@@ -10,8 +10,10 @@
 //! placement and `validate_target` compare it physically, untouched by this module.
 use crate::types::Rect;
 
-/// At most this many line rectangles per capture. Beyond: the first line, the bounding
-/// box of the lines in between, the last line (three rectangles that never overlap).
+/// At most this many line rectangles per capture. Beyond, counted per line (review of
+/// da-ilot, n°8): the segments of the first line, one box for the lines in between (held
+/// between the first line's bottom and the last line's top), the segments of the last line;
+/// a first or last line with too many segments is one box. They never overlap.
 pub const MAX_LINES: usize = 64;
 
 /// Room around the lines for the glow of the sweep, in logical pixels (DA-PLAN lot 6).
@@ -80,9 +82,10 @@ pub fn lines(raw: &[Rect], window: Option<Rect>) -> Vec<Rect> {
             _ => groups.push((run, vec![run])),
         }
     }
-    let mut segments = Vec::new();
+    let mut rows = Vec::new();
     for (line, mut members) in groups {
         members.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let mut segments = Vec::new();
         let mut current: Option<Rect> = None;
         for run in members {
             current = Some(match current {
@@ -95,17 +98,31 @@ pub fn lines(raw: &[Rect], window: Option<Rect>) -> Vec<Rect> {
             });
         }
         segments.extend(current);
+        rows.push(segments);
     }
-    cap(segments)
+    cap(rows)
 }
 
-fn cap(segments: Vec<Rect>) -> Vec<Rect> {
-    if segments.len() <= MAX_LINES {
-        return segments;
+/// The segments of every line, or, beyond `MAX_LINES` segments, the first line, a box for the
+/// lines in between and the last line. Counted per line, not per segment: with two columns
+/// the box of the middle segments would otherwise cover the first and the last line.
+fn cap(rows: Vec<Vec<Rect>>) -> Vec<Rect> {
+    if rows.iter().map(Vec::len).sum::<usize>() <= MAX_LINES {
+        return rows.into_iter().flatten().collect();
     }
-    let last = segments.len() - 1;
-    let middle = bounds(&segments[1..last]).expect("more than two segments");
-    vec![segments[0], middle, segments[last]]
+    let keep = |row: &[Rect]| if row.len() * 2 < MAX_LINES { row.to_vec() } else { bounds(row).into_iter().collect() };
+    let [first, middle @ .., last] = rows.as_slice() else {
+        return rows.iter().flat_map(|row| keep(row)).collect();
+    };
+    let mut kept = keep(first);
+    let (top, floor) = (bounds(first).map_or(f64::NEG_INFINITY, |r| bottom(&r)), bounds(last).map_or(f64::INFINITY, |r| r.y));
+    if let Some(inner) = bounds(&middle.concat()) {
+        let (y, end) = (inner.y.max(top), bottom(&inner).min(floor));
+        let held = Rect { y, height: end - y, ..inner };
+        if drawable(&held) { kept.push(held); }
+    }
+    kept.extend(keep(last));
+    kept
 }
 
 /// Where the halo window goes and what it draws.
@@ -213,6 +230,29 @@ mod tests {
         assert_eq!(kept[1], r(98., 120., 300. + 198. - 98. + 100., 20. * 198.));
         // The three never overlap: the halo paints each place once.
         assert!(bottom(&kept[0]) <= kept[1].y && bottom(&kept[1]) <= kept[2].y);
+    }
+
+    #[test]
+    fn beyond_64_segments_two_columns_keep_their_first_and_last_line_uncovered() {
+        // Review n°8: 33 lines in two columns (A at x 100..160, B at x 400..460) are 66
+        // segments; the middle box used to cover A0 and B32.
+        let raw: Vec<Rect> = (0..33).flat_map(|i| [r(100., 100. + 20. * i as f64, 60., 20.), r(400., 100. + 20. * i as f64, 60., 20.)]).collect();
+        let kept = lines(&raw, None);
+        assert_eq!(kept, vec![
+            r(100., 100., 60., 20.), r(400., 100., 60., 20.),
+            r(100., 120., 360., 620.),
+            r(100., 740., 60., 20.), r(400., 740., 60., 20.),
+        ]);
+        for (i, a) in kept.iter().enumerate() {
+            for b in &kept[i + 1..] {
+                assert!(intersection(a, b).is_none(), "{a:?} and {b:?} overlap");
+            }
+        }
+        // A first line of many segments is one box; so is a single line.
+        let many: Vec<Rect> = (0..40).map(|i| r(100. + 50. * i as f64, 100., 20., 20.)).chain((0..40).map(|i| r(100. + 50. * i as f64, 120., 20., 20.))).collect();
+        assert_eq!(lines(&many, None), vec![r(100., 100., 1970., 20.), r(100., 120., 1970., 20.)]);
+        let one: Vec<Rect> = (0..70).map(|i| r(100. + 50. * i as f64, 100., 20., 20.)).collect();
+        assert_eq!(lines(&one, None), vec![r(100., 100., 3470., 20.)]);
     }
 
     #[test]
