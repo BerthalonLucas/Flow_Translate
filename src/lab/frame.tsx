@@ -9,6 +9,7 @@ import '../theme.css';
 import { MotionPreferences } from '../motion/MotionPreferences';
 import { applyMotion } from '../motion/preference';
 import { applyMotionPreset } from '../motion/tokens';
+import { indicatorOf } from '../loaders/pill';
 import type { MotionPreference, MotionPreset } from '../types';
 import '../styles.css';
 import '../glass.css';
@@ -19,6 +20,10 @@ const theme = params.get('theme') === 'light' ? 'light' : 'dark';
 // motion=reduce|full forces the setting « Animations »; without it the frame follows the system.
 const motion: MotionPreference = params.get('motion') === 'reduce' ? 'reduced' : params.get('motion') === 'full' ? 'full' : 'system';
 const preset: MotionPreset = params.get('preset') === 'bouncy' ? 'bouncy' : 'smooth';
+// working-<indicator>: the Îlot's working pill (lot 8) on a request that never answers.
+// ui=ilot shows any other scenario (the settings window included) in the Îlot journey.
+const indicator = scenario.startsWith('working-') ? indicatorOf(scenario.slice('working-'.length)) : null;
+const ilot = indicator !== null || params.get('ui') === 'ilot';
 
 function OverlayFixture() {
   const controller = useTranslation();
@@ -40,7 +45,7 @@ function OverlayFixture() {
       const [width, height] = params.get('screen')!.split('x').map(Number);
       Object.assign(capture, { screen: { width, height, scale: 1 } });
     }
-    bridge.setDemoCapture(capture, scenario === 'long' || scenario === 'error' || scenario === 'pending' || scenario === 'partial' ? scenario : 'normal');
+    bridge.setDemoCapture(capture, indicator ? 'pending' : scenario === 'long' || scenario === 'error' || scenario === 'pending' || scenario === 'partial' ? scenario : 'normal');
     controller.receiveCapture(capture);
   }, [controller]);
   return <div className="standalone-demo" data-preview-background={theme} data-lab-phase={controller.state.phase}><GlassOverlay controller={controller}/></div>;
@@ -56,6 +61,7 @@ async function mount() {
   applyMotion(motion);
   applyMotionPreset(preset);
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
+  if (ilot) await bridge.saveSettings({ ...await bridge.getSettings(), uiVersion: 'ilot', ...(indicator ? { indicator } : {}) });
   if (scenario === 'history') {
     await bridge.saveSettings({ ...await bridge.getSettings(), historyEnabled: true });
     const observer = new MutationObserver(() => {

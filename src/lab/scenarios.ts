@@ -8,6 +8,10 @@ export const scenarios = [
   { id: 'settings', label: 'Réglages', issue: 'UI-005', expected: 'Surface cohérente sur toute la fenêtre ; thème Windows ; aucune marge blanche parasite.' },
   { id: 'history', label: 'Historique de démonstration', issue: 'UI-005', expected: 'Anciennes traductions accessibles et lisibles. Données fictives uniquement.' },
   { id: 'capsule', label: 'Capsule (fenêtre retirée)', issue: 'UI-002', expected: 'Remplacée par l’onglet du verre replié ; conservée ici pour mémoire.' },
+  // Îlot, lot 8 (docs/DA-PLAN.md §9 « Indicateurs »): the working pill in each indicator; the theme is the « Fond d’essai ».
+  { id: 'working-perle', label: 'Pilule de travail · Perle', issue: 'Lot 8', expected: 'Îlot : pilule de verre 44 × 28, rayon 14, vide pendant 250 ms puis la Perle (14 px, tour 3 s, respiration 0,9 ↔ 1 en 2,4 s) centrée, fondu 150 ms ; rien de textuel, la pilule ne grandit jamais ; orbe fixe en mouvements réduits.' },
+  { id: 'working-nebuleuse', label: 'Pilule de travail · Nébuleuse', issue: 'Lot 8', expected: 'Îlot : pilule 44 × 28, Nébuleuse 16 px (taches bleue, corail, ambre), mélange multiply en clair, screen en sombre ; après 250 ms, centrée.' },
+  { id: 'working-ruban', label: 'Pilule de travail · Ruban', issue: 'Lot 8', expected: 'Îlot : pilule 52 × 28 dès le départ (espace du Ruban 28 × 12 réservé), trois ondes bleue, corail, ambre, bords fondus ; après 250 ms, centré.' },
 ] as const;
 export type Scenario = typeof scenarios[number]['id'];
 export function scenarioFrom(value: string | null) { return scenarios.find(item => item.id === value) ?? scenarios[0]; }
