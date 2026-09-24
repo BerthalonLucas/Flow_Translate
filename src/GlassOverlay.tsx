@@ -8,6 +8,8 @@ import { AnimatedIcon, BubbleMenu, BubbleMenuTrigger, Icon, IconButton } from '.
 import { t as tNow, useT } from './i18n';
 import { useContentPresence, useMotionPreset, useReducedMotionSetting, useSurfacePresence } from './motion/MotionPreferences';
 import { curveTransition, emilOut, exitScale, reducedFade } from './motion/tokens';
+import { WorkingPill } from './loaders/WorkingPill';
+import { indicatorOf } from './loaders/pill';
 import type { Form, HitRegion, Presentation, Screen, TextSize } from './types';
 import type { TranslationController } from './useTranslation';
 
@@ -54,7 +56,8 @@ const SLOW_AFTER = 1500;
 // Three dots hopping in turn (900 ms cycle, 120 ms apart): the whole result lands at
 // once behind them (deltas are buffered in useTranslation), so the window resizes once.
 // The wait is shadcn's spinner: lucide's LoaderCircle turning once a second, at the 16 px
-// ceiling of the thin Lucide set (lot 1) until the orb of lot 8 replaces it.
+// ceiling of the thin Lucide set (lot 1). The Îlot journey shows the working pill of lot 8
+// instead (src/loaders/WorkingPill.tsx).
 function WaitSpinner() {
   return <span className="wait-spinner" aria-hidden="true"><Icon name="spinner" size={16} /></span>;
 }
@@ -227,6 +230,10 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const settled = (state.phase === 'complete' || state.phase === 'error' || state.phase === 'cancelled') && !replacing;
   const ready = state.phase === 'complete' && !closingCaptureId && !moving && !replacing;
   const isReader = form === 'reader';
+  // The Îlot art direction (hidden switch, lot 0): the wait is the working pill with the chosen
+  // indicator (lot 8); the 0.4 journey keeps its spinner pill.
+  const ilot = settings?.uiVersion === 'ilot';
+  const indicator = indicatorOf(settings?.indicator);
 
   // Decide the form on the real text, once per result (a relaunch may change it).
   useLayoutEffect(() => {
@@ -367,7 +374,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
         if (active.current.closing) return;
         const bounds = element.getBoundingClientRect();
         // Order is a bridge invariant: the glass comes first; Rust anchors `frame`.
-        const selectors = ['.translation-bubble', '.wait-pill', '.action-pill', '.more-menu', '.compact-feedback'];
+        const selectors = ['.translation-bubble', '.wait-pill', '.working-pill', '.action-pill', '.more-menu', '.compact-feedback'];
         const parts = selectors.flatMap(selector => {
           const part = element.querySelector<HTMLElement>(selector);
           if (!part) return [];
@@ -415,7 +422,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     const measure = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(publish); };
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    element.querySelectorAll('.translation-bubble,.wait-pill,.action-pill,.more-menu,.compact-feedback').forEach(part => observer.observe(part));
+    element.querySelectorAll('.translation-bubble,.wait-pill,.working-pill,.action-pill,.more-menu,.compact-feedback').forEach(part => observer.observe(part));
     // A hidden WebView may suspend rAF; the first geometry must unlock native show.
     publish();
     return () => { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); };
@@ -472,7 +479,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       { label: t('menu.close'), run: cancelAndDismiss, close: true },
     ]}>
       <div className="glass-body">
-        {form === 'pending' ? <WaitPill slow={slow} done={state.delivery === 'applied'} /> : <>
+        {form === 'pending' ? ilot ? <WorkingPill indicator={indicator} done={state.delivery === 'applied'} /> : <WaitPill slow={slow} done={state.delivery === 'applied'} /> : <>
           <div className="translation-bubble" style={{ borderRadius: glass.radius, maxHeight: metrics.maxHeight }} data-reveal={state.phase === 'complete' && Boolean(state.result) && !moving}
             onPointerDown={event => { if (placement === 'anchored') dragSurface(event, () => setFeedback(t('feedback.moveUnavailable')), setDragging); }}>
             <ReadingSurface streaming={streaming} onEnter={() => void invokeResult('copy')}>
@@ -497,7 +504,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
       </div>
     </BubbleMenu>
     <AnimatePresence>{feedback && !menuVisible && form !== 'pending' && <motion.p key={feedback} {...feedbackEnter} className="compact-feedback" role="status">{feedback}</motion.p>}</AnimatePresence>
-    <span className="sr-only" role="status">{streaming ? t('glass.working') : state.delivery === 'applied' ? t('glass.replaced') : state.phase === 'complete' && !replacing ? t('glass.complete') : copied ? t('glass.copied') : ''}</span>
+    <span className="sr-only" role="status">{streaming ? t(ilot ? 'pill.working' : 'glass.working') : state.delivery === 'applied' ? t('glass.replaced') : state.phase === 'complete' && !replacing ? t('glass.complete') : copied ? t('glass.copied') : ''}</span>
   </motion.div>;
 }
 

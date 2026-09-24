@@ -53,6 +53,11 @@
 .is-bottom .wait-pill { right: auto; left: calc(50% - 30px); }
 .wait-pill[data-slow="true"]::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, transparent, var(--accent-cursor), transparent); animation: wait-sweep 1400ms linear infinite; }
 @keyframes wait-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+/* Îlot (lot 8): the working pill (44 or 52 × 28, src/loaders/pill.ts) stands where the wait pill
+   stood, at the upper right of the glass to come (anchored) or centred (bottom); no sweep, it never
+   grows. Centred with left rather than a transform: the regions unscale the paint transform only. */
+.glass-body > .working-pill { position: absolute; top: 0; right: 16px; }
+.is-bottom .glass-body > .working-pill { right: auto; left: calc(50% - var(--working-pill-width) / 2); }
 .wait-inline { display: block; height: var(--copy-line); }
 .wait-inline .wait-spinner { height: var(--copy-line); }
 /* The result lands whole: the window is already at its final size, the short glass opens from the

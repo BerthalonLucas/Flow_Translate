@@ -13,7 +13,8 @@ import { shareSettings, useSettings } from './useSettings';
 import { useDocumentPreferences } from './preferences';
 import { locales, t as tNow, useLanguage, useT, type MessageKey } from './i18n';
 import { MotionPreferences, useContentPresence } from './motion/MotionPreferences';
-import type { AutoClose, Capture, HistoryEntry, Language, Mode, Settings, TextSize, Theme } from './types';
+import { indicatorOf } from './loaders/pill';
+import type { AutoClose, Capture, HistoryEntry, Indicator, Language, Mode, Settings, TextSize, Theme } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
 const longCapture: Capture = { ...defaultCapture, id: 'demo-long', text: 'Hi Alex,\n\nThank you for your feedback. The updated proposal includes the delivery timeline, responsibilities, and payment terms. Could you confirm these details before Thursday?\n\nWe have kept the total budget unchanged and clarified the review process. Please check the dates and amounts before we share the final version with the team.\n\nBest regards,\nMarie' };
@@ -146,6 +147,9 @@ export function SettingsWindow() {
           <Segmented<Language> label={t('settings.language')} value={settings.language} options={[{ value: 'en', label: 'English' }, { value: 'fr', label: 'Français' }]} onChange={value => update('language', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.theme')}</strong><small>{t('settings.themeHelp')}</small></div>
           <Segmented<Theme> label={t('settings.theme')} value={settings.theme} options={[{ value: 'system', label: t('settings.themeSystem') }, { value: 'light', label: t('settings.themeLight') }, { value: 'dark', label: t('settings.themeDark') }]} onChange={value => update('theme', value)} /></div>
+        {/* The working pill's indicator (lot 8) exists only in the Îlot journey: the 0.4 one keeps its spinner. */}
+        {settings.uiVersion === 'ilot' && <div className="setting-row"><div className="setting-copy"><strong>{t('settings.indicator')}</strong><small>{t('settings.indicatorHelp')}</small></div>
+          <Segmented<Indicator> label={t('settings.indicator')} value={indicatorOf(settings.indicator)} options={[{ value: 'perle', label: t('settings.indicatorPerle') }, { value: 'nebuleuse', label: t('settings.indicatorNebula') }, { value: 'ruban', label: t('settings.indicatorRibbon') }]} onChange={value => update('indicator', value)} /></div>}
         <AnimationsSetting value={settings.motion} onChange={value => update('motion', value)} />
       </section>
       <section>
