@@ -14,8 +14,18 @@ async function open(page: Page, params: Params = {}) {
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.goto(url(params));
   await expect(page.locator('.result-pill')).toBeVisible();
-  // The entrance is over: no transform left on the surface.
-  await page.waitForFunction(() => { const s = document.querySelector('.result-pill'); return !!s && getComputedStyle(s).transform === 'none' && getComputedStyle(s).opacity === '1'; });
+  // The entrance is over: no transform left on the surface, for 300 ms on end. At the top of the
+  // bouncy overshoot (scale ≈ 1.003) Motion's spring gives its target for a frame or two while
+  // its speed is near zero, then settles on for another ~170 ms.
+  await page.evaluate(() => new Promise<void>(resolve => {
+    let since: number | null = null;
+    const tick = (now: number) => {
+      const s = document.querySelector('.result-pill');
+      since = s && getComputedStyle(s).transform === 'none' && getComputedStyle(s).opacity === '1' ? since ?? now : null;
+      if (since !== null && now - since >= 300) resolve(); else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
   return errors;
 }
 const shape = (page: Page) => page.locator('[data-ilot-shape]').evaluate((el: HTMLElement) => ({ width: el.offsetWidth, height: el.offsetHeight, radius: getComputedStyle(el).borderRadius }));
@@ -46,7 +56,10 @@ async function framesDuring(page: Page, act: () => Promise<unknown>, ms = 900): 
         const outer = box.getBoundingClientRect();
         store.frames.push({ w: box.offsetWidth, h: box.offsetHeight, layers: [...box.querySelectorAll<HTMLElement>('.shape-layer')].map(layer => {
           const inner = layer.getBoundingClientRect();
-          return { dx: inner.left + inner.width / 2 - (outer.left + outer.width / 2), dy: inner.top + inner.height / 2 - (outer.top + outer.height / 2), transform: getComputedStyle(layer).transform, scaleX: inner.width / layer.offsetWidth, scaleY: inner.height / layer.offsetHeight };
+          // The scale against the layer's unrounded layout size: offsetWidth is snapped to a
+          // whole pixel, up to 1 % off on a 100 px layer.
+          const style = getComputedStyle(layer);
+          return { dx: inner.left + inner.width / 2 - (outer.left + outer.width / 2), dy: inner.top + inner.height / 2 - (outer.top + outer.height / 2), transform: style.transform, scaleX: inner.width / parseFloat(style.width), scaleY: inner.height / parseFloat(style.height) };
         }) });
       }
       if (store.on) requestAnimationFrame(tick);
