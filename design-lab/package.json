@@ -1,0 +1,10 @@
+{
+  "name": "flowtranslate-design-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "sh build.sh",
+    "verify": "node verify.mjs"
+  },
+  "devDependencies": { "esbuild": "0.25.10", "react": "18.3.1", "react-dom": "18.3.1" }
+}
