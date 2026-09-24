@@ -8,6 +8,7 @@ mod host;
 mod inference;
 mod placement;
 mod settings;
+mod system_theme;
 mod types;
 use arboard::Clipboard;
 use chrono::Utc;
@@ -739,6 +740,11 @@ fn complete_overlay_dismiss(app: AppHandle, state: State<'_, AppState>, capture_
 fn dismiss_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     dismiss(&app, &state)
 }
+// The Windows app mode for the « follow Windows » theme (see system_theme.rs); null when unknown.
+#[tauri::command]
+fn system_theme() -> Option<system_theme::SystemTheme> {
+    system_theme::current()
+}
 #[tauri::command]
 fn open_settings(app: AppHandle) -> Result<(), String> {
     let w = app
@@ -1388,6 +1394,7 @@ pub fn run() {
             }
             host::install_escape_hook()?;
             watch_context(app.handle().clone());
+            system_theme::watch(app.handle().clone());
             if demo {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -1421,7 +1428,8 @@ pub fn run() {
             start_drag,
             check_connection,
             get_history,
-            delete_history
+            delete_history,
+            system_theme
         ])
         .run(tauri::generate_context!())
         .expect("Impossible de démarrer FlowTranslate");
