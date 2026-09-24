@@ -1,4 +1,5 @@
 mod actions;
+mod browser_keys;
 use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
 mod clipboard_guard;
@@ -273,6 +274,13 @@ impl Inner {
                 Vec::new()
             }
         }
+    }
+    /// The overlay page announces itself: the capture it missed while loading, and whether it
+    /// is a page loaded again under a capture still on screen.
+    fn page_ready(&mut self) -> (Option<Capture>, bool) {
+        let reloaded = self.frontend_ready && self.visible && self.pending_dismiss.is_none() && self.capture.is_some();
+        self.frontend_ready = true;
+        (self.pending_capture.take(), reloaded)
     }
     /// The menu of `capture_id` still waits for its choice.
     fn menu_waits(&self, capture_id: &str) -> bool {
@@ -782,10 +790,16 @@ fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening, source: 
     result.map(Some)
 }
 #[tauri::command]
-fn frontend_ready(state: State<'_, AppState>) -> Result<Option<Capture>, String> {
-    let mut i = state.inner.lock().map_err(|_| lock_error())?;
-    i.frontend_ready = true;
-    Ok(i.pending_capture.take())
+fn frontend_ready(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>) -> Result<Option<Capture>, String> {
+    let (pending, reloaded) = state.inner.lock().map_err(|_| lock_error())?.page_ready();
+    // Review of da-ilot (front n°2): the overlay page loaded again (F5, Ctrl+R, a crash) while
+    // a capture was on screen; the new page knows nothing of it, so it closes as a dismissal
+    // would (scope closed, nothing pasted) instead of leaving a window that swallows keys.
+    if reloaded && window.label() == "overlay" {
+        let _ = dismiss(&app, &state);
+        return Ok(None);
+    }
+    Ok(pending)
 }
 
 #[tauri::command]
@@ -2097,8 +2111,10 @@ pub fn run() {
                 simulated,
             });
             // Commands may arrive as soon as the WebView loads. State must exist first.
+            // No browser accelerators in our pages (F5 reloads the overlay under the capture).
             for config in app.config().app.windows.clone() {
-                tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+                let window = tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+                browser_keys::disable(&window);
             }
             use tauri::tray::TrayIconBuilder;
             let menu = tray_text::menu(app.handle(), language)?;
@@ -2346,6 +2362,21 @@ mod tests {
         assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
         assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
         assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
+    }
+    #[test]
+    fn an_overlay_page_loaded_again_under_a_shown_capture_is_told_apart() {
+        let mut i = Inner::new(Settings::default());
+        assert_eq!(i.page_ready(), (None, false), "the first load");
+        menu_capture(&mut i, "menu");
+        assert!(i.page_ready().1, "F5 while the Îlot is shown");
+        i.visible = false;
+        assert!(!i.page_ready().1, "a reload with nothing on screen");
+        // Before the first load, the capture waits for the page and is not a reload.
+        let mut first = Inner::new(Settings::default());
+        menu_capture(&mut first, "menu");
+        first.pending_capture = first.capture.as_ref().map(|c| c.public.clone());
+        let (pending, reloaded) = first.page_ready();
+        assert_eq!((pending.map(|c| c.id), reloaded), (Some("menu".to_string()), false));
     }
     #[test]
     fn a_choice_is_remembered_in_real_use_only() {
