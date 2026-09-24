@@ -1,6 +1,6 @@
 use crate::error::{AppError, ErrorKind};
 use crate::selection_lines;
-use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetIdentity};
+use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetCheck, TargetIdentity};
 use arboard::Clipboard;
 use uiautomation::{patterns::UITextPattern, variants::SafeArray, UIAutomation, UIElement};
 use uiautomation::{patterns::UIValuePattern, types::TextAttribute};
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 /// A copy the user made himself counts as fresh this long (Lucas, 2026-09-14).
 const FRESH_COPY_MS: u64 = 3_000;
 /// The shortcut chord must be released before a synthetic chord is sent.
-const CHORD_RELEASE: Duration = Duration::from_millis(600);
+pub(crate) const CHORD_RELEASE: Duration = Duration::from_millis(600);
 /// How long the target may take to serve the synthetic copy.
 const COPY_SETTLE: Duration = Duration::from_millis(350);
 /// Our own clipboard traffic (copy, restoration) is invisible to the freshness watcher.
@@ -27,7 +27,7 @@ thread_local! {
     static UI_AUTOMATION: std::cell::OnceCell<UIAutomation> = const { std::cell::OnceCell::new() };
 }
 
-fn ui_automation() -> Result<UIAutomation, ()> {
+pub(crate) fn ui_automation() -> Result<UIAutomation, ()> {
     UI_AUTOMATION.with(|cell| {
         if let Some(automation) = cell.get() {
             return Ok(automation.clone());
@@ -44,7 +44,7 @@ const NO_SELECTION: &str = "Aucune sélection active.";
 
 /// Text, visible rectangles (physical, one per run as `GetBoundingRectangles` gives
 /// them), length and editability of the current UIA selection.
-fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
+pub(crate) fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
     let pattern = element
         .get_pattern::<UITextPattern>()
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?;
@@ -69,17 +69,23 @@ fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), St
         .ok()
         .and_then(|v| <uiautomation::variants::Variant as TryInto<bool>>::try_into(v).ok())
         .is_some_and(|v| !v);
-    let rects = unsafe { range.as_ref().GetBoundingRectangles() }
+    let rects = range_rects(&range);
+    Ok((text, rects, selection_len, range_editable))
+}
+
+/// The visible runs of a range, physical, as `GetBoundingRectangles` gives them (none when
+/// the provider answers nothing usable).
+pub(crate) fn range_rects(range: &uiautomation::patterns::UITextRange) -> Vec<Rect> {
+    unsafe { range.as_ref().GetBoundingRectangles() }
         .ok()
         .and_then(|raw| <SafeArray as TryInto<Vec<f64>>>::try_into(SafeArray::from(raw)).ok())
         .map(|values| selection_lines::from_flat(&values))
-        .unwrap_or_default();
-    Ok((text, rects, selection_len, range_editable))
+        .unwrap_or_default()
 }
 
 /// The anchor of a capture: the last visible rectangle as UI Automation gives it (none
 /// when that one is unusable). Physical; the placement and `validate_target` compare it.
-fn anchor_of(rects: &[Rect]) -> Option<Rect> {
+pub(crate) fn anchor_of(rects: &[Rect]) -> Option<Rect> {
     rects.last().copied().filter(selection_lines::drawable)
 }
 
@@ -197,6 +203,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         anchor,
                         selection_len,
                         editable,
+                        check: TargetCheck::Uia,
                     });
                     ensure_source_unchanged(source_window)?;
                     return Ok(StoredCapture { public, target, invalidated: false });
@@ -248,6 +255,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         anchor: None,
         selection_len: text.chars().count(),
         editable: true,
+        check: TargetCheck::Copy,
     });
     let public = Capture {
         id: Uuid::new_v4().to_string(),
@@ -306,11 +314,41 @@ pub fn validate_target(target: &TargetIdentity) -> Result<(), AppError> {
     if element.get_runtime_id().is_ok_and(|id| id != *runtime_id) {
         return changed("La cible a changé; remplacement refusé.");
     }
-    if target.anchor.is_none() { return Ok(()); }
-    if selection_changed(target, &selection(&element)) {
+    if text_changed(target, || selection(&element)) {
         return changed("La sélection a changé; remplacement refusé.");
     }
     Ok(())
+}
+
+/// Whether the target's text is no longer what was captured, as far as UI Automation can tell:
+/// a UIA target compares its selection even without a drawable anchor (review n°1: it used to
+/// skip that comparison); a copy target is checked by `control_copy` at the paste, never here.
+fn text_changed(target: &TargetIdentity, now: impl FnOnce() -> Result<(String, Vec<Rect>, usize, bool), String>) -> bool {
+    target.check == TargetCheck::Uia && selection_changed(target, &now())
+}
+
+/// Review n°1: a text only a synthetic copy gave (VS Code's Monaco has no text pattern) is
+/// copied again right before the paste, once the target is revalidated and the keys are up:
+/// the paste goes on only when the source copies exactly the captured text again. Nothing
+/// selected any more makes VS Code copy its whole line: never « contains », always « equals ».
+/// The clipboard is put back as after the capture's own copy.
+fn control_copy(target: &TargetIdentity) -> Result<(), AppError> {
+    let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
+    crate::host::suppress_clipboard_tracking(OWN_TRAFFIC);
+    let before = crate::host::clipboard_sequence();
+    crate::host::send_copy_chord().map_err(|_| AppError::new(ErrorKind::PasteBlocked, "La vérification de la sélection a été bloquée; remplacement refusé."))?;
+    let after = crate::host::wait_clipboard_change(before, COPY_SETTLE);
+    let copied = after.and_then(|_| read_clipboard());
+    if let Some(after) = after { let _ = keeper.restore(after); }
+    same_copy(copied.as_deref(), &target.selected_text)
+}
+
+/// The control copy of a copy target must give back exactly the captured text.
+fn same_copy(copied: Option<&str>, captured: &str) -> Result<(), AppError> {
+    match copied {
+        Some(text) if !text.is_empty() && text == captured => Ok(()),
+        _ => Err(AppError::new(ErrorKind::TargetChanged, "La sélection a changé; remplacement refusé.")),
+    }
 }
 
 /// Whether what UI Automation answers now differs from the captured selection: another
@@ -387,6 +425,7 @@ pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<D
     validate_target(target)?;
     released(crate::host::wait_modifiers_released(CHORD_RELEASE))?;
     validate_target(target)?;
+    if target.check == TargetCheck::Copy { control_copy(target)?; }
     let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
     crate::host::suppress_clipboard_tracking(Duration::from_secs(4));
     let sequence = keeper.put_text(value).map_err(|message| AppError::new(ErrorKind::PasteBlocked, message))?;
@@ -424,7 +463,7 @@ fn paste_preflight(target: &TargetIdentity, value: &str) -> Result<(), AppError>
 }
 
 /// The shortcut's keys are still held: a chord sent now would be another one.
-fn released(released: bool) -> Result<(), AppError> {
+pub(crate) fn released(released: bool) -> Result<(), AppError> {
     if released { Ok(()) } else { Err(AppError::new(ErrorKind::KeysHeld, "Relâchez les touches du raccourci, puis réessayez depuis la bulle.")) }
 }
 
@@ -450,9 +489,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_anchorless_target_is_checked_by_its_text_and_a_copy_target_by_a_second_copy() {
+        // Review n°1: a UIA selection without a drawable rectangle still compares its text.
+        let target = TargetIdentity { runtime_id: Some(vec![1]), native_window: 1, control: 0, selected_text: "mot A".into(), anchor: None, selection_len: 5, editable: true, check: TargetCheck::Uia };
+        assert!(text_changed(&target, || Ok(("bloc B".into(), Vec::new(), 6, true))), "another selection in the same element");
+        assert!(text_changed(&target, || Err(NO_SELECTION.into())), "collapsed to the caret");
+        assert!(!text_changed(&target, || Ok(("mot A".into(), Vec::new(), 5, true))));
+        // A copy target is not read through UI Automation: its control copy decides.
+        let copy = TargetIdentity { check: TargetCheck::Copy, runtime_id: None, ..target };
+        assert!(!text_changed(&copy, || panic!("a copy target is never read through UIA")));
+        assert!(same_copy(Some("mot A"), "mot A").is_ok());
+        for copied in [None, Some(""), Some("bloc B"), Some("ligne entière avec mot A"), Some("mot A ")] {
+            assert_eq!(same_copy(copied, "mot A").unwrap_err().kind, ErrorKind::TargetChanged, "{copied:?}");
+        }
+    }
+
+    #[test]
     fn a_selection_collapsed_to_the_caret_is_a_change_but_a_silent_control_is_not() {
         let line = Rect { x: 100., y: 200., width: 300., height: 18. };
-        let target = TargetIdentity { runtime_id: Some(vec![1]), native_window: 1, control: 0, selected_text: "Deux lignes".into(), anchor: Some(line), selection_len: 11, editable: true };
+        let target = TargetIdentity { runtime_id: Some(vec![1]), native_window: 1, control: 0, selected_text: "Deux lignes".into(), anchor: Some(line), selection_len: 11, editable: true, check: TargetCheck::Uia };
         let same: Result<(String, Vec<Rect>, usize, bool), String> = Ok(("Deux lignes".into(), vec![Rect { y: 182., ..line }, line], 11, true));
         assert!(!selection_changed(&target, &same));
         assert!(selection_changed(&target, &Err(NO_SELECTION.into())), "collapsed by a click: a paste would insert at the caret");
@@ -495,7 +550,7 @@ mod tests {
         // A window that is not in front (0 never is): the capture is refused as changed.
         assert_eq!(ensure_source_unchanged(0).unwrap_err().kind, ErrorKind::TargetChanged);
         // The paste: NUL, a read-only field, the chord still held, another window in front.
-        let target = TargetIdentity { runtime_id: None, native_window: 1, control: 0, selected_text: "x".into(), anchor: None, selection_len: 1, editable: true };
+        let target = TargetIdentity { runtime_id: None, native_window: 1, control: 0, selected_text: "x".into(), anchor: None, selection_len: 1, editable: true, check: TargetCheck::Uia };
         assert_eq!(paste_preflight(&target, "a\0b").unwrap_err().kind, ErrorKind::PasteBlocked);
         assert_eq!(paste_preflight(&TargetIdentity { editable: false, ..target.clone() }, "ok").unwrap_err().kind, ErrorKind::NotEditable);
         assert!(paste_preflight(&target, "ok").is_ok());

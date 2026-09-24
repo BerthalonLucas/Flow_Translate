@@ -165,25 +165,61 @@ static SOURCE:AtomicIsize=AtomicIsize::new(0);
 static OVERLAY:AtomicIsize=AtomicIsize::new(0);
 /// The Îlot menu is open and waits for a choice (lot 3): its keys belong to the frontend.
 static MENU_OPEN:AtomicBool=AtomicBool::new(false);
+/// The overlay held the foreground for this menu (review of da-ilot, n°2 and n°6): the keys of
+/// the source are then the user's again, the hook's fallback only serves a refused activation.
+static MENU_FOCUSED:AtomicBool=AtomicBool::new(false);
 /// Where the hook hands the menu keys it took from the source (a worker emits them).
 static MENU_KEYS:OnceLock<std::sync::mpsc::SyncSender<MenuKey>>=OnceLock::new();
+/// After a paste the Îlot can undo (lot 9): the source window whose keys end that offer. A
+/// key that is not ours reaching it (the user types, or another tool does) is reported once.
+static UNDO_WATCH:AtomicBool=AtomicBool::new(false);
+static UNDO_SOURCE:AtomicIsize=AtomicIsize::new(0);
+static TYPED:OnceLock<std::sync::mpsc::SyncSender<Typed>>=OnceLock::new();
+/// Our own synthetic keys carry this in `dwExtraInfo`: the hook tells them from the user's.
+pub const OUR_KEYS:usize=0x464C_5754;
+
+/// A key that reached the source while Undo was offered: the user's own Ctrl+Z (the
+/// application undoes the paste itself), or any other key.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum Typed{UndoKey,Other}
+pub fn arm_undo_watch(source:isize){UNDO_SOURCE.store(source,Ordering::Relaxed);UNDO_WATCH.store(source!=0,Ordering::Release);}
+pub fn disarm_undo_watch(){UNDO_WATCH.store(false,Ordering::Release);}
+
+/// Whether a key down ends the Undo offer: not one of ours, not a lone modifier or lock
+/// key, not Escape (it closes the pill; it writes nothing).
+pub fn ends_undo(vk:u32,extra:usize)->bool{
+    extra!=OUR_KEYS&&!matches!(vk,0x10..=0x12|0x14|0x1B|0x5B|0x5C|0x90|0x91|0xA0..=0xA5)
+}
 
 pub fn escape_scope(source:isize,overlay:isize){
     SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
 }
 pub fn close_escape_scope(){OVERLAY_VISIBLE.store(false,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+/// Whether a scope (Escape, or the menu's) is open.
+pub fn escape_open()->bool{OVERLAY_VISIBLE.load(Ordering::Acquire)}
 pub fn take_escape()->bool{ESCAPE_PENDING.swap(false,Ordering::AcqRel)}
 pub fn handle(window:&WebviewWindow)->isize{window.hwnd().map(|h|h.0 as isize).unwrap_or(0)}
 
-/// Opens (source and overlay known at once, before the overlay is even placed, so a key
-/// typed right after the shortcut never lands in the source) or closes the menu's scope.
-/// While it is open the hook never swallows Escape for itself: the WebView owns it when
-/// the overlay has the foreground, the frontend receives it as a `menu-key` otherwise.
+/// Opens or closes the menu's scope. A menu binding opens it at its press, before the capture
+/// is even taken (review of da-ilot, n°4 and n°7): a key typed right after the shortcut never
+/// lands in the source, Rust holds it until the capture has its id. The stored capture opens
+/// it again for its own source. While it is open the hook never swallows Escape for itself:
+/// the WebView owns it when the overlay has the foreground, the frontend receives it as a
+/// `menu-key` otherwise.
 pub fn set_menu_open(open:bool,source:isize,overlay:isize){
     if open{SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+    MENU_FOCUSED.store(false,Ordering::Release);
     MENU_OPEN.store(open,Ordering::Release);
 }
 pub fn menu_open()->bool{MENU_OPEN.load(Ordering::Acquire)}
+/// The overlay took the foreground for the open menu (`focus_overlay`, or seen by the hook).
+pub fn set_menu_focused(){if MENU_OPEN.load(Ordering::Acquire){MENU_FOCUSED.store(true,Ordering::Release);}}
+pub fn menu_focused()->bool{MENU_FOCUSED.load(Ordering::Acquire)}
+/// Whether the hook takes a menu key from the source: only while the menu waits over a source
+/// that kept the foreground because the overlay never got it. Once the overlay had it, the
+/// user coming back to the source (a click in the document) means he left the menu: his keys
+/// are his (the context watcher then closes the menu).
+pub fn takes_source_keys(fg:isize,source:isize,focused:bool)->bool{fg!=0&&fg==source&&!focused}
 
 /// A menu key taken from the source window while the overlay could not hold the
 /// foreground: `key` is written like `KeyboardEvent.key` (« Enter », « Tab », « ArrowDown »,
@@ -299,17 +335,27 @@ pub fn executable_name(path:&str)->Option<String>{
 /// The low-level keyboard hook, on the main thread. It stays minimal (LowLevelHooksTimeout):
 /// a few atomics, the async state of the modifiers and, for a letter while the menu is
 /// open over the source, one ToUnicodeEx. `on_menu_key` runs on its own thread.
-pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static)->Result<(),String>{
+pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static,on_typed:impl Fn(Typed)+Send+'static)->Result<(),String>{
     use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,WH_KEYBOARD_LL,WM_KEYDOWN,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
     unsafe extern "system" fn keyboard(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&UNDO_WATCH.load(Ordering::Acquire){
+            let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let message=wparam.0 as u32;
+            if (message==WM_KEYDOWN||message==WM_SYSKEYDOWN)&&ends_undo(key.vkCode,key.dwExtraInfo)&&foreground()==UNDO_SOURCE.load(Ordering::Relaxed){
+                UNDO_WATCH.store(false,Ordering::Release);
+                let undo=key.vkCode==0x5A&&held(VK_CONTROL)&&!held(VK_MENU)&&!held(VK_SHIFT)&&!held(VK_LWIN)&&!held(VK_RWIN);
+                if let Some(typed)=TYPED.get(){let _=typed.try_send(if undo{Typed::UndoKey}else{Typed::Other});}
+            }
+        }
         if code>=0&&OVERLAY_VISIBLE.load(Ordering::Acquire){
             let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
             let message=wparam.0 as u32;
             let fg=foreground();
             if MENU_OPEN.load(Ordering::Acquire){
+                if fg!=0&&fg==OVERLAY.load(Ordering::Relaxed){MENU_FOCUSED.store(true,Ordering::Release);}
                 // The source kept the foreground (the overlay could not take it, or not yet):
                 // the menu keys go to the frontend, down and up, and never reach the source.
-                if fg!=0&&fg==SOURCE.load(Ordering::Relaxed){
+                if takes_source_keys(fg,SOURCE.load(Ordering::Relaxed),MENU_FOCUSED.load(Ordering::Acquire)){
                     let other=held(VK_CONTROL)||held(VK_MENU)||held(VK_LWIN)||held(VK_RWIN);
                     let shift=held(VK_SHIFT);
                     if let Some(name)=menu_key(key.vkCode,shift,other,||layout_letter(key.vkCode,key.scanCode,fg)){
@@ -330,6 +376,10 @@ pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static)->Result<
     let (sender,receiver)=std::sync::mpsc::sync_channel::<MenuKey>(32);
     let _=MENU_KEYS.set(sender);
     std::thread::Builder::new().name("menu-keys".into()).spawn(move||{for key in receiver{on_menu_key(key);}})
+        .map_err(|_|"La gestion du clavier est indisponible.".to_string())?;
+    let (sender,receiver)=std::sync::mpsc::sync_channel::<Typed>(4);
+    let _=TYPED.set(sender);
+    std::thread::Builder::new().name("undo-watch".into()).spawn(move||{for typed in receiver{on_typed(typed);}})
         .map_err(|_|"La gestion du clavier est indisponible.".to_string())?;
     unsafe{
         let module=GetModuleHandleW(None).map_err(|_|"Module clavier indisponible.".to_string())?;
@@ -925,7 +975,8 @@ fn key_input(key: VIRTUAL_KEY, extended: bool, up: bool) -> INPUT {
                 wScan: scan,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                // Ours: the Undo watch of the hook never takes them for the user's.
+                dwExtraInfo: OUR_KEYS,
             },
         },
     }
@@ -967,6 +1018,28 @@ pub fn send_paste_chord() -> Result<(), u32> {
     Ok(())
 }
 
+/// Sends Ctrl+Z to the foreground window (Undo of lot 9, option A): one chord, the target
+/// editor undoes its own paste. On a partial injection the keys already pressed are
+/// released and the count sent is returned.
+pub fn send_undo_chord() -> Result<(), u32> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_Z;
+    let inputs = [
+        key_input(VK_CONTROL, false, false),
+        key_input(VK_Z, false, false),
+        key_input(VK_Z, false, true),
+        key_input(VK_CONTROL, false, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        if sent > 0 {
+            let release = [key_input(VK_Z, false, true), key_input(VK_CONTROL, false, true)];
+            unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        }
+        return Err(sent);
+    }
+    Ok(())
+}
+
 /// Waits, at most `timeout`, for the clipboard counter to leave `before`.
 pub fn wait_clipboard_change(before: u32, timeout: Duration) -> Option<u32> {
     let deadline = Instant::now() + timeout;
@@ -999,6 +1072,27 @@ mod tests {
         }
         let sequence = std::thread::spawn(clipboard_sequence).join().unwrap();
         assert_ne!(sequence, 0);
+    }
+
+    #[test]
+    fn the_hook_takes_the_source_keys_only_while_the_overlay_never_had_the_foreground() {
+        // Review n°2 and n°6: activation refused, the source kept the foreground: the fallback.
+        assert!(takes_source_keys(10, 10, false));
+        // The overlay had it and the user came back to his document: his keys are his.
+        assert!(!takes_source_keys(10, 10, true));
+        assert!(!takes_source_keys(20, 10, false), "another window in front");
+        assert!(!takes_source_keys(0, 0, false), "no foreground");
+    }
+
+    #[test]
+    fn only_a_key_that_writes_and_is_not_ours_ends_the_undo_offer() {
+        // Letters, digits, Enter, Backspace, arrows, Ctrl+Z's Z: the user acts in the source.
+        for vk in [0x41, 0x5A, 0x31, 0x0D, 0x08, 0x2E, 0x25, 0x20] { assert!(ends_undo(vk, 0), "{vk:#x}"); }
+        // Another tool's injected keys count too (dictation types into the source).
+        assert!(ends_undo(0x41, 0x1234));
+        // Our own chords, lone modifiers, lock keys and Escape never do.
+        assert!(!ends_undo(0x56, OUR_KEYS));
+        for vk in [0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91, 0x1B] { assert!(!ends_undo(vk, 0), "{vk:#x}"); }
     }
 
     #[test]

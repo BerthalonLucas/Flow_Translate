@@ -22,9 +22,19 @@ export function HaloLines({ lines, state }: { lines: readonly Rect[]; state: Hal
   </div>;
 }
 
+// Lot 9: the changed words of a replacement while Undo is offered, one soft mark per line of
+// each changed range (design-lab/src/app.css .chg-hold, src/result/highlight.ts): 260 ms in,
+// held until `leave`, then 900 ms out. No delay: the marks follow the paste.
+export function HaloMarks({ lines, state }: { lines: readonly Rect[]; state: HaloState }) {
+  return <div className="halo halo-marks" data-kind="marks" data-state={state} aria-hidden="true">
+    {lines.map((line, index) => <div key={index} className="halo-mark" style={{ left: line.x, top: line.y, width: line.width, height: line.height }} />)}
+  </div>;
+}
+
 // The `halo` window: Rust places it over the lines of the selection and sends them in
 // logical pixels relative to the window (`halo` events, src-tauri/src/halo.rs). `work`
-// draws them after 250 ms, `leave` fades them in 150 ms, `clear` removes them. An event
+// draws them after 250 ms, `leave` fades them in 150 ms, `clear` removes them; `marks`
+// (lot 9) draws the changed words at once, and `leave` fades them in 900 ms. An event
 // older than the last run is ignored.
 export function HaloWindow() {
   const [run, setRun] = useState<HaloEvent | null>(null);
@@ -42,6 +52,9 @@ export function HaloWindow() {
         setRun(event);
         setState('waiting');
         timer = window.setTimeout(() => setState('shown'), HALO_APPEAR_DELAY_MS);
+      } else if (event.phase === 'marks') {
+        setRun(event);
+        setState('shown');
       } else if (event.phase === 'leave') setState('leaving');
       else { setRun(null); setState('waiting'); }
     }).then(listener => {
@@ -52,5 +65,6 @@ export function HaloWindow() {
     });
     return () => { alive = false; window.clearTimeout(timer); off?.(); delete document.documentElement.dataset.haloReady; };
   }, []);
-  return run ? <HaloLines key={run.generation} lines={run.lines} state={state} /> : null;
+  if (!run) return null;
+  return run.phase === 'marks' ? <HaloMarks key={run.generation} lines={run.lines} state={state} /> : <HaloLines key={run.generation} lines={run.lines} state={state} />;
 }

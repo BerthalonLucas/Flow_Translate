@@ -29,3 +29,14 @@ body.flowtranslate-halo { min-height: 0; overflow: hidden; background: transpare
   background-size: var(--total) 100%;
   background-position: var(--start) 0;
 }
+
+/* Lot 9, the changed words while Undo is offered (design-lab/src/app.css .chg-hold and
+   src/result/highlight.ts changedHighlight): rgba(141,159,255,.32), radius 3 px, each mark in
+   over 260 ms ease-out, held, then all out over 900 ms ease-out at `leave`. */
+.halo-marks, .halo-marks[data-state="shown"] { opacity: 1; transition: opacity 900ms ease-out; }
+.halo-marks[data-state="leaving"] { opacity: 0; transition-timing-function: ease-out; }
+.halo-mark { position: absolute; border-radius: 3px; background: rgba(141,159,255,.32); animation: halo-mark-in 260ms ease-out both; }
+@keyframes halo-mark-in { from { opacity: 0; } to { opacity: 1; } }
+/* Reduced animations: the marks appear and leave at once. */
+:root[data-motion="reduced"] .halo-mark { animation: none !important; }
+:root[data-motion="reduced"] .halo-marks { transition: none !important; }

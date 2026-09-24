@@ -238,6 +238,94 @@ pub struct ResultDelivery {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<ErrorKind>,
+    /// Applied under the Îlot (lot 9): the lines of the new text, physical like
+    /// `Capture.selectionRects`; absent when the pasted text could not be found.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pasted_rects: Vec<Rect>,
+    /// Undo can be offered: the pasted text was found, so it can be checked again.
+    pub undoable: bool,
+}
+
+/// Where the pill goes after a paste (lot 9).
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PillSide {
+    Below,
+    Above,
+    Margin,
+}
+
+/// `result_pill`: the top-left corner of the pill, logical pixels relative to the overlay
+/// window as it stands. `inside`: the pill fits in the window there (the frontend can move
+/// its surface in the DOM); otherwise `move_overlay` first. `estimated`: the pasted text was
+/// not found, the place comes from the old selection and the lengths. `clear`: the pill
+/// covers no line of the new text (false only when nothing else fits the screen).
+#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PillTarget {
+    pub x: f64,
+    pub y: f64,
+    pub side: PillSide,
+    pub inside: bool,
+    pub estimated: bool,
+    pub clear: bool,
+}
+
+/// A range of the pasted result, UTF-16 offsets (JavaScript string indices), end excluded.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub struct TextRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// `highlight_changes`: how many ranges were found in the source, how many lines drawn.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightResult {
+    pub ranges: usize,
+    pub lines: usize,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UndoStatus {
+    /// The original is back (read back when `confirmed`).
+    Undone,
+    /// Nothing was sent: the text, the field or the window changed, or the keys were held.
+    Refused,
+    /// The undo went out and the original did not come back.
+    Failed,
+}
+
+/// `undo_result` (lot 9).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoOutcome {
+    pub request_id: String,
+    pub status: UndoStatus,
+    pub confirmed: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorKind>,
+}
+
+/// Why Undo is no longer safe (`undo-state`, lot 9): a key reached the source (`typed`), the
+/// user's own Ctrl+Z (`undo_key`: the application undid the paste itself, most likely), or
+/// the pasted text is no longer right before the caret (`caret_moved`).
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UndoLoss {
+    Typed,
+    UndoKey,
+    CaretMoved,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoState {
+    pub request_id: String,
+    pub available: bool,
+    pub reason: UndoLoss,
 }
 
 /// `settings-focus-field` (lot 13, sent from lot 10): the field of the Settings to show.
@@ -539,6 +627,16 @@ pub struct TargetIdentity {
     pub anchor: Option<Rect>,
     pub selection_len: usize,
     pub editable: bool,
+    pub check: TargetCheck,
+}
+
+/// How the text of a target is checked again before a paste (review of da-ilot, n°1): through
+/// UI Automation, the selection it reads (with or without a drawable anchor), or, for a text
+/// only a synthetic copy gave, by a second copy made right before the paste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetCheck {
+    Uia,
+    Copy,
 }
 
 #[derive(Clone, Debug)]

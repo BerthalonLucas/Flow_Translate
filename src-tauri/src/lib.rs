@@ -1,15 +1,17 @@
 mod actions;
+mod browser_keys;
 use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
 mod clipboard_guard;
 mod crypto;
 mod error;
-use error::{AppError, ErrorKind};
+use error::{AppError, ErrorKind, Refusal};
 mod halo;
 mod history;
 mod host;
 mod inference;
 mod menu_memory;
+mod pasted;
 mod placement;
 mod selection_lines;
 mod settings;
@@ -44,6 +46,8 @@ struct MenuSession {
     process: Option<String>,
     last_action_id: Option<String>,
     chosen: bool,
+    /// The watcher dropped its selection (review n°6): no choice runs on it any more.
+    invalidated: bool,
 }
 /// The last press of a menu shortcut (lot 4). A second press of the same binding within
 /// 400 ms is a double press: never a new capture, the menu runs its last action.
@@ -103,6 +107,33 @@ struct Inner {
     /// The last complete result, kept ten minutes after its glass closed so the tray
     /// can show it again (« Revoir la dernière traduction »).
     last_result: Option<(CompletedResult, std::time::Instant)>,
+    /// The replacement the Îlot's pill stands under (lot 9), until the next capture or the
+    /// dismissal.
+    applied: Option<Applied>,
+    /// How far `move_overlay` moved the anchored window (physical pixels), kept by `position`.
+    shift: (f64, f64),
+    /// Some while a menu capture is being taken (review n°4 and n°7): the menu keys the hook
+    /// took from the source since the press, until the capture has its id.
+    held_keys: Option<Vec<host::MenuKey>>,
+}
+/// A replacement under the Îlot (lot 9): where the result went, what it replaced, the pasted
+/// text as UI Automation found it. Only Rust's memory holds these texts: nothing emits or
+/// logs them, the frontend gets rectangles and booleans.
+struct Applied {
+    request_id: String,
+    window: isize,
+    window_rect: Option<Rect>,
+    control: isize,
+    runtime_id: Option<Vec<i32>>,
+    original: String,
+    pasted: String,
+    /// None when it could not be found (or no longer can): no Undo, an estimated place.
+    located: Option<pasted::Located>,
+    /// The replaced selection's lines and anchor, for that estimate.
+    old_lines: Vec<Rect>,
+    anchor: Option<Rect>,
+    /// Undo is still offered: once per replacement, withdrawn by a key in the source.
+    undo: bool,
 }
 // Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
 #[derive(Clone, Copy, Debug)]
@@ -146,6 +177,9 @@ impl Inner {
             measured: false,
             notice_generation: 0,
             last_result: None,
+            applied: None,
+            shift: (0., 0.),
+            held_keys: None,
         }
     }
     /// Sets the result aside for the tray before the glass state forgets it.
@@ -183,6 +217,7 @@ impl Inner {
         }
         let menu = self.menu.as_mut().filter(|menu| menu.capture_id == capture_id).ok_or("Cette capture n’attend pas de choix.")?;
         if menu.chosen { return Err("Une action a déjà été choisie pour cette sélection.".into()); }
+        if menu.invalidated { return Err("La sélection a changé; le menu est fermé.".into()); }
         let execution = Execution::chosen(&menu.settings, action_id, instruction)?;
         menu.chosen = true;
         let info = execution.info.clone();
@@ -212,6 +247,82 @@ impl Inner {
         };
         press.capture_id = Some(capture_id.to_string());
         press.repeat.then(|| capture_id.to_string())
+    }
+    /// A menu key the hook took from the source: for the menu that waits, or held while a menu
+    /// capture is still being taken (review n°4 and n°7: its id is not known yet).
+    fn route_menu_key(&mut self, key: host::MenuKey) -> Option<(String, host::MenuKey)> {
+        if let Some(held) = self.held_keys.as_mut() {
+            held.push(key);
+            return None;
+        }
+        let capture_id = self.menu.as_ref().filter(|menu| self.visible && !menu.chosen && !menu.invalidated).map(|menu| menu.capture_id.clone())?;
+        Some((capture_id, key))
+    }
+    /// The keys held for the stored capture `capture_id`, a batch at a time: the caller emits
+    /// each batch and asks again, so a key held meanwhile keeps its order; an empty batch ends
+    /// the hold. Without a capture (None, or its menu no longer waits) they are dropped, never
+    /// replayed in the source.
+    fn release_held_keys(&mut self, capture_id: Option<&str>) -> Vec<(String, host::MenuKey)> {
+        let keys = self.held_keys.as_mut().map(std::mem::take).unwrap_or_default();
+        let waits = capture_id.filter(|id| {
+            self.visible && self.pending_dismiss.is_none() && self.menu.as_ref().is_some_and(|menu| menu.capture_id == *id && !menu.chosen && !menu.invalidated)
+        });
+        match waits {
+            Some(id) if !keys.is_empty() => keys.into_iter().map(|key| (id.to_string(), key)).collect(),
+            _ => {
+                self.held_keys = None;
+                Vec::new()
+            }
+        }
+    }
+    /// The overlay page announces itself: the capture it missed while loading, and whether it
+    /// is a page loaded again under a capture still on screen.
+    fn page_ready(&mut self) -> (Option<Capture>, bool) {
+        let reloaded = self.frontend_ready && self.visible && self.pending_dismiss.is_none() && self.capture.is_some();
+        self.frontend_ready = true;
+        (self.pending_capture.take(), reloaded)
+    }
+    /// The watcher found the target of `capture_id` changed: nothing can be replaced any more.
+    /// A menu still waiting closes (review n°6: nothing left to act on; a choice in flight is
+    /// refused). Under the Îlot the window keeps its place, anchor and side (the working pill,
+    /// then the error pill, stay where the user looks; review of da-ilot 3e678ff); under v4 the
+    /// glass loses its anchor and docks at the bottom, as in 0.4.
+    fn invalidate(&mut self, capture_id: &str) -> Invalidated {
+        let ilot = self.settings.ui_version == UiVersion::Ilot;
+        let Some(capture) = self.capture.as_mut().filter(|c| c.public.id == capture_id && !c.invalidated) else { return Invalidated::Stale };
+        capture.public.can_replace = false;
+        capture.target = None;
+        capture.invalidated = true;
+        if let Some(menu) = self.menu.as_mut().filter(|m| m.capture_id == capture_id && !m.chosen) {
+            menu.invalidated = true;
+            return Invalidated::CloseMenu;
+        }
+        if ilot { return Invalidated::Stay; }
+        capture.public.anchor = None;
+        self.side = None;
+        Invalidated::Redock
+    }
+    /// `replace_result` under the state lock: the completed result's target, spent once (the
+    /// capture can no longer be replaced afterwards: `spent`, the frontend is told). Refused
+    /// with a code (review of da-ilot, front): a result no longer current `paste_blocked`, a
+    /// capture that can no longer be replaced or a foreign window in front `target_changed`.
+    /// `in_front(window)`: that window, or one of ours, holds the foreground.
+    fn replace_target(&mut self, request_id: &str, capture_id: &str, in_front: impl FnOnce(isize) -> bool) -> (Result<TargetIdentity, AppError>, bool) {
+        if !self.visible || self.active.is_some() || self.pending_dismiss.is_some() || self.completed.as_ref().is_none_or(|done| done.request_id != request_id) {
+            return (Err(AppError::new(ErrorKind::PasteBlocked, "Ce résultat n’est plus actif.")), false);
+        }
+        let gone = || AppError::new(ErrorKind::TargetChanged, "La sélection n’est plus disponible; utilisez Copier.");
+        let Some(capture) = self.capture.as_mut().filter(|c| c.public.id == capture_id && c.public.can_replace) else { return (Err(gone()), false) };
+        let Some(target) = capture.target.take() else { return (Err(gone()), false) };
+        capture.public.can_replace = false;
+        if !in_front(target.native_window) {
+            return (Err(AppError::new(ErrorKind::TargetChanged, "La fenêtre source a changé; remplacement refusé.")), true);
+        }
+        (Ok(target), true)
+    }
+    /// The menu of `capture_id` still waits for its choice.
+    fn menu_waits(&self, capture_id: &str) -> bool {
+        self.menu.as_ref().is_some_and(|menu| menu.capture_id == capture_id && !menu.chosen && !menu.invalidated)
     }
     fn complete_pending_dismiss(&mut self, capture_id: &str, generation: u64) -> bool {
         if self.pending_dismiss.as_ref().is_none_or(|pending| pending.0 != capture_id || pending.1 != generation) {
@@ -409,6 +520,7 @@ fn store_capture(
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, false);
     halo::hide(app);
+    host::disarm_undo_watch();
     let is_menu = menu.is_some();
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
@@ -431,6 +543,8 @@ fn store_capture(
         i.dragging = false;
         i.presentation = Presentation::Anchored;
         i.regions.clear();
+        i.applied = None;
+        i.shift = (0., 0.);
         i.pending_dismiss = None;
         i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
         i.last_overlay = None;
@@ -515,7 +629,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             .or_else(|| i.last_result.clone().filter(|(_, at)| at.elapsed() <= REPLAY_WINDOW).map(|(r, _)| r))
     };
     let Some(result) = last else {
-        show_notice(app, "Aucune traduction récente.", Some(ErrorKind::NoSelection));
+        show_notice(app, "Aucune traduction récente.", Some(ErrorKind::NothingRecent));
         return Ok(());
     };
     let public = Capture {
@@ -559,6 +673,11 @@ const SURFACES: [&str; 2] = ["overlay", "halo"];
 fn ours(app: &AppHandle, handle: isize) -> bool {
     handle != 0 && ["overlay", "halo", "settings"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, handle)))
 }
+/// Review n°2 and n°6: the open menu had the foreground and something else than our windows
+/// holds it now (the user clicked back into his document, or switched application).
+fn leaves_menu(open: bool, focused: bool, fg: isize, ours: bool) -> bool {
+    open && focused && fg != 0 && !ours
+}
 /// None when nothing was captured on purpose: a press while one of our windows holds
 /// the foreground (the Îlot has the keyboard) never captures our own window.
 fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32, std::time::Instant)>) -> Result<Option<Capture>, AppError> {
@@ -566,7 +685,7 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
         // The hidden settings window can hold the foreground for an instant at startup
         // (the demo capture of the probe met it): only the shown one refuses a capture.
         // Nothing of another application is selected then: nothing to act on.
-        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err(AppError::new(ErrorKind::NoSelection, "Fermez les réglages avant d’utiliser un raccourci.")); }
+        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err(AppError::new(ErrorKind::SettingsOpen, "Fermez les réglages avant d’utiliser un raccourci.")); }
     }
     let opening = {
         let mut i = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?;
@@ -595,7 +714,26 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
         }
         Err(Repeat::Swallow) => return Ok(None),
     };
-    let result = capture_opening(&app, state, opening);
+    // Review n°4 and n°7: the menu's scope opens at the press, before the capture (a synthetic
+    // copy first waits for the chord's release): a key typed right after the shortcut is held
+    // here until the capture has its id, never typed in the source. Never over our windows.
+    let source = host::foreground();
+    let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
+    let before = (matches!(opening, Opening::Menu(_)) && !ours(&app, source)).then(|| (host::escape_open(), host::menu_focused()));
+    if before.is_some() {
+        if let Ok(mut i) = state.inner.lock() { i.held_keys = Some(Vec::new()); }
+        host::set_menu_open(true, source, overlay);
+    }
+    let result = capture_opening(&app, state, opening, source);
+    if let Some((escape_before, focused_before)) = before {
+        match result.as_ref().ok().and_then(|capture| capture.as_ref()) {
+            Some(capture) => release_held_keys(&app, state, Some(&capture.id)),
+            None => {
+                release_held_keys(&app, state, None);
+                restore_scope(state, overlay, escape_before, focused_before);
+            }
+        }
+    }
     if let Some(at) = pressed_at {
         let stored = result.as_ref().ok().and_then(|capture| capture.as_ref()).map(|capture| capture.id.clone());
         let repeat = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?.settle_press(at, stored.as_deref());
@@ -605,10 +743,72 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
     }
     result
 }
+/// Emits the keys held during a menu capture as `menu-key` for it, in order, or drops them.
+fn release_held_keys(app: &AppHandle, state: &AppState, capture_id: Option<&str>) {
+    loop {
+        let Ok(keys) = state.inner.lock().map(|mut i| i.release_held_keys(capture_id)) else { return };
+        if keys.is_empty() { return; }
+        for (capture_id, key) in keys {
+            let _ = app.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
+        }
+    }
+}
+/// What the watcher does with a capture whose target changed (`Inner::invalidate`).
+#[derive(Debug, PartialEq, Eq)]
+enum Invalidated {
+    /// Not the current capture, or already invalidated.
+    Stale,
+    /// A menu still waiting: it closes.
+    CloseMenu,
+    /// Under the Îlot: `target-invalidated`, the window stays where it is.
+    Stay,
+    /// Under v4: `target-invalidated`, then the glass docks at the bottom.
+    Redock,
+}
+/// What the scope becomes when a menu press opened it and got no capture: the scope of what
+/// is still shown, never a menu scope left open over nothing (the hook would keep the keys).
+#[derive(Debug, PartialEq, Eq)]
+enum ScopeAfter {
+    Closed,
+    Menu,
+    Escape,
+}
+fn scope_after(shown: bool, menu_waits: bool, escape_before: bool) -> ScopeAfter {
+    match (shown, menu_waits, escape_before) {
+        (false, _, _) => ScopeAfter::Closed,
+        (true, true, _) => ScopeAfter::Menu,
+        (true, false, true) => ScopeAfter::Escape,
+        (true, false, false) => ScopeAfter::Closed,
+    }
+}
+fn restore_scope(state: &AppState, overlay: isize, escape_before: bool, focused_before: bool) {
+    let (shown, waits, source) = state.inner.lock().map(|i| {
+        let waits = i.menu.as_ref().is_some_and(|menu| !menu.chosen && !menu.invalidated && i.capture.as_ref().is_some_and(|capture| capture.public.id == menu.capture_id));
+        (i.visible && i.pending_dismiss.is_none(), waits, i.source_window)
+    }).unwrap_or((false, false, 0));
+    match scope_after(shown, waits, escape_before) {
+        ScopeAfter::Menu => {
+            host::set_menu_open(true, source, overlay);
+            if focused_before { host::set_menu_focused(); }
+        }
+        ScopeAfter::Escape => {
+            host::set_menu_open(false, 0, 0);
+            host::escape_scope(source, overlay);
+        }
+        ScopeAfter::Closed => {
+            host::set_menu_open(false, 0, 0);
+            host::close_escape_scope();
+        }
+    }
+}
+/// A menu capture is being taken: the scope it opened at its press is its own until it is
+/// stored or restored (a dismissal of the previous glass meanwhile must not close it).
+fn menu_opening(state: &AppState) -> bool {
+    state.inner.lock().is_ok_and(|i| i.held_keys.is_some())
+}
 /// Takes the capture of a press (or of `capture_text`) and stores it with what it opens.
-fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Result<Option<Capture>, AppError> {
+fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening, source: isize) -> Result<Option<Capture>, AppError> {
     let app = app.clone();
-    let source = host::foreground();
     // The demo capture reads no window; any other never takes one of ours as its source.
     if !state.demo && ours(&app, source) { return Ok(None); }
     let mut captured = capture::capture_current(state.demo, source)?;
@@ -624,12 +824,13 @@ fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Resul
     let result = match opening {
         Opening::Direct(execution) => store_capture(&app, state, captured, source, Some(execution), None),
         Opening::Menu(settings) => {
-            // The last action chosen in this application, if it still exists.
-            let process = host::process_name(source);
+            // The last action chosen in this application, if it still exists. The demo reads
+            // no window: it is never tied to the one in front (review n°5).
+            let process = (!state.demo).then(|| host::process_name(source)).flatten();
             let last_action_id = process.as_deref()
                 .and_then(|process| state.menu_memory.lock().ok().and_then(|memory| memory.get(process).map(String::from)))
                 .filter(|id| settings.actions.iter().any(|action| &action.id == id));
-            let session = MenuSession { capture_id: String::new(), settings: *settings, process, last_action_id, chosen: false };
+            let session = MenuSession { capture_id: String::new(), settings: *settings, process, last_action_id, chosen: false, invalidated: false };
             store_capture(&app, state, captured, source, None, Some(session))
         }
     }.map_err(AppError::internal);
@@ -639,10 +840,16 @@ fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Resul
     result.map(Some)
 }
 #[tauri::command]
-fn frontend_ready(state: State<'_, AppState>) -> Result<Option<Capture>, String> {
-    let mut i = state.inner.lock().map_err(|_| lock_error())?;
-    i.frontend_ready = true;
-    Ok(i.pending_capture.take())
+fn frontend_ready(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>) -> Result<Option<Capture>, String> {
+    let (pending, reloaded) = state.inner.lock().map_err(|_| lock_error())?.page_ready();
+    // Review of da-ilot (front n°2): the overlay page loaded again (F5, Ctrl+R, a crash) while
+    // a capture was on screen; the new page knows nothing of it, so it closes as a dismissal
+    // would (scope closed, nothing pasted) instead of leaving a window that swallows keys.
+    if reloaded && window.label() == "overlay" {
+        let _ = dismiss(&app, &state);
+        return Ok(None);
+    }
+    Ok(pending)
 }
 
 #[tauri::command]
@@ -888,10 +1095,41 @@ fn schedule_auto_delivery(app: &AppHandle) {
         let outcome = target.as_ref().ok_or_else(|| nothing_to_paste(invalidated))
             .and_then(|target| if fg != target.native_window && !ours { Err(AppError::new(ErrorKind::TargetChanged, "La fenêtre source a changé; remplacement refusé.")) } else { Ok(target) })
             .and_then(|target| capture::paste(target, &result.translated_text, true));
+        // Under the Îlot (lot 9): the pasted text is found at once, still under the lock (no
+        // new capture in between), for the pill's place, the marks and Undo.
+        let applied = match (&outcome, &target) {
+            (Ok(_), Some(target)) if i.settings.ui_version == UiVersion::Ilot => {
+                let located = locate_pasted(&result.translated_text, target.native_window);
+                let old = i.capture.as_ref().filter(|c| c.public.id == result.capture_id).map(|c| (c.public.selection_rects.clone(), c.public.anchor));
+                let (old_lines, anchor) = old.unwrap_or_default();
+                Some(Applied {
+                    request_id: result.request_id.clone(),
+                    window: target.native_window,
+                    window_rect: host::window_rect(target.native_window),
+                    control: target.control,
+                    runtime_id: target.runtime_id.clone(),
+                    original: target.selected_text.clone(),
+                    pasted: result.translated_text.clone(),
+                    undo: located.is_some() && i.settings.after_replace.undo,
+                    located,
+                    old_lines,
+                    anchor,
+                })
+            }
+            _ => None,
+        };
+        let pasted_rects = applied.as_ref().and_then(|a| a.located.as_ref()).map(|l| l.lines.clone()).unwrap_or_default();
+        let undoable = applied.as_ref().is_some_and(|a| a.undo);
+        if let Some(applied) = applied {
+            if applied.undo { host::arm_undo_watch(applied.window); }
+            i.applied = Some(applied);
+        }
         let capture_id = result.capture_id.clone();
         drop(i);
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
         let _ = app.emit_to("overlay", "result-delivery", ResultDelivery {
+            pasted_rects,
+            undoable,
             request_id: result.request_id.clone(),
             status: if outcome.is_ok() { DeliveryStatus::Applied } else { DeliveryStatus::Fallback },
             confirmed: outcome.as_ref().is_ok_and(|d| d.confirmed),
@@ -910,6 +1148,184 @@ fn schedule_auto_delivery(app: &AppHandle) {
 fn nothing_to_paste(invalidated: bool) -> AppError {
     AppError::new(if invalidated { ErrorKind::TargetChanged } else { ErrorKind::NotEditable }, "Aucune sélection à remplacer; le résultat reste dans la bulle.")
 }
+
+/// The pasted text before the caret (lot 9), tried three times over about 200 ms: the paste
+/// is confirmed from the field's text, the caret and the layout may follow a moment later.
+fn locate_pasted(value: &str, window: isize) -> Option<pasted::Located> {
+    for attempt in 0..3 {
+        if attempt > 0 { std::thread::sleep(std::time::Duration::from_millis(90)); }
+        if let Some(located) = pasted::locate(value, window) { return Some(located); }
+    }
+    None
+}
+
+/// The pasted text's runs where they were (within a pixel): nothing scrolled or reflowed.
+fn same_rects(now: &[Rect], then: &[Rect]) -> bool {
+    now.len() == then.len() && now.iter().zip(then).all(|(a, b)| {
+        (a.x - b.x).abs() <= 1. && (a.y - b.y).abs() <= 1. && (a.width - b.width).abs() <= 1. && (a.height - b.height).abs() <= 1.
+    })
+}
+
+/// The line the new text ends on: the lowest one, the rightmost of that row.
+fn last_line(lines: &[Rect]) -> Option<Rect> {
+    let lowest = lines.iter().map(|line| line.y + line.height / 2.).fold(f64::NEG_INFINITY, f64::max);
+    lines.iter().copied()
+        .filter(|line| line.y <= lowest && lowest <= line.y + line.height)
+        .max_by(|a, b| (a.x + a.width).total_cmp(&(b.x + b.width)))
+}
+
+/// Where the pill goes after the paste (lot 9): under the last line of the new text, never
+/// over it (`pillPlacement: margin`: right of the text column). `width` × `height` is the
+/// pill's size, logical. The answer is relative to the overlay window as it stands, logical;
+/// `inside` false means the pill would leave the window: `move_overlay` first. Estimated from
+/// the old selection when the pasted text could not be found.
+#[tauri::command]
+fn result_pill(app: AppHandle, state: State<'_, AppState>, request_id: String, width: f64, height: f64) -> Result<PillTarget, String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. { return Err("Dimensions invalides.".into()); }
+    let i = state.inner.lock().map_err(|_| lock_error())?;
+    if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
+    let applied = i.applied.as_ref().filter(|a| a.request_id == request_id).ok_or("Ce résultat n’est plus actif.")?;
+    let s = i.scale;
+    let (lines, end, estimated) = match applied.located.as_ref().filter(|l| !l.lines.is_empty()) {
+        Some(located) => (located.lines.clone(), last_line(&located.lines).ok_or("Texte introuvable.")?, false),
+        None => {
+            let anchor = applied.anchor.or_else(|| last_line(&applied.old_lines)).ok_or("Aucun emplacement pour la pilule.")?;
+            let (block, end) = placement::estimated_text(&applied.old_lines, anchor, applied.original.chars().count(), applied.pasted.chars().count());
+            (block, end, true)
+        }
+    };
+    let margin = i.settings.pill_placement == PillPlacement::Margin;
+    let (pill, side, clear) = placement::pill_after_paste(&lines, end, i.work, width * s, height * s, 8. * s, margin);
+    drop(i);
+    let window = app.get_webview_window("overlay").and_then(|w| host::window_rect(host::handle(&w))).ok_or("Traduction indisponible.")?;
+    let (x, y) = ((pill.x - window.x) / s, (pill.y - window.y) / s);
+    let inside = x >= -0.5 && y >= -0.5 && x + width <= window.width / s + 0.5 && y + height <= window.height / s + 0.5;
+    Ok(PillTarget { x, y, side, inside, estimated, clear })
+}
+
+/// Moves the anchored overlay window by `dx`, `dy` logical pixels, its surfaces with it (they
+/// are relative to the window), then answers. The frontend calls it at a moment when nothing
+/// animates (lot 9: never a SetWindowPos during an animation), when `result_pill` says the
+/// pill would leave the window. Kept by every later placement of this capture.
+#[tauri::command]
+async fn move_overlay(app: AppHandle, state: State<'_, AppState>, capture_id: String, dx: f64, dy: f64) -> Result<(), String> {
+    let size = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !dx.is_finite() || !dy.is_finite() || dx.abs() * i.scale > i.work.width || dy.abs() * i.scale > i.work.height {
+            return Err("Déplacement invalide.".into());
+        }
+        let anchored = i.presentation == Presentation::Anchored && i.capture.as_ref().is_some_and(|c| c.public.anchor.is_some());
+        if !i.visible || i.pending_dismiss.is_some() || i.dragging || i.capture.as_ref().is_none_or(|c| c.public.id != capture_id) {
+            return Err("La capture n’est plus active.".into());
+        }
+        if !anchored { return Err("Seule la fenêtre ancrée se déplace.".into()); }
+        let (px, py) = (dx * i.scale, dy * i.scale);
+        match i.manual.as_mut() {
+            Some(manual) => { manual.x += px; manual.y += py; }
+            None => { i.shift.0 += px; i.shift.1 += py; }
+        }
+        i.size
+    };
+    let (placed_tx, placed_rx) = tokio::sync::oneshot::channel();
+    position(&app, &state, size.0, size.1, Some(placed_tx))?;
+    placed_rx.await.map_err(|_| "Placement interrompu.".to_string())?
+}
+
+/// Marks the changed words of the replacement (lot 9) in the halo: `ranges` are UTF-16
+/// offsets of the result (JavaScript string indices), end excluded, at most 64. Each is found
+/// in the pasted text by UI Automation and checked by its text; the marks hold until
+/// `clear_highlight`, a key in the source, Undo or the dismissal. Answers how many ranges
+/// were found and how many lines are drawn (0: nothing shown).
+#[tauri::command]
+async fn highlight_changes(app: AppHandle, state: State<'_, AppState>, request_id: String, ranges: Vec<TextRange>) -> Result<HighlightResult, String> {
+    if ranges.len() > 64 { return Err("Trop de plages.".into()); }
+    let (located, value, window) = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
+        let applied = i.applied.as_ref().filter(|a| a.request_id == request_id).ok_or("Ce résultat n’est plus actif.")?;
+        let Some(located) = applied.located.clone().filter(|_| applied.undo) else { return Ok(HighlightResult { ranges: 0, lines: 0 }) };
+        (located, applied.pasted.clone(), applied.window)
+    };
+    let pairs: Vec<(usize, usize)> = ranges.iter().map(|r| (r.start, r.end)).collect();
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (resolved, lines) = pasted::changed_lines(&located, &value, &pairs, window);
+        let state = handle.state::<AppState>();
+        let current = state.inner.lock().is_ok_and(|i| i.visible && i.applied.as_ref().is_some_and(|a| a.request_id == request_id && a.undo));
+        if !current || lines.is_empty() { return HighlightResult { ranges: resolved, lines: 0 }; }
+        halo::marks(&handle, &lines);
+        HighlightResult { ranges: resolved, lines: lines.len() }
+    }).await.map_err(|_| "Surlignage interrompu.".to_string())
+}
+
+/// The pill's Undo is over (its countdown ended): the marks fade out in 900 ms.
+#[tauri::command]
+fn clear_highlight(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+    let current = state.inner.lock().map_err(|_| lock_error())?.applied.as_ref().is_some_and(|a| a.request_id == request_id);
+    if current && halo::marking() { halo::leave(&app); }
+    Ok(())
+}
+
+/// Undo withdrawn (lot 9): `undo-state` tells the frontend why, the marks fade. `request`
+/// None: whatever replacement is current (the keyboard hook does not know it).
+fn lose_undo(app: &AppHandle, request: Option<&str>, reason: UndoLoss, forget_text: bool) {
+    let state = app.state::<AppState>();
+    let lost = {
+        let Ok(mut i) = state.inner.lock() else { return };
+        let Some(applied) = i.applied.as_mut().filter(|a| request.is_none_or(|id| a.request_id == id)) else { return };
+        if forget_text { applied.located = None; }
+        let was = applied.undo;
+        applied.undo = false;
+        was.then(|| applied.request_id.clone())
+    };
+    host::disarm_undo_watch();
+    if halo::marking() { halo::leave(app); }
+    if let Some(request_id) = lost {
+        let _ = app.emit_to("overlay", "undo-state", UndoState { request_id, available: false, reason });
+    }
+}
+
+/// Undo of a replacement under the Îlot (lot 9), once: Ctrl+Z at the source (`undoStrategy`
+/// keystroke, the default) or the original pasted back over the new text (repaste). The
+/// source comes back to the front when one of our windows holds it, then the window, the
+/// field, the element and the pasted text (still right before the caret, exactly) are checked
+/// again, the keys must be up, and they are checked once more. Refused: nothing was sent.
+/// Failed: sent, and the original did not come back. The clipboard is kept as for any paste.
+#[tauri::command]
+async fn undo_result(app: AppHandle, request_id: String) -> Result<UndoOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let refused = |kind: ErrorKind, message: &str| UndoOutcome { request_id: request_id.clone(), status: UndoStatus::Refused, confirmed: false, message: message.into(), code: Some(kind) };
+        // Held through the undo: no capture, relaunch or dismissal commits in between.
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
+        let strategy = i.settings.undo_strategy;
+        let Some(applied) = i.applied.as_mut().filter(|a| a.request_id == request_id) else { return Err("Ce résultat n’est plus actif.".into()) };
+        if !applied.undo { return Ok(refused(ErrorKind::TargetChanged, "Le texte a changé depuis le remplacement; annulation refusée.")); }
+        applied.undo = false;
+        host::disarm_undo_watch();
+        halo::hide(&app);
+        let Some(located) = applied.located.take() else { return Ok(refused(ErrorKind::TargetChanged, "Le texte a changé depuis le remplacement; annulation refusée.")) };
+        let fg = host::foreground();
+        let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
+        if fg != applied.window && !ours { return Ok(refused(ErrorKind::TargetChanged, "La fenêtre source a changé; annulation refusée.")); }
+        let target = pasted::UndoTarget {
+            window: applied.window,
+            control: applied.control,
+            runtime_id: applied.runtime_id.as_deref(),
+            located: &located,
+            original: &applied.original,
+            pasted: &applied.pasted,
+        };
+        let outcome = match pasted::undo(&target, strategy, true) {
+            Ok(confirmed) => UndoOutcome { request_id: request_id.clone(), status: UndoStatus::Undone, confirmed, message: "Remplacement annulé.".into(), code: None },
+            Err(pasted::UndoFailure::Refused(error)) => refused(error.kind, &error.message),
+            Err(pasted::UndoFailure::Failed(error)) => UndoOutcome { request_id: request_id.clone(), status: UndoStatus::Failed, confirmed: false, message: error.message, code: Some(error.kind) },
+        };
+        drop(i);
+        Ok(outcome)
+    }).await.map_err(|_| "L’annulation a été interrompue.".to_string())?
+}
 #[tauri::command]
 fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
     let r = result_for(&state, &request_id)?;
@@ -922,27 +1338,21 @@ fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), Str
 /// « Remplacer » from the menu of the glass: the same paste, the source window brought
 /// back to the front first (the click was on our window). One attempt per result.
 #[tauri::command]
-async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
-    let r = result_for(&state, &request_id)?;
+async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), Refusal> {
+    let r = result_for(&state, &request_id).map_err(|message| AppError::new(ErrorKind::PasteBlocked, message))?;
     // UI Automation uses an MTA worker, never the WebView's STA UI thread.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let mut i = state.inner.lock().map_err(|_| lock_error())?;
-        if !i.visible || i.active.is_some() || i.pending_dismiss.is_some()
-            || i.completed.as_ref().is_none_or(|done| done.request_id != r.request_id) {
-            return Err("Ce résultat n’est plus actif.".into());
-        }
+        let mut i = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?;
         let fg = host::foreground();
         let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
-        let c = i.capture.as_mut().filter(|c| c.public.id == r.capture_id && c.public.can_replace)
-            .ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
-        let target = c.target.take().ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
-        c.public.can_replace = false;
-        let capture_id = c.public.id.clone();
-        let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
-        if fg != target.native_window && !ours { return Err("La fenêtre source a changé; remplacement refusé.".into()); }
-        capture::paste(&target, &r.translated_text, true).map(|_| ()).map_err(String::from)
-    }).await.map_err(|_| "Le remplacement a été interrompu; utilisez Copier.".to_string())?
+        let (target, spent) = i.replace_target(&r.request_id, &r.capture_id, |window| fg == window || ours);
+        if spent {
+            let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id: r.capture_id.clone(), can_replace: false });
+        }
+        // Held through the paste, as for the automatic one: nothing commits in between.
+        capture::paste(&target?, &r.translated_text, true).map(|_| ())
+    }).await.map_err(|_| AppError::new(ErrorKind::PasteBlocked, "Le remplacement a été interrompu; utilisez Copier."))?.map_err(Refusal::from)
 }
 fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
     let handle = app.clone();
@@ -956,9 +1366,12 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
 }
 
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    host::close_escape_scope();
+    if !menu_opening(state) {
+        host::close_escape_scope();
+        host::set_menu_open(false, 0, 0);
+    }
     halo::hide(app);
-    host::set_menu_open(false, 0, 0);
+    host::disarm_undo_watch();
     // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
     // back before the window hides, its selection untouched and nothing pasted. Hiding
     // the active window alone would let Windows pick the next one in the z-order.
@@ -971,6 +1384,7 @@ fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
         if i.pending_dismiss.is_some() { return Ok(()); }
         let capture_id = i.capture.as_ref().map(|capture| capture.public.id.clone());
         i.cancel(None);
+        i.applied = None;
         i.visible = false;
         i.pending_capture = None;
         i.retire_result();
@@ -1075,10 +1489,14 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
         if !i.visible || i.pending_dismiss.is_some() {
             return Err("La capture n’est plus active.".into());
         }
-        i.capture
+        let capture_id = i.capture
             .as_ref()
             .map(|capture| capture.public.id.clone())
-            .ok_or_else(|| "La capture n’est plus active.".to_string())?
+            .ok_or_else(|| "La capture n’est plus active.".to_string())?;
+        // Review n°3: a double press may choose before the menu even shows; a menu already
+        // chosen (or closed) never takes the keyboard from the source.
+        if !i.menu_waits(&capture_id) { return Ok(false); }
+        capture_id
     };
     let w = app
         .get_webview_window("overlay")
@@ -1093,7 +1511,7 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
     // cannot be provoked on demand, so FLOWTRANSLATE_REFUSE_FOCUS exercises the fallback.
     let refuse = std::env::var_os("FLOWTRANSLATE_CDP_URL").is_some() && std::env::var_os("FLOWTRANSLATE_REFUSE_FOCUS").is_some();
     let focused = if refuse { false } else { host::activate(&w)? };
-    let (current, should_hide) = {
+    let (current, should_hide, waits, source) = {
         let state = app.state::<AppState>();
         let i = state.inner.lock().map_err(|_| lock_error())?;
         let current = i.visible
@@ -1102,7 +1520,7 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
                 .as_ref()
                 .is_some_and(|capture| capture.public.id == capture_id);
         let should_hide = !i.visible || i.pending_dismiss.is_some() || i.capture.is_none();
-        (current, should_hide)
+        (current, should_hide, i.menu_waits(&capture_id), i.source_window)
     };
     if !current {
         if should_hide {
@@ -1110,6 +1528,13 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
         }
         return Err("La capture n’est plus active.".into());
     }
+    // The choice arrived while the overlay was being activated: the source gets the keyboard
+    // back once the chord is released, as after any choice.
+    if !waits {
+        if focused { return_foreground(host::handle(&w), source); }
+        return Ok(false);
+    }
+    if focused { host::set_menu_focused(); }
     Ok(focused)
 }
 
@@ -1137,6 +1562,10 @@ fn return_foreground(overlay: isize, source: isize) {
 /// with the returned `actionId`, as for any capture. The source gets the keyboard back
 /// if the overlay held it, and the overlay turns non-activatable (the pill never steals
 /// the focus again, until the next capture).
+/// The application a choice is remembered for: a saved action in real use only.
+fn remembered_process(process: Option<String>, instruction: bool, simulated: bool) -> Option<String> {
+    process.filter(|_| !instruction && !simulated)
+}
 #[tauri::command]
 fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String, action_id: String, instruction: Option<String>) -> Result<ExecutionInfo, String> {
     let (info, source, process) = {
@@ -1144,12 +1573,13 @@ fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String,
         let info = i.choose(&capture_id, &action_id, instruction.as_deref())?;
         (info, i.source_window, i.menu.as_ref().and_then(|menu| menu.process.clone()))
     };
-    host::set_menu_open(false, 0, 0);
+    if !menu_opening(&state) { host::set_menu_open(false, 0, 0); }
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, true);
     return_foreground(overlay, source);
-    // The memory per application (lot 4): a saved action only, never a free instruction.
-    if let Some(process) = process.filter(|_| instruction.is_none()) {
+    // The memory per application (lot 4): a saved action only, never a free instruction, and
+    // never in the demo or simulated modes (review n°5: they write no user data).
+    if let Some(process) = remembered_process(process, instruction.is_some(), state.simulated) {
         if let Ok(mut memory) = state.menu_memory.lock() {
             if memory.remember(&process, &info.action_id) { let _ = memory.save(); }
         }
@@ -1367,6 +1797,7 @@ fn start_drag(
             i.work = work;
             i.scale = scale;
             i.dragging = false;
+            i.shift = (0., 0.);
             i.size
         };
         let state = app.state::<AppState>();
@@ -1471,7 +1902,9 @@ fn position(
                 }
                 let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, extent, i.side);
                 i.side = Some(side);
-                (to_host(glass), s)
+                // Moved on purpose after a paste (`move_overlay`, lot 9): past the clamp.
+                let host = to_host(glass);
+                (Rect { x: host.x + i.shift.0, y: host.y + i.shift.1, ..host }, s)
             }
         };
         let apply_rect = i.last_overlay.as_ref().is_none_or(|last| last.0 != result.0);
@@ -1569,7 +2002,8 @@ fn watch_context(app: AppHandle) {
                     escape_was_down = false;
                     continue;
                 }
-                (i.source_window, i.source_rect, i.capture.clone(), i.size)
+                let applied = i.applied.as_ref().map(|a| (a.request_id.clone(), a.window, a.window_rect, a.located.clone(), a.undo));
+                (i.source_window, i.source_rect, i.capture.clone(), i.size, applied)
             };
             let fg = host::foreground();
             let ours = SURFACES.iter().any(|l| {
@@ -1583,18 +2017,56 @@ fn watch_context(app: AppHandle) {
                 let _ = dismiss(&app, &state);
             }
             escape_was_down = down;
+            // Review n°2 and n°6: the Îlot had the keyboard and the user went back to his document
+            // (or to another application): he left the menu, like a click outside it. Closed at
+            // once, nothing pasted, and the hook no longer takes his keys.
+            if leaves_menu(host::menu_open(), host::menu_focused(), fg, ours) {
+                let waiting = state.inner.lock().is_ok_and(|i| i.visible && i.menu.as_ref().is_some_and(|m| !m.chosen));
+                if waiting {
+                    let _ = dismiss(&app, &state);
+                    continue;
+                }
+            }
             // Every 420 ms; every 105 ms while the halo sweeps over the lines: a scroll or a
             // move must not leave it over other text for long.
-            let period = if halo::visible() { 3 } else { 12 };
+            // After a paste under the Îlot (lot 9) too: the pill and the marks stand on the
+            // new text.
+            let period = if halo::visible() || snapshot.4.is_some() { 3 } else { 12 };
             if ticks % period != 0 || state.demo {
                 continue;
             }
-            let Some(captured) = snapshot.2 else { continue };
-            if captured.public.anchor.is_none() {
+            if let Some((request_id, window, window_rect, located, undo)) = snapshot.4 {
+                // The caret after the pasted text is normal and keeps the pill; the window
+                // moving, another application in front, or the text scrolling or reflowing
+                // (its rectangles changed) hide pill and marks. The text no longer before the
+                // caret (a click elsewhere): Undo is withdrawn, the pill stays.
+                let moved = host::window_rect(window) != window_rect;
+                let switched = fg != window && !ours;
+                if moved || switched {
+                    let _ = dismiss(&app, &state);
+                    continue;
+                }
+                if let Some(located) = located.filter(|_| fg == window) {
+                    match pasted::relocate(&located) {
+                        Some(rects) if same_rects(&rects, &located.rects) => {}
+                        Some(_) => { let _ = dismiss(&app, &state); }
+                        None => lose_undo(&app, Some(&request_id), UndoLoss::CaretMoved, true),
+                    }
+                } else if !undo && halo::marking() {
+                    halo::leave(&app);
+                }
                 continue;
             }
-            let moved = host::window_rect(snapshot.0) != snapshot.1;
-            let switched = fg != snapshot.0 && !ours;
+            let Some(captured) = snapshot.2 else { continue };
+            // A capture without anchor (a copy, a selection without drawable rectangle) has no
+            // place to lose; its target is still checked while the source is in front (review n°1).
+            let anchored = captured.public.anchor.is_some();
+            // Once invalidated, a capture is not checked again (under the Îlot it keeps its anchor).
+            if captured.invalidated || (!anchored && captured.target.is_none()) {
+                continue;
+            }
+            let moved = anchored && host::window_rect(snapshot.0) != snapshot.1;
+            let switched = anchored && fg != snapshot.0 && !ours;
             let changed = fg == snapshot.0
                 && captured
                     .target
@@ -1603,31 +2075,30 @@ fn watch_context(app: AppHandle) {
             if moved || switched || changed {
                 halo::hide(&app);
                 let id = captured.public.id;
-                {
-                    let Ok(mut i) = state.inner.lock() else {
-                        continue;
-                    };
-                    if let Some(c) = i.capture.as_mut().filter(|c| c.public.id == id) {
-                        c.public.anchor = None;
-                        c.public.can_replace = false;
-                        c.target = None;
-                        c.invalidated = true;
-                    } else {
+                let outcome = match state.inner.lock() {
+                    Ok(mut i) => i.invalidate(&id),
+                    Err(_) => continue,
+                };
+                let redock = match outcome {
+                    Invalidated::Stale => continue,
+                    Invalidated::CloseMenu => {
+                        let _ = dismiss(&app, &state);
                         continue;
                     }
-                    i.side = None;
-                }
+                    Invalidated::Stay => false,
+                    Invalidated::Redock => true,
+                };
                 let _ = app.emit_to(
                     "overlay",
                     "target-invalidated",
                     TargetInvalidated {
                         capture_id: id,
-                        anchor_lost: true,
+                        anchor_lost: redock && anchored,
                         message: "La sélection a changé. Utilisez Copier.".into(),
                         code: ErrorKind::TargetChanged,
                     },
                 );
-                let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None);
+                if redock { let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None); }
             }
         }
     });
@@ -1676,8 +2147,10 @@ pub fn run() {
                 simulated,
             });
             // Commands may arrive as soon as the WebView loads. State must exist first.
+            // No browser accelerators in our pages (F5 reloads the overlay under the capture).
             for config in app.config().app.windows.clone() {
-                tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+                let window = tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+                browser_keys::disable(&window);
             }
             use tauri::tray::TrayIconBuilder;
             let menu = tray_text::menu(app.handle(), language)?;
@@ -1743,13 +2216,19 @@ pub fn run() {
             // The page may already listen (it asks `shortcut_status` at load anyway).
             emit_shortcut_statuses(app.handle());
             let keys = app.handle().clone();
+            let typed = app.handle().clone();
             host::install_keyboard_hook(move |key| {
-                // The keyboard fallback of the Îlot: only while its capture still waits.
+                // The keyboard fallback of the Îlot: only while its capture still waits, or held
+                // while a menu capture is being taken (review n°4 and n°7).
                 let state = keys.state::<AppState>();
-                let capture_id = state.inner.lock().ok().and_then(|i| i.menu.as_ref().filter(|menu| i.visible && !menu.chosen).map(|menu| menu.capture_id.clone()));
-                if let Some(capture_id) = capture_id {
+                let routed = state.inner.lock().ok().and_then(|mut i| i.route_menu_key(key));
+                if let Some((capture_id, key)) = routed {
                     let _ = keys.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
                 }
+            }, move |key| {
+                // A real key reached the source after the paste (lot 9): Undo is no longer safe.
+                let reason = if key == host::Typed::UndoKey { UndoLoss::UndoKey } else { UndoLoss::Typed };
+                lose_undo(&typed, None, reason, false);
             })?;
             watch_context(app.handle().clone());
             system_theme::watch(app.handle().clone());
@@ -1775,6 +2254,11 @@ pub fn run() {
             cancel_translation,
             copy_result,
             replace_result,
+            result_pill,
+            move_overlay,
+            highlight_changes,
+            clear_highlight,
+            undo_result,
             dismiss_overlay,
             complete_overlay_dismiss,
             open_settings,
@@ -1819,7 +2303,7 @@ mod tests {
     }
     fn menu_capture(i: &mut Inner, id: &str) {
         i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None, invalidated: false });
-        i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false });
+        i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false, invalidated: false });
         i.execution = None;
         i.visible = true;
     }
@@ -1885,6 +2369,143 @@ mod tests {
         assert!(i.choose("closing", "correct", None).is_err());
     }
     #[test]
+    fn a_key_typed_during_a_menu_capture_waits_for_its_id_and_is_dropped_without_one() {
+        let key = |name: &str| host::MenuKey { key: name.into(), shift: false };
+        let mut i = Inner::new(Settings::default());
+        // The press opened the scope; the capture is still being taken.
+        i.held_keys = Some(Vec::new());
+        assert_eq!(i.route_menu_key(key("f")), None, "held, never typed in the source");
+        menu_capture(&mut i, "menu");
+        assert_eq!(i.route_menu_key(key("Enter")), None, "still held until the release");
+        assert_eq!(i.release_held_keys(Some("menu")), vec![("menu".into(), key("f")), ("menu".into(), key("Enter"))]);
+        assert_eq!(i.route_menu_key(key("Tab")), None, "held meanwhile, after the first batch");
+        assert_eq!(i.release_held_keys(Some("menu")), vec![("menu".into(), key("Tab"))]);
+        assert!(i.release_held_keys(Some("menu")).is_empty());
+        assert!(i.held_keys.is_none());
+        assert_eq!(i.route_menu_key(key("1")), Some(("menu".into(), key("1"))), "then straight to the menu");
+        // No capture (nothing selected, an error): dropped, never replayed.
+        i.held_keys = Some(vec![key("f")]);
+        assert!(i.release_held_keys(None).is_empty());
+        assert!(i.held_keys.is_none());
+        // A capture whose menu no longer waits gets nothing either.
+        i.held_keys = Some(vec![key("f")]);
+        i.menu.as_mut().unwrap().chosen = true;
+        assert!(i.release_held_keys(Some("menu")).is_empty());
+        assert_eq!(i.route_menu_key(key("f")), None);
+        // The scope after a press without capture: never a menu scope over nothing.
+        assert_eq!(scope_after(false, false, true), ScopeAfter::Closed);
+        assert_eq!(scope_after(false, true, true), ScopeAfter::Closed);
+        assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
+        assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
+        assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
+    }
+    #[test]
+    fn a_refused_replacement_says_why_with_its_code() {
+        let target = |window| TargetIdentity { runtime_id: None, native_window: window, control: 0, selected_text: "Texte".into(), anchor: None, selection_len: 5, editable: true, check: types::TargetCheck::Uia };
+        let ready = || {
+            let mut i = Inner::new(Settings::default());
+            menu_capture(&mut i, "c");
+            i.capture.as_mut().unwrap().target = Some(target(7));
+            i.completed = Some(CompletedResult { execution: None, request_id: "r".into(), capture_id: "c".into(), source_text: String::new(), translated_text: String::new(), mode: Mode::Quality, complete: true });
+            i
+        };
+        let code = |(result, spent): (Result<TargetIdentity, AppError>, bool)| (result.err().map(|e| e.kind), spent);
+        // Another request than the completed one: nothing is spent.
+        assert_eq!(code(ready().replace_target("old", "c", |_| true)), (Some(ErrorKind::PasteBlocked), false));
+        // Another application in front: refused, and the capture can no longer be replaced.
+        let mut i = ready();
+        assert_eq!(code(i.replace_target("r", "c", |window| window == 8)), (Some(ErrorKind::TargetChanged), true));
+        assert!(!i.capture.as_ref().unwrap().public.can_replace);
+        assert_eq!(code(i.replace_target("r", "c", |_| true)), (Some(ErrorKind::TargetChanged), false), "spent once");
+        // The source (or one of our windows) in front: the target, once.
+        let mut i = ready();
+        let (result, spent) = i.replace_target("r", "c", |window| window == 7);
+        assert_eq!((result.map(|t| t.native_window).ok(), spent), (Some(7), true));
+    }
+    #[test]
+    fn an_invalidated_capture_keeps_its_place_under_the_ilot_and_docks_under_v4() {
+        let anchor = Rect { x: 10., y: 20., width: 30., height: 16. };
+        let chosen = |ui: UiVersion| {
+            let mut i = Inner::new(Settings { ui_version: ui, ..Settings::default() });
+            menu_capture(&mut i, "c");
+            i.capture.as_mut().unwrap().public.anchor = Some(anchor);
+            i.side = Some(PlacementSide::Below);
+            i.choose("c", "correct", None).unwrap();
+            i
+        };
+        // The working pill under the Îlot: it stays where it is, anchor and side kept.
+        let mut i = chosen(UiVersion::Ilot);
+        assert_eq!(i.invalidate("c"), Invalidated::Stay);
+        let c = i.capture.as_ref().unwrap();
+        assert_eq!((c.public.anchor, c.public.can_replace, c.target.is_none(), c.invalidated), (Some(anchor), false, true, true));
+        assert_eq!(i.side, Some(PlacementSide::Below));
+        assert_eq!(i.invalidate("c"), Invalidated::Stale, "checked once");
+        // Under v4 the glass loses its anchor and docks at the bottom, as in 0.4.
+        let mut i = chosen(UiVersion::V4);
+        assert_eq!(i.invalidate("c"), Invalidated::Redock);
+        assert_eq!((i.capture.as_ref().unwrap().public.anchor, i.side), (None, None));
+        // A menu still waiting closes; another capture is stale.
+        let mut i = Inner::new(Settings::default());
+        menu_capture(&mut i, "m");
+        assert_eq!(i.invalidate("other"), Invalidated::Stale);
+        assert_eq!(i.invalidate("m"), Invalidated::CloseMenu);
+        assert!(i.menu.as_ref().unwrap().invalidated);
+    }
+    #[test]
+    fn an_overlay_page_loaded_again_under_a_shown_capture_is_told_apart() {
+        let mut i = Inner::new(Settings::default());
+        assert_eq!(i.page_ready(), (None, false), "the first load");
+        menu_capture(&mut i, "menu");
+        assert!(i.page_ready().1, "F5 while the Îlot is shown");
+        i.visible = false;
+        assert!(!i.page_ready().1, "a reload with nothing on screen");
+        // Before the first load, the capture waits for the page and is not a reload.
+        let mut first = Inner::new(Settings::default());
+        menu_capture(&mut first, "menu");
+        first.pending_capture = first.capture.as_ref().map(|c| c.public.clone());
+        let (pending, reloaded) = first.page_ready();
+        assert_eq!((pending.map(|c| c.id), reloaded), (Some("menu".to_string()), false));
+    }
+    #[test]
+    fn a_choice_is_remembered_in_real_use_only() {
+        let chrome = || Some("chrome.exe".to_string());
+        assert_eq!(remembered_process(chrome(), false, false).as_deref(), Some("chrome.exe"));
+        assert_eq!(remembered_process(chrome(), true, false), None, "a free instruction");
+        // Review n°5: --demo-selection and --simulate-inference write no menu-memory.json.
+        assert_eq!(remembered_process(chrome(), false, true), None);
+        assert_eq!(remembered_process(None, false, false), None);
+    }
+    #[test]
+    fn only_a_menu_that_still_waits_takes_the_keyboard() {
+        // Review n°3: a double press chooses while the Îlot is still being shown.
+        let mut i = Inner::new(Settings::default());
+        assert!(!i.menu_waits("menu"), "no menu");
+        menu_capture(&mut i, "menu");
+        assert!(i.menu_waits("menu"));
+        assert!(!i.menu_waits("other"), "another capture");
+        i.choose("menu", "correct", None).unwrap();
+        assert!(!i.menu_waits("menu"), "chosen: the source keeps the keyboard");
+        menu_capture(&mut i, "next");
+        i.menu.as_mut().unwrap().invalidated = true;
+        assert!(!i.menu_waits("next"), "invalidated");
+    }
+    #[test]
+    fn a_menu_left_or_invalidated_closes_and_never_runs_a_choice() {
+        // The Îlot had the keyboard; the user clicked back into the source: he left the menu.
+        assert!(leaves_menu(true, true, 10, false));
+        // Still in the Îlot, or the activation was refused (the hook's fallback), or closed.
+        assert!(!leaves_menu(true, true, 10, true));
+        assert!(!leaves_menu(true, false, 10, false));
+        assert!(!leaves_menu(false, true, 10, false));
+        assert!(!leaves_menu(true, true, 0, false));
+        // The watcher dropped the selection of a menu that still waited: no choice runs.
+        let mut i = Inner::new(Settings::default());
+        menu_capture(&mut i, "menu");
+        i.menu.as_mut().unwrap().invalidated = true;
+        assert!(i.choose("menu", "correct", None).is_err());
+        assert!(!i.menu.as_ref().unwrap().chosen);
+    }
+    #[test]
     fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {
         let regions = [
             SurfaceRegion { x: 92., y: 500., width: 300., height: 200., radius: 28. },
@@ -1927,6 +2548,35 @@ mod tests {
         assert_eq!(refusal_state("Unable to register hotkey: Unknown VKCode for F24"), BindingState::Failed);
         let json = serde_json::to_value(shortcut_statuses(&settings, &refused)).unwrap();
         assert_eq!(json[0], serde_json::json!({"bindingId": menu.id, "shortcut": menu.shortcut, "state": "taken"}));
+    }
+    #[test]
+    fn the_pill_follows_the_last_line_and_a_scrolled_text_is_told_apart() {
+        let first = Rect { x: 100., y: 200., width: 600., height: 20. };
+        let last = Rect { x: 100., y: 220., width: 240., height: 20. };
+        let run = Rect { x: 360., y: 221., width: 80., height: 18. };
+        assert_eq!(last_line(&[first, last, run]), Some(run), "the rightmost run of the lowest row");
+        assert_eq!(last_line(&[last, first]), Some(last));
+        assert_eq!(last_line(&[]), None);
+        // Within a pixel the text stayed; a scroll moves every run.
+        assert!(same_rects(&[first, last], &[Rect { x: 100.5, ..first }, last]));
+        assert!(!same_rects(&[first, last], &[Rect { y: 180., ..first }, Rect { y: 200., ..last }]));
+        assert!(!same_rects(&[first], &[first, last]));
+    }
+    #[test]
+    fn the_result_and_undo_events_carry_rectangles_booleans_and_codes_never_text() {
+        let delivery = ResultDelivery { request_id: "r".into(), status: DeliveryStatus::Applied, confirmed: true, message: "Sélection remplacée.".into(), code: None, pasted_rects: Vec::new(), undoable: false };
+        let json = serde_json::to_value(&delivery).unwrap();
+        assert!(json.get("pastedRects").is_none(), "absent when the pasted text was not found");
+        assert_eq!(json["undoable"], false);
+        let line = Rect { x: 1., y: 2., width: 3., height: 4. };
+        let json = serde_json::to_value(ResultDelivery { pasted_rects: vec![line], undoable: true, ..delivery }).unwrap();
+        assert_eq!(json["pastedRects"], serde_json::json!([{"x": 1., "y": 2., "width": 3., "height": 4.}]));
+        assert_eq!(serde_json::to_value(UndoState { request_id: "r".into(), available: false, reason: UndoLoss::UndoKey }).unwrap(), serde_json::json!({"requestId": "r", "available": false, "reason": "undo_key"}));
+        let refused = UndoOutcome { request_id: "r".into(), status: UndoStatus::Refused, confirmed: false, message: "m".into(), code: Some(ErrorKind::TargetChanged) };
+        let json = serde_json::to_value(refused).unwrap();
+        assert_eq!((json["status"].as_str(), json["code"].as_str()), (Some("refused"), Some("target_changed")));
+        let target = PillTarget { x: 1., y: 2., side: PillSide::Below, inside: true, estimated: false, clear: true };
+        assert_eq!(serde_json::to_value(target).unwrap()["side"], "below");
     }
     #[test]
     fn stale_cancel_preserves_current() {

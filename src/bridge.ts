@@ -1,10 +1,10 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Rect, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Rect, Refusal, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status' | 'undo-state';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -33,6 +33,11 @@ function demoTranslation(text: string, actionId: string) {
 }
 
 const azertyAltGr: Record<string, string> = { e: '€', '2': '~', '3': '#', '4': '{', '5': '[', '6': '|', '7': '`', '8': '\\', '9': '^', '0': '@', bracketleft: ']', equal: '}' };
+
+// A `{message, code}` refusal (replace_result) read as its message, for the callers of 0.4.
+function refusalMessage(reason: unknown): unknown {
+  return typeof reason === 'object' && reason !== null && typeof (reason as Refusal).message === 'string' ? (reason as Refusal).message : reason;
+}
 
 async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (native) return tauriInvoke<T>(name, args);
@@ -92,6 +97,10 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   if (name === 'shortcut_status') return demoSettings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: b.enabled ? 'registered' : 'disabled' })) satisfies ShortcutStatus[] as T;
   if (name === 'dismiss_overlay') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); emit('overlay-dismiss-requested', { captureId: demoCapture.id }); return undefined as T; }
   if (name === 'cancel_translation') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); return undefined as T; }
+  // Lot 9: the preview pastes nothing, so there is no text to stand under or to mark; Undo has nothing to read back.
+  if (name === 'result_pill') throw 'Aperçu : aucun texte collé.';
+  if (name === 'highlight_changes') return { ranges: 0, lines: 0 } satisfies HighlightResult as T;
+  if (name === 'undo_result') return { requestId: String(args?.requestId ?? ''), status: 'undone', confirmed: false, message: 'Démo : remplacement annulé.' } satisfies UndoOutcome as T;
   return undefined as T;
 }
 
@@ -125,7 +134,7 @@ export const bridge = {
   translate: (request: TranslationRequest) => command<void>('translate', { request }),
   cancel: (requestId: string) => command<void>('cancel_translation', { requestId }),
   copy: (requestId: string) => command<void>('copy_result', { requestId }),
-  replace: (requestId: string) => command<void>('replace_result', { requestId }),
+  replace: (requestId: string) => command<void>('replace_result', { requestId }).catch((reason: unknown) => { throw refusalMessage(reason); }),
   dismiss: () => command<void>('dismiss_overlay'),
   completeDismiss: (captureId: string) => command<void>('complete_overlay_dismiss', { captureId }),
   // field (lot 10): the Settings open on that field (Rust's side comes with lot 10).
@@ -179,9 +188,19 @@ export const bridge = {
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
   // Lot 10: the state of every binding (a chord another application holds is 'taken').
   shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
-  // Lot 9 (native side, not in the contract yet): undo a pasted result, after revalidation. null
-  // while Rust offers nothing: the Îlot then shows the check alone. When the command lands, this
-  // is the one line to change, e.g. `(requestId: string) => command<void>('undo_result', { requestId })`.
-  undoResult: null as ((requestId: string) => Promise<void>) | null,
+  // Lot 9, after a paste under the Îlot (docs/BRIDGE.md « the result »): where the pill goes for a
+  // pill of this size; moving the window by (dx, dy) logical pixels at a moment nothing animates;
+  // the changed words marked in the halo until clearHighlight.
+  resultPill: (requestId: string, width: number, height: number) => command<PillTarget>('result_pill', { requestId, width, height }),
+  moveOverlay: (captureId: string, dx: number, dy: number) => command<void>('move_overlay', { captureId, dx, dy }),
+  highlightChanges: (requestId: string, ranges: TextRange[]) => command<HighlightResult>('highlight_changes', { requestId, ranges }),
+  clearHighlight: (requestId: string) => command<void>('clear_highlight', { requestId }),
+  // Lot 9: undo a pasted result, after revalidation. The native command exists (`undo_result` →
+  // UndoOutcome: `undone`, `refused` or `failed`, with a code); null keeps the Îlot's check alone
+  // until the front handles those outcomes. Then: `(requestId: string) => command<UndoOutcome>('undo_result', { requestId })`.
+  undoResult: null as ((requestId: string) => Promise<UndoOutcome>) | null,
+  // `replace_result` with its refusal as Rust sends it, `{message, code}` (Refusal): the code says
+  // why (target_changed, keys_held, not_editable, paste_blocked); `replace` keeps the message only.
+  replaceResult: (requestId: string) => command<void>('replace_result', { requestId }),
 };
 

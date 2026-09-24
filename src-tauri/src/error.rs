@@ -45,6 +45,11 @@ pub enum ErrorKind {
     ProtectedField,
     /// The shortcut keys were still held when the paste or the undo had to type.
     KeysHeld,
+    /// A shortcut pressed while the Settings window is in front: nothing of another
+    /// application is selected (a capture notice).
+    SettingsOpen,
+    /// The tray's « Revoir la dernière traduction » with no result of the last ten minutes.
+    NothingRecent,
     /// Anything unexpected on our side.
     Internal,
 }
@@ -75,6 +80,20 @@ impl std::fmt::Display for AppError {
 impl From<AppError> for String {
     fn from(error: AppError) -> Self {
         error.message
+    }
+}
+
+/// A command refused with its code (`replace_result`), sent to the frontend as
+/// `{message, code}` like the events of lot 10: the French message of 0.4 and the code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Refusal {
+    pub message: String,
+    pub code: ErrorKind,
+}
+
+impl From<AppError> for Refusal {
+    fn from(error: AppError) -> Self {
+        Self { message: error.message, code: error.kind }
     }
 }
 
@@ -112,11 +131,18 @@ mod tests {
             (ErrorKind::TargetChanged, "target_changed"), (ErrorKind::NotEditable, "not_editable"), (ErrorKind::TooLong, "too_long"),
             (ErrorKind::Cancelled, "cancelled"), (ErrorKind::ServerError, "server_error"), (ErrorKind::NoSelection, "no_selection"),
             (ErrorKind::ProtectedField, "protected_field"), (ErrorKind::KeysHeld, "keys_held"), (ErrorKind::Internal, "internal"),
+            (ErrorKind::SettingsOpen, "settings_open"), (ErrorKind::NothingRecent, "nothing_recent"),
         ];
         for (kind, name) in codes {
             assert_eq!(serde_json::to_value(kind).unwrap(), serde_json::json!(name));
             assert_eq!(serde_json::from_value::<ErrorKind>(serde_json::json!(name)).unwrap(), kind);
         }
+    }
+
+    #[test]
+    fn a_refused_command_carries_its_message_and_its_code() {
+        let refusal = Refusal::from(AppError::new(ErrorKind::KeysHeld, "Relâchez les touches du raccourci, puis réessayez depuis la bulle."));
+        assert_eq!(serde_json::to_value(&refusal).unwrap(), serde_json::json!({"message": "Relâchez les touches du raccourci, puis réessayez depuis la bulle.", "code": "keys_held"}));
     }
 
     #[test]

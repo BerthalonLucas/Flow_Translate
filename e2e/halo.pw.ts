@@ -9,7 +9,7 @@ const lines = [
   { x: 12, y: 32, width: 412, height: 22 },
   { x: 12, y: 54, width: 96, height: 20 },
 ];
-const run = (generation: number, phase: HaloEvent['phase'] = 'work'): HaloEvent => phase === 'work'
+const run = (generation: number, phase: HaloEvent['phase'] = 'work'): HaloEvent => phase === 'work' || phase === 'marks'
   ? { generation, phase, lines, width: 436, height: 86 }
   : { generation, phase, lines: [], width: 0, height: 0 };
 const send = (page: Page, event: HaloEvent) => page.evaluate(event => (window as unknown as { nativeFixture: { halo: (event: HaloEvent) => Promise<void> } }).nativeFixture.halo(event), event);
@@ -107,4 +107,54 @@ test('reduced animations: a fixed veil over the same strip, still after 250 ms',
   // The second line shows the strip from 380 px on: continuous with the first.
   await expect(line).toHaveCSS('background-position', '-380px 0px');
   await expect(line).toHaveCSS('background-image', 'linear-gradient(100deg, rgba(141, 159, 255, 0.32), rgba(188, 130, 243, 0.32) 50%, rgba(255, 186, 113, 0.32))');
+});
+
+test('marks (lot 9): the changed words at once, 260 ms in, held, then 900 ms out', async ({ page }) => {
+  await openHalo(page);
+  const sent = await page.evaluate(() => performance.now());
+  await send(page, run(1, 'marks'));
+  const halo = page.locator('.halo');
+  await expect(page.locator('.halo-mark')).toHaveCount(3);
+  await expect(page.locator('.halo-line')).toHaveCount(0);
+  await expect(halo).toHaveAttribute('data-kind', 'marks');
+  await expect(halo).toHaveAttribute('data-state', 'shown');
+  // No 250 ms wait as for the sweep: the marks follow the paste.
+  expect(await page.evaluate(start => performance.now() - start, sent)).toBeLessThan(240);
+  for (const [index, line] of lines.entries()) {
+    const mark = page.locator('.halo-mark').nth(index);
+    expect(await mark.boundingBox()).toEqual({ x: line.x, y: line.y, width: line.width, height: line.height });
+    await expect(mark).toHaveCSS('border-radius', '3px');
+    await expect(mark).toHaveCSS('background-color', 'rgba(141, 159, 255, 0.32)');
+    await expect(mark).toHaveCSS('animation-name', 'halo-mark-in');
+    await expect(mark).toHaveCSS('animation-duration', '0.26s');
+    await expect(mark).toHaveCSS('animation-timing-function', 'ease-out');
+  }
+  await expect(halo).toHaveCSS('opacity', '1');
+  // Held while Undo lasts: still there a second later.
+  await page.waitForTimeout(1000);
+  await expect(halo).toHaveAttribute('data-state', 'shown');
+  await expect(halo).toHaveCSS('opacity', '1');
+  const left = await page.evaluate(() => performance.now());
+  await send(page, run(1, 'leave'));
+  await expect(halo).toHaveAttribute('data-state', 'leaving');
+  await expect(halo).toHaveCSS('transition-duration', '0.9s');
+  await expect(halo).toHaveCSS('transition-timing-function', 'ease-out');
+  await expect(halo).toHaveCSS('opacity', '0');
+  expect(await page.evaluate(start => performance.now() - start, left)).toBeGreaterThanOrEqual(850);
+  await send(page, run(2, 'clear'));
+  await expect(page.locator('.halo-mark')).toHaveCount(0);
+});
+
+test('marks under reduced animations: shown and removed without animation', async ({ page }) => {
+  await openHalo(page);
+  await page.evaluate(() => (window as unknown as { nativeFixture: { settings: (next: Record<string, unknown>) => Promise<void> } }).nativeFixture.settings({ motion: 'reduced' }));
+  await expect(page.locator('html')).toHaveAttribute('data-motion', 'reduced');
+  await send(page, run(1, 'marks'));
+  const mark = page.locator('.halo-mark').first();
+  await expect(mark).toHaveCSS('animation-name', 'none');
+  await expect(mark).toHaveCSS('opacity', '1');
+  await send(page, run(1, 'leave'));
+  const halo = page.locator('.halo');
+  await expect(halo).toHaveCSS('transition-duration', '0s');
+  await expect(halo).toHaveCSS('opacity', '0', { timeout: 100 });
 });

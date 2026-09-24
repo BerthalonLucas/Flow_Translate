@@ -1,5 +1,5 @@
 //! The `halo` window (« Îlot », lot 6): the light sweep over the selection's lines while
-//! an action works. Transparent, never hit (`WS_EX_TRANSPARENT | WS_EX_LAYERED` set once,
+//! an action works, then (lot 9) the marks on the changed words while Undo is offered. Transparent, never hit (`WS_EX_TRANSPARENT | WS_EX_LAYERED` set once,
 //! outside the 8 ms hit tester), never activated, above the source and right under the
 //! overlay. Rust places it on the lines of the capture (`selection_lines`) and hands the
 //! page their logical rectangles; the page only draws. Every window call runs on the main
@@ -14,14 +14,21 @@ use tauri::{AppHandle, Emitter, Manager};
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static VISIBLE: AtomicBool = AtomicBool::new(false);
-/// The page fades out in 150 ms; the window hides once that is over.
+/// What the window shows: the marks of lot 9 (true) or the sweep.
+static MARKS: AtomicBool = AtomicBool::new(false);
+/// A `leave` is under way for the current generation: a second one sends nothing.
+static LEAVING: AtomicBool = AtomicBool::new(false);
+/// The sweep fades out in 150 ms, the marks in 900 ms; the window hides once that is over.
 const LEAVE: Duration = Duration::from_millis(200);
+const LEAVE_MARKS: Duration = Duration::from_millis(950);
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum HaloPhase {
     /// The work started: draw the lines (the page waits 250 ms, like the orb).
     Work,
+    /// The result was pasted (lot 9): mark the changed words (260 ms in), held until `leave`.
+    Marks,
     /// The response arrived: fade out.
     Leave,
     /// Hidden: draw nothing.
@@ -54,6 +61,16 @@ pub fn visible() -> bool {
 /// work that starts. Placed at the DPI of the screen under the lines; when Windows gives
 /// the window another one (lines across two screens), placed again at the window's own.
 pub fn work(app: &AppHandle, lines: &[Rect]) {
+    show(app, lines, HaloPhase::Work);
+}
+
+/// Marks the changed words of a paste (lot 9) over `lines` (physical), until `leave` (900 ms
+/// fade) or `hide`.
+pub fn marks(app: &AppHandle, lines: &[Rect]) {
+    show(app, lines, HaloPhase::Marks);
+}
+
+fn show(app: &AppHandle, lines: &[Rect], phase: HaloPhase) {
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let Some(union) = bounds(lines) else { return hide(app) };
     let (_, scale, _) = host::monitor_at(Some(union));
@@ -71,20 +88,29 @@ pub fn work(app: &AppHandle, lines: &[Rect]) {
             if host::place_below(&halo, frame.window, overlay).is_err() { return; }
         }
         VISIBLE.store(true, Ordering::Release);
-        let _ = handle.emit_to("halo", "halo", HaloEvent { generation, phase: HaloPhase::Work, lines: frame.lines, width: frame.width, height: frame.height });
+        LEAVING.store(false, Ordering::Release);
+        MARKS.store(phase == HaloPhase::Marks, Ordering::Release);
+        let _ = handle.emit_to("halo", "halo", HaloEvent { generation, phase, lines: frame.lines, width: frame.width, height: frame.height });
     });
 }
 
-/// The response arrived (a result or an error): the page fades, then the window hides.
+/// The response arrived (a result or an error), or Undo ended (the marks): the page fades,
+/// then the window hides.
 pub fn leave(app: &AppHandle) {
-    if !visible() { return; }
+    if !visible() || LEAVING.swap(true, Ordering::AcqRel) { return; }
     let generation = GENERATION.load(Ordering::Acquire);
+    let delay = if MARKS.load(Ordering::Acquire) { LEAVE_MARKS } else { LEAVE };
     let _ = app.emit_to("halo", "halo", HaloEvent::empty(generation, HaloPhase::Leave));
     let handle = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(LEAVE);
+        std::thread::sleep(delay);
         hide_window(&handle, generation);
     });
+}
+
+/// The marks of lot 9 are shown (not fading, not hidden).
+pub fn marking() -> bool {
+    visible() && MARKS.load(Ordering::Acquire) && !LEAVING.load(Ordering::Acquire)
 }
 
 /// Hides at once: dismissal, a new capture, a cancelled request, a selection that moved,
