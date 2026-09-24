@@ -10,7 +10,7 @@ export type Replay = { requestId: string; translatedText: string; mode: Mode };
 export type CaptureOrigin = 'uia' | 'copy' | 'fresh' | 'replay' | 'demo';
 // menu: a `menu` shortcut under the Îlot (uiVersion 'ilot'): no execution until `choose_action`, the frontend opens the menu.
 // The halo window (lot 6): the lines of the selection in logical pixels relative to the window (width × height); work draws them after 250 ms, leave fades them, clear removes them.
-export type HaloPhase = 'work' | 'leave' | 'clear';
+export type HaloPhase = 'work' | 'leave' | 'clear' | 'marks';
 export type HaloEvent = { generation: number; phase: HaloPhase; lines: Rect[]; width: number; height: number };
 // selectionRects: the lines of a UI Automation selection, physical screen pixels like anchor (lot 5); Rust places from them, the frontend never does.
 export type Capture = { id: string; text: string; source: 'selection' | 'clipboard'; origin?: CaptureOrigin; canReplace: boolean; anchor: Rect | null; selectionRects?: Rect[]; screen?: Screen; replay?: Replay; execution?: ExecutionInfo; menu?: MenuInfo };
@@ -78,7 +78,7 @@ export type SettingsField = 'menuShortcut' | ProfileField | `${Mode}.${ProfileFi
 export type SettingsFocus = { field: SettingsField };
 export type ExecutionInfo = { actionId: string; actionName: string; outputMode: OutputMode; mode: Mode };
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
-export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string; code?: ErrorCode };
+export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string; code?: ErrorCode; pastedRects?: Rect[]; undoable?: boolean };
 // Lot 10: what failed, beside the French message of 0.4 (translation error, result-delivery
 // fallback, capture-notice, target-invalidated, check_connection). The list of src/result/errors.ts;
 // an unknown code reads as 'internal'. Never any text of the server or of the user.
@@ -87,3 +87,16 @@ export type ErrorCode = 'unreachable' | 'timeout' | 'unauthorized' | 'model_not_
 // Lot 10: whether each binding's chord works (`shortcut_status`, event `shortcut-status`); taken: another application holds it.
 export type BindingState = 'registered' | 'taken' | 'failed' | 'disabled';
 export type ShortcutStatus = { bindingId: string; shortcut: string; state: BindingState };
+// Lot 9, after a paste under the Îlot: where the pill goes (`result_pill`), logical pixels relative to
+// the overlay window; inside false: `move_overlay` first. estimated: the pasted text was not found.
+export type PillSide = 'below' | 'above' | 'margin';
+export type PillTarget = { x: number; y: number; side: PillSide; inside: boolean; estimated: boolean; clear: boolean };
+// Lot 9: the changed words, UTF-16 offsets of the result (end excluded), and what the halo drew of them.
+export type TextRange = { start: number; end: number };
+export type HighlightResult = { ranges: number; lines: number };
+// Lot 9, `undo_result`: undone (confirmed when read back), refused (nothing sent), failed (sent, the original did not come back).
+export type UndoStatus = 'undone' | 'refused' | 'failed';
+export type UndoOutcome = { requestId: string; status: UndoStatus; confirmed: boolean; message: string; code?: ErrorCode };
+// Lot 9, event `undo-state`: Undo withdrawn; typed: a key reached the source; undo_key: the user's own Ctrl+Z; caret_moved: the text is no longer before the caret.
+export type UndoLoss = 'typed' | 'undo_key' | 'caret_moved';
+export type UndoState = { requestId: string; available: false; reason: UndoLoss };

@@ -118,6 +118,31 @@ docs/UI-DECISIONS.md. Rien n’est coché tant que la version n’est pas passé
 - [ ] Application sans UI Automation ou élevée : repli sûr par la copie synthétique, aucune
   injection privilégiée.
 
+### Résultat et Annuler dans Word et Outlook (lot 9, manuel, Lucas)
+
+Word et Outlook sont absents du poste de test : ces points se vérifient à la main, sur un texte
+de démonstration (jamais un document réel), une fois avec `undoStrategy` sur `keystroke`
+(défaut, Ctrl+Z) puis sur `repaste` (recoller l’original).
+
+- [ ] Word, une phrase au milieu d’un paragraphe de plusieurs lignes, Îlot puis « Corriger » :
+  le texte est remplacé ; la pilule se pose sous la dernière ligne du nouveau texte, son bord
+  droit sur la fin de cette ligne, sans toucher aucune ligne ; en bas de page, au-dessus de la
+  première ligne ; avec « dans la marge », à droite de la colonne.
+- [ ] Les mots changés sont surlignés en bleu pâle tant qu’Annuler est offert, puis s’effacent
+  en fondu ; « Traduire » surligne le bloc entier.
+- [ ] Annuler : l’original revient à l’identique (accents, espaces insécables, retours à la
+  ligne, mise en forme), la pilule affiche « Annulé ». En `repaste`, le presse-papiers est
+  celui d’avant (le coller ailleurs pour le vérifier).
+- [ ] Après le collage, une lettre tapée dans le document : Annuler disparaît et le surlignage
+  s’efface ; le Ctrl+Z de l’utilisateur annule le collage lui-même et retire aussi Annuler.
+- [ ] Après le collage, un clic ailleurs dans le texte : Annuler disparaît, la pilule reste ;
+  un défilement ou un déplacement de la fenêtre : pilule et surlignage disparaissent.
+- [ ] Word, texte dans un tableau puis dans une liste à puces : la pilule reste hors du texte.
+  Si le texte collé n’est pas retrouvé (correction automatique de Word après le collage,
+  par exemple), ni surlignage ni Annuler : comportement attendu, à noter avec l’application.
+- [ ] Outlook, corps d’un nouveau message puis d’une réponse, thème clair et sombre : mêmes
+  points.
+
 ### Général
 
 - [ ] Au repos : aucune fenêtre ni bouton de barre des tâches, seulement l’icône de

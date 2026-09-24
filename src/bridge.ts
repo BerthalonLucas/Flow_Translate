@@ -1,10 +1,10 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status' | 'undo-state';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -92,6 +92,10 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   if (name === 'shortcut_status') return demoSettings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: b.enabled ? 'registered' : 'disabled' })) satisfies ShortcutStatus[] as T;
   if (name === 'dismiss_overlay') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); emit('overlay-dismiss-requested', { captureId: demoCapture.id }); return undefined as T; }
   if (name === 'cancel_translation') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); return undefined as T; }
+  // Lot 9: the preview pastes nothing, so there is no text to stand under or to mark; Undo has nothing to read back.
+  if (name === 'result_pill') throw 'Aperçu : aucun texte collé.';
+  if (name === 'highlight_changes') return { ranges: 0, lines: 0 } satisfies HighlightResult as T;
+  if (name === 'undo_result') return { requestId: String(args?.requestId ?? ''), status: 'undone', confirmed: false, message: 'Démo : remplacement annulé.' } satisfies UndoOutcome as T;
   return undefined as T;
 }
 
@@ -168,5 +172,13 @@ export const bridge = {
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
   // Lot 10: the state of every binding (a chord another application holds is 'taken').
   shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
+  // Lot 9, after a paste under the Îlot (docs/BRIDGE.md « the result »): where the pill goes for a
+  // pill of this size; moving the window by (dx, dy) logical pixels at a moment nothing animates;
+  // the changed words marked in the halo until clearHighlight; Undo, once.
+  resultPill: (requestId: string, width: number, height: number) => command<PillTarget>('result_pill', { requestId, width, height }),
+  moveOverlay: (captureId: string, dx: number, dy: number) => command<void>('move_overlay', { captureId, dx, dy }),
+  highlightChanges: (requestId: string, ranges: TextRange[]) => command<HighlightResult>('highlight_changes', { requestId, ranges }),
+  clearHighlight: (requestId: string) => command<void>('clear_highlight', { requestId }),
+  undoResult: (requestId: string) => command<UndoOutcome>('undo_result', { requestId }),
 };
 

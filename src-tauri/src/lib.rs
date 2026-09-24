@@ -10,6 +10,7 @@ mod history;
 mod host;
 mod inference;
 mod menu_memory;
+mod pasted;
 mod placement;
 mod selection_lines;
 mod settings;
@@ -103,6 +104,30 @@ struct Inner {
     /// The last complete result, kept ten minutes after its glass closed so the tray
     /// can show it again (« Revoir la dernière traduction »).
     last_result: Option<(CompletedResult, std::time::Instant)>,
+    /// The replacement the Îlot's pill stands under (lot 9), until the next capture or the
+    /// dismissal.
+    applied: Option<Applied>,
+    /// How far `move_overlay` moved the anchored window (physical pixels), kept by `position`.
+    shift: (f64, f64),
+}
+/// A replacement under the Îlot (lot 9): where the result went, what it replaced, the pasted
+/// text as UI Automation found it. Only Rust's memory holds these texts: nothing emits or
+/// logs them, the frontend gets rectangles and booleans.
+struct Applied {
+    request_id: String,
+    window: isize,
+    window_rect: Option<Rect>,
+    control: isize,
+    runtime_id: Option<Vec<i32>>,
+    original: String,
+    pasted: String,
+    /// None when it could not be found (or no longer can): no Undo, an estimated place.
+    located: Option<pasted::Located>,
+    /// The replaced selection's lines and anchor, for that estimate.
+    old_lines: Vec<Rect>,
+    anchor: Option<Rect>,
+    /// Undo is still offered: once per replacement, withdrawn by a key in the source.
+    undo: bool,
 }
 // Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
 #[derive(Clone, Copy, Debug)]
@@ -146,6 +171,8 @@ impl Inner {
             measured: false,
             notice_generation: 0,
             last_result: None,
+            applied: None,
+            shift: (0., 0.),
         }
     }
     /// Sets the result aside for the tray before the glass state forgets it.
@@ -409,6 +436,7 @@ fn store_capture(
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, false);
     halo::hide(app);
+    host::disarm_undo_watch();
     let is_menu = menu.is_some();
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
@@ -431,6 +459,8 @@ fn store_capture(
         i.dragging = false;
         i.presentation = Presentation::Anchored;
         i.regions.clear();
+        i.applied = None;
+        i.shift = (0., 0.);
         i.pending_dismiss = None;
         i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
         i.last_overlay = None;
@@ -888,10 +918,41 @@ fn schedule_auto_delivery(app: &AppHandle) {
         let outcome = target.as_ref().ok_or_else(|| nothing_to_paste(invalidated))
             .and_then(|target| if fg != target.native_window && !ours { Err(AppError::new(ErrorKind::TargetChanged, "La fenêtre source a changé; remplacement refusé.")) } else { Ok(target) })
             .and_then(|target| capture::paste(target, &result.translated_text, true));
+        // Under the Îlot (lot 9): the pasted text is found at once, still under the lock (no
+        // new capture in between), for the pill's place, the marks and Undo.
+        let applied = match (&outcome, &target) {
+            (Ok(_), Some(target)) if i.settings.ui_version == UiVersion::Ilot => {
+                let located = locate_pasted(&result.translated_text, target.native_window);
+                let old = i.capture.as_ref().filter(|c| c.public.id == result.capture_id).map(|c| (c.public.selection_rects.clone(), c.public.anchor));
+                let (old_lines, anchor) = old.unwrap_or_default();
+                Some(Applied {
+                    request_id: result.request_id.clone(),
+                    window: target.native_window,
+                    window_rect: host::window_rect(target.native_window),
+                    control: target.control,
+                    runtime_id: target.runtime_id.clone(),
+                    original: target.selected_text.clone(),
+                    pasted: result.translated_text.clone(),
+                    undo: located.is_some() && i.settings.after_replace.undo,
+                    located,
+                    old_lines,
+                    anchor,
+                })
+            }
+            _ => None,
+        };
+        let pasted_rects = applied.as_ref().and_then(|a| a.located.as_ref()).map(|l| l.lines.clone()).unwrap_or_default();
+        let undoable = applied.as_ref().is_some_and(|a| a.undo);
+        if let Some(applied) = applied {
+            if applied.undo { host::arm_undo_watch(applied.window); }
+            i.applied = Some(applied);
+        }
         let capture_id = result.capture_id.clone();
         drop(i);
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
         let _ = app.emit_to("overlay", "result-delivery", ResultDelivery {
+            pasted_rects,
+            undoable,
             request_id: result.request_id.clone(),
             status: if outcome.is_ok() { DeliveryStatus::Applied } else { DeliveryStatus::Fallback },
             confirmed: outcome.as_ref().is_ok_and(|d| d.confirmed),
@@ -909,6 +970,184 @@ fn schedule_auto_delivery(app: &AppHandle) {
 /// written (`not_editable`: a console, a password field, a copy the user made himself).
 fn nothing_to_paste(invalidated: bool) -> AppError {
     AppError::new(if invalidated { ErrorKind::TargetChanged } else { ErrorKind::NotEditable }, "Aucune sélection à remplacer; le résultat reste dans la bulle.")
+}
+
+/// The pasted text before the caret (lot 9), tried three times over about 200 ms: the paste
+/// is confirmed from the field's text, the caret and the layout may follow a moment later.
+fn locate_pasted(value: &str, window: isize) -> Option<pasted::Located> {
+    for attempt in 0..3 {
+        if attempt > 0 { std::thread::sleep(std::time::Duration::from_millis(90)); }
+        if let Some(located) = pasted::locate(value, window) { return Some(located); }
+    }
+    None
+}
+
+/// The pasted text's runs where they were (within a pixel): nothing scrolled or reflowed.
+fn same_rects(now: &[Rect], then: &[Rect]) -> bool {
+    now.len() == then.len() && now.iter().zip(then).all(|(a, b)| {
+        (a.x - b.x).abs() <= 1. && (a.y - b.y).abs() <= 1. && (a.width - b.width).abs() <= 1. && (a.height - b.height).abs() <= 1.
+    })
+}
+
+/// The line the new text ends on: the lowest one, the rightmost of that row.
+fn last_line(lines: &[Rect]) -> Option<Rect> {
+    let lowest = lines.iter().map(|line| line.y + line.height / 2.).fold(f64::NEG_INFINITY, f64::max);
+    lines.iter().copied()
+        .filter(|line| line.y <= lowest && lowest <= line.y + line.height)
+        .max_by(|a, b| (a.x + a.width).total_cmp(&(b.x + b.width)))
+}
+
+/// Where the pill goes after the paste (lot 9): under the last line of the new text, never
+/// over it (`pillPlacement: margin`: right of the text column). `width` × `height` is the
+/// pill's size, logical. The answer is relative to the overlay window as it stands, logical;
+/// `inside` false means the pill would leave the window: `move_overlay` first. Estimated from
+/// the old selection when the pasted text could not be found.
+#[tauri::command]
+fn result_pill(app: AppHandle, state: State<'_, AppState>, request_id: String, width: f64, height: f64) -> Result<PillTarget, String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. { return Err("Dimensions invalides.".into()); }
+    let i = state.inner.lock().map_err(|_| lock_error())?;
+    if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
+    let applied = i.applied.as_ref().filter(|a| a.request_id == request_id).ok_or("Ce résultat n’est plus actif.")?;
+    let s = i.scale;
+    let (lines, end, estimated) = match applied.located.as_ref().filter(|l| !l.lines.is_empty()) {
+        Some(located) => (located.lines.clone(), last_line(&located.lines).ok_or("Texte introuvable.")?, false),
+        None => {
+            let anchor = applied.anchor.or_else(|| last_line(&applied.old_lines)).ok_or("Aucun emplacement pour la pilule.")?;
+            let (block, end) = placement::estimated_text(&applied.old_lines, anchor, applied.original.chars().count(), applied.pasted.chars().count());
+            (block, end, true)
+        }
+    };
+    let margin = i.settings.pill_placement == PillPlacement::Margin;
+    let (pill, side, clear) = placement::pill_after_paste(&lines, end, i.work, width * s, height * s, 8. * s, margin);
+    drop(i);
+    let window = app.get_webview_window("overlay").and_then(|w| host::window_rect(host::handle(&w))).ok_or("Traduction indisponible.")?;
+    let (x, y) = ((pill.x - window.x) / s, (pill.y - window.y) / s);
+    let inside = x >= -0.5 && y >= -0.5 && x + width <= window.width / s + 0.5 && y + height <= window.height / s + 0.5;
+    Ok(PillTarget { x, y, side, inside, estimated, clear })
+}
+
+/// Moves the anchored overlay window by `dx`, `dy` logical pixels, its surfaces with it (they
+/// are relative to the window), then answers. The frontend calls it at a moment when nothing
+/// animates (lot 9: never a SetWindowPos during an animation), when `result_pill` says the
+/// pill would leave the window. Kept by every later placement of this capture.
+#[tauri::command]
+async fn move_overlay(app: AppHandle, state: State<'_, AppState>, capture_id: String, dx: f64, dy: f64) -> Result<(), String> {
+    let size = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !dx.is_finite() || !dy.is_finite() || dx.abs() * i.scale > i.work.width || dy.abs() * i.scale > i.work.height {
+            return Err("Déplacement invalide.".into());
+        }
+        let anchored = i.presentation == Presentation::Anchored && i.capture.as_ref().is_some_and(|c| c.public.anchor.is_some());
+        if !i.visible || i.pending_dismiss.is_some() || i.dragging || i.capture.as_ref().is_none_or(|c| c.public.id != capture_id) {
+            return Err("La capture n’est plus active.".into());
+        }
+        if !anchored { return Err("Seule la fenêtre ancrée se déplace.".into()); }
+        let (px, py) = (dx * i.scale, dy * i.scale);
+        match i.manual.as_mut() {
+            Some(manual) => { manual.x += px; manual.y += py; }
+            None => { i.shift.0 += px; i.shift.1 += py; }
+        }
+        i.size
+    };
+    let (placed_tx, placed_rx) = tokio::sync::oneshot::channel();
+    position(&app, &state, size.0, size.1, Some(placed_tx))?;
+    placed_rx.await.map_err(|_| "Placement interrompu.".to_string())?
+}
+
+/// Marks the changed words of the replacement (lot 9) in the halo: `ranges` are UTF-16
+/// offsets of the result (JavaScript string indices), end excluded, at most 64. Each is found
+/// in the pasted text by UI Automation and checked by its text; the marks hold until
+/// `clear_highlight`, a key in the source, Undo or the dismissal. Answers how many ranges
+/// were found and how many lines are drawn (0: nothing shown).
+#[tauri::command]
+async fn highlight_changes(app: AppHandle, state: State<'_, AppState>, request_id: String, ranges: Vec<TextRange>) -> Result<HighlightResult, String> {
+    if ranges.len() > 64 { return Err("Trop de plages.".into()); }
+    let (located, value, window) = {
+        let i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
+        let applied = i.applied.as_ref().filter(|a| a.request_id == request_id).ok_or("Ce résultat n’est plus actif.")?;
+        let Some(located) = applied.located.clone().filter(|_| applied.undo) else { return Ok(HighlightResult { ranges: 0, lines: 0 }) };
+        (located, applied.pasted.clone(), applied.window)
+    };
+    let pairs: Vec<(usize, usize)> = ranges.iter().map(|r| (r.start, r.end)).collect();
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (resolved, lines) = pasted::changed_lines(&located, &value, &pairs, window);
+        let state = handle.state::<AppState>();
+        let current = state.inner.lock().is_ok_and(|i| i.visible && i.applied.as_ref().is_some_and(|a| a.request_id == request_id && a.undo));
+        if !current || lines.is_empty() { return HighlightResult { ranges: resolved, lines: 0 }; }
+        halo::marks(&handle, &lines);
+        HighlightResult { ranges: resolved, lines: lines.len() }
+    }).await.map_err(|_| "Surlignage interrompu.".to_string())
+}
+
+/// The pill's Undo is over (its countdown ended): the marks fade out in 900 ms.
+#[tauri::command]
+fn clear_highlight(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+    let current = state.inner.lock().map_err(|_| lock_error())?.applied.as_ref().is_some_and(|a| a.request_id == request_id);
+    if current && halo::marking() { halo::leave(&app); }
+    Ok(())
+}
+
+/// Undo withdrawn (lot 9): `undo-state` tells the frontend why, the marks fade. `request`
+/// None: whatever replacement is current (the keyboard hook does not know it).
+fn lose_undo(app: &AppHandle, request: Option<&str>, reason: UndoLoss, forget_text: bool) {
+    let state = app.state::<AppState>();
+    let lost = {
+        let Ok(mut i) = state.inner.lock() else { return };
+        let Some(applied) = i.applied.as_mut().filter(|a| request.is_none_or(|id| a.request_id == id)) else { return };
+        if forget_text { applied.located = None; }
+        let was = applied.undo;
+        applied.undo = false;
+        was.then(|| applied.request_id.clone())
+    };
+    host::disarm_undo_watch();
+    if halo::marking() { halo::leave(app); }
+    if let Some(request_id) = lost {
+        let _ = app.emit_to("overlay", "undo-state", UndoState { request_id, available: false, reason });
+    }
+}
+
+/// Undo of a replacement under the Îlot (lot 9), once: Ctrl+Z at the source (`undoStrategy`
+/// keystroke, the default) or the original pasted back over the new text (repaste). The
+/// source comes back to the front when one of our windows holds it, then the window, the
+/// field, the element and the pasted text (still right before the caret, exactly) are checked
+/// again, the keys must be up, and they are checked once more. Refused: nothing was sent.
+/// Failed: sent, and the original did not come back. The clipboard is kept as for any paste.
+#[tauri::command]
+async fn undo_result(app: AppHandle, request_id: String) -> Result<UndoOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let refused = |kind: ErrorKind, message: &str| UndoOutcome { request_id: request_id.clone(), status: UndoStatus::Refused, confirmed: false, message: message.into(), code: Some(kind) };
+        // Held through the undo: no capture, relaunch or dismissal commits in between.
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
+        let strategy = i.settings.undo_strategy;
+        let Some(applied) = i.applied.as_mut().filter(|a| a.request_id == request_id) else { return Err("Ce résultat n’est plus actif.".into()) };
+        if !applied.undo { return Ok(refused(ErrorKind::TargetChanged, "Le texte a changé depuis le remplacement; annulation refusée.")); }
+        applied.undo = false;
+        host::disarm_undo_watch();
+        halo::hide(&app);
+        let Some(located) = applied.located.take() else { return Ok(refused(ErrorKind::TargetChanged, "Le texte a changé depuis le remplacement; annulation refusée.")) };
+        let fg = host::foreground();
+        let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
+        if fg != applied.window && !ours { return Ok(refused(ErrorKind::TargetChanged, "La fenêtre source a changé; annulation refusée.")); }
+        let target = pasted::UndoTarget {
+            window: applied.window,
+            control: applied.control,
+            runtime_id: applied.runtime_id.as_deref(),
+            located: &located,
+            original: &applied.original,
+            pasted: &applied.pasted,
+        };
+        let outcome = match pasted::undo(&target, strategy, true) {
+            Ok(confirmed) => UndoOutcome { request_id: request_id.clone(), status: UndoStatus::Undone, confirmed, message: "Remplacement annulé.".into(), code: None },
+            Err(pasted::UndoFailure::Refused(error)) => refused(error.kind, &error.message),
+            Err(pasted::UndoFailure::Failed(error)) => UndoOutcome { request_id: request_id.clone(), status: UndoStatus::Failed, confirmed: false, message: error.message, code: Some(error.kind) },
+        };
+        drop(i);
+        Ok(outcome)
+    }).await.map_err(|_| "L’annulation a été interrompue.".to_string())?
 }
 #[tauri::command]
 fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
@@ -958,6 +1197,7 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
     host::close_escape_scope();
     halo::hide(app);
+    host::disarm_undo_watch();
     host::set_menu_open(false, 0, 0);
     // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
     // back before the window hides, its selection untouched and nothing pasted. Hiding
@@ -971,6 +1211,7 @@ fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
         if i.pending_dismiss.is_some() { return Ok(()); }
         let capture_id = i.capture.as_ref().map(|capture| capture.public.id.clone());
         i.cancel(None);
+        i.applied = None;
         i.visible = false;
         i.pending_capture = None;
         i.retire_result();
@@ -1367,6 +1608,7 @@ fn start_drag(
             i.work = work;
             i.scale = scale;
             i.dragging = false;
+            i.shift = (0., 0.);
             i.size
         };
         let state = app.state::<AppState>();
@@ -1471,7 +1713,9 @@ fn position(
                 }
                 let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, extent, i.side);
                 i.side = Some(side);
-                (to_host(glass), s)
+                // Moved on purpose after a paste (`move_overlay`, lot 9): past the clamp.
+                let host = to_host(glass);
+                (Rect { x: host.x + i.shift.0, y: host.y + i.shift.1, ..host }, s)
             }
         };
         let apply_rect = i.last_overlay.as_ref().is_none_or(|last| last.0 != result.0);
@@ -1569,7 +1813,8 @@ fn watch_context(app: AppHandle) {
                     escape_was_down = false;
                     continue;
                 }
-                (i.source_window, i.source_rect, i.capture.clone(), i.size)
+                let applied = i.applied.as_ref().map(|a| (a.request_id.clone(), a.window, a.window_rect, a.located.clone(), a.undo));
+                (i.source_window, i.source_rect, i.capture.clone(), i.size, applied)
             };
             let fg = host::foreground();
             let ours = SURFACES.iter().any(|l| {
@@ -1585,8 +1830,32 @@ fn watch_context(app: AppHandle) {
             escape_was_down = down;
             // Every 420 ms; every 105 ms while the halo sweeps over the lines: a scroll or a
             // move must not leave it over other text for long.
-            let period = if halo::visible() { 3 } else { 12 };
+            // After a paste under the Îlot (lot 9) too: the pill and the marks stand on the
+            // new text.
+            let period = if halo::visible() || snapshot.4.is_some() { 3 } else { 12 };
             if ticks % period != 0 || state.demo {
+                continue;
+            }
+            if let Some((request_id, window, window_rect, located, undo)) = snapshot.4 {
+                // The caret after the pasted text is normal and keeps the pill; the window
+                // moving, another application in front, or the text scrolling or reflowing
+                // (its rectangles changed) hide pill and marks. The text no longer before the
+                // caret (a click elsewhere): Undo is withdrawn, the pill stays.
+                let moved = host::window_rect(window) != window_rect;
+                let switched = fg != window && !ours;
+                if moved || switched {
+                    let _ = dismiss(&app, &state);
+                    continue;
+                }
+                if let Some(located) = located.filter(|_| fg == window) {
+                    match pasted::relocate(&located) {
+                        Some(rects) if same_rects(&rects, &located.rects) => {}
+                        Some(_) => { let _ = dismiss(&app, &state); }
+                        None => lose_undo(&app, Some(&request_id), UndoLoss::CaretMoved, true),
+                    }
+                } else if !undo && halo::marking() {
+                    halo::leave(&app);
+                }
                 continue;
             }
             let Some(captured) = snapshot.2 else { continue };
@@ -1743,6 +2012,7 @@ pub fn run() {
             // The page may already listen (it asks `shortcut_status` at load anyway).
             emit_shortcut_statuses(app.handle());
             let keys = app.handle().clone();
+            let typed = app.handle().clone();
             host::install_keyboard_hook(move |key| {
                 // The keyboard fallback of the Îlot: only while its capture still waits.
                 let state = keys.state::<AppState>();
@@ -1750,6 +2020,10 @@ pub fn run() {
                 if let Some(capture_id) = capture_id {
                     let _ = keys.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
                 }
+            }, move |key| {
+                // A real key reached the source after the paste (lot 9): Undo is no longer safe.
+                let reason = if key == host::Typed::UndoKey { UndoLoss::UndoKey } else { UndoLoss::Typed };
+                lose_undo(&typed, None, reason, false);
             })?;
             watch_context(app.handle().clone());
             system_theme::watch(app.handle().clone());
@@ -1775,6 +2049,11 @@ pub fn run() {
             cancel_translation,
             copy_result,
             replace_result,
+            result_pill,
+            move_overlay,
+            highlight_changes,
+            clear_highlight,
+            undo_result,
             dismiss_overlay,
             complete_overlay_dismiss,
             open_settings,
@@ -1927,6 +2206,35 @@ mod tests {
         assert_eq!(refusal_state("Unable to register hotkey: Unknown VKCode for F24"), BindingState::Failed);
         let json = serde_json::to_value(shortcut_statuses(&settings, &refused)).unwrap();
         assert_eq!(json[0], serde_json::json!({"bindingId": menu.id, "shortcut": menu.shortcut, "state": "taken"}));
+    }
+    #[test]
+    fn the_pill_follows_the_last_line_and_a_scrolled_text_is_told_apart() {
+        let first = Rect { x: 100., y: 200., width: 600., height: 20. };
+        let last = Rect { x: 100., y: 220., width: 240., height: 20. };
+        let run = Rect { x: 360., y: 221., width: 80., height: 18. };
+        assert_eq!(last_line(&[first, last, run]), Some(run), "the rightmost run of the lowest row");
+        assert_eq!(last_line(&[last, first]), Some(last));
+        assert_eq!(last_line(&[]), None);
+        // Within a pixel the text stayed; a scroll moves every run.
+        assert!(same_rects(&[first, last], &[Rect { x: 100.5, ..first }, last]));
+        assert!(!same_rects(&[first, last], &[Rect { y: 180., ..first }, Rect { y: 200., ..last }]));
+        assert!(!same_rects(&[first], &[first, last]));
+    }
+    #[test]
+    fn the_result_and_undo_events_carry_rectangles_booleans_and_codes_never_text() {
+        let delivery = ResultDelivery { request_id: "r".into(), status: DeliveryStatus::Applied, confirmed: true, message: "Sélection remplacée.".into(), code: None, pasted_rects: Vec::new(), undoable: false };
+        let json = serde_json::to_value(&delivery).unwrap();
+        assert!(json.get("pastedRects").is_none(), "absent when the pasted text was not found");
+        assert_eq!(json["undoable"], false);
+        let line = Rect { x: 1., y: 2., width: 3., height: 4. };
+        let json = serde_json::to_value(ResultDelivery { pasted_rects: vec![line], undoable: true, ..delivery }).unwrap();
+        assert_eq!(json["pastedRects"], serde_json::json!([{"x": 1., "y": 2., "width": 3., "height": 4.}]));
+        assert_eq!(serde_json::to_value(UndoState { request_id: "r".into(), available: false, reason: UndoLoss::UndoKey }).unwrap(), serde_json::json!({"requestId": "r", "available": false, "reason": "undo_key"}));
+        let refused = UndoOutcome { request_id: "r".into(), status: UndoStatus::Refused, confirmed: false, message: "m".into(), code: Some(ErrorKind::TargetChanged) };
+        let json = serde_json::to_value(refused).unwrap();
+        assert_eq!((json["status"].as_str(), json["code"].as_str()), (Some("refused"), Some("target_changed")));
+        let target = PillTarget { x: 1., y: 2., side: PillSide::Below, inside: true, estimated: false, clear: true };
+        assert_eq!(serde_json::to_value(target).unwrap()["side"], "below");
     }
     #[test]
     fn stale_cancel_preserves_current() {

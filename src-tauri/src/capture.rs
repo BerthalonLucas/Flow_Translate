@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 /// A copy the user made himself counts as fresh this long (Lucas, 2026-09-14).
 const FRESH_COPY_MS: u64 = 3_000;
 /// The shortcut chord must be released before a synthetic chord is sent.
-const CHORD_RELEASE: Duration = Duration::from_millis(600);
+pub(crate) const CHORD_RELEASE: Duration = Duration::from_millis(600);
 /// How long the target may take to serve the synthetic copy.
 const COPY_SETTLE: Duration = Duration::from_millis(350);
 /// Our own clipboard traffic (copy, restoration) is invisible to the freshness watcher.
@@ -27,7 +27,7 @@ thread_local! {
     static UI_AUTOMATION: std::cell::OnceCell<UIAutomation> = const { std::cell::OnceCell::new() };
 }
 
-fn ui_automation() -> Result<UIAutomation, ()> {
+pub(crate) fn ui_automation() -> Result<UIAutomation, ()> {
     UI_AUTOMATION.with(|cell| {
         if let Some(automation) = cell.get() {
             return Ok(automation.clone());
@@ -44,7 +44,7 @@ const NO_SELECTION: &str = "Aucune sélection active.";
 
 /// Text, visible rectangles (physical, one per run as `GetBoundingRectangles` gives
 /// them), length and editability of the current UIA selection.
-fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
+pub(crate) fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
     let pattern = element
         .get_pattern::<UITextPattern>()
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?;
@@ -69,17 +69,23 @@ fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), St
         .ok()
         .and_then(|v| <uiautomation::variants::Variant as TryInto<bool>>::try_into(v).ok())
         .is_some_and(|v| !v);
-    let rects = unsafe { range.as_ref().GetBoundingRectangles() }
+    let rects = range_rects(&range);
+    Ok((text, rects, selection_len, range_editable))
+}
+
+/// The visible runs of a range, physical, as `GetBoundingRectangles` gives them (none when
+/// the provider answers nothing usable).
+pub(crate) fn range_rects(range: &uiautomation::patterns::UITextRange) -> Vec<Rect> {
+    unsafe { range.as_ref().GetBoundingRectangles() }
         .ok()
         .and_then(|raw| <SafeArray as TryInto<Vec<f64>>>::try_into(SafeArray::from(raw)).ok())
         .map(|values| selection_lines::from_flat(&values))
-        .unwrap_or_default();
-    Ok((text, rects, selection_len, range_editable))
+        .unwrap_or_default()
 }
 
 /// The anchor of a capture: the last visible rectangle as UI Automation gives it (none
 /// when that one is unusable). Physical; the placement and `validate_target` compare it.
-fn anchor_of(rects: &[Rect]) -> Option<Rect> {
+pub(crate) fn anchor_of(rects: &[Rect]) -> Option<Rect> {
     rects.last().copied().filter(selection_lines::drawable)
 }
 
@@ -424,7 +430,7 @@ fn paste_preflight(target: &TargetIdentity, value: &str) -> Result<(), AppError>
 }
 
 /// The shortcut's keys are still held: a chord sent now would be another one.
-fn released(released: bool) -> Result<(), AppError> {
+pub(crate) fn released(released: bool) -> Result<(), AppError> {
     if released { Ok(()) } else { Err(AppError::new(ErrorKind::KeysHeld, "Relâchez les touches du raccourci, puis réessayez depuis la bulle.")) }
 }
 

@@ -167,6 +167,26 @@ static OVERLAY:AtomicIsize=AtomicIsize::new(0);
 static MENU_OPEN:AtomicBool=AtomicBool::new(false);
 /// Where the hook hands the menu keys it took from the source (a worker emits them).
 static MENU_KEYS:OnceLock<std::sync::mpsc::SyncSender<MenuKey>>=OnceLock::new();
+/// After a paste the Îlot can undo (lot 9): the source window whose keys end that offer. A
+/// key that is not ours reaching it (the user types, or another tool does) is reported once.
+static UNDO_WATCH:AtomicBool=AtomicBool::new(false);
+static UNDO_SOURCE:AtomicIsize=AtomicIsize::new(0);
+static TYPED:OnceLock<std::sync::mpsc::SyncSender<Typed>>=OnceLock::new();
+/// Our own synthetic keys carry this in `dwExtraInfo`: the hook tells them from the user's.
+pub const OUR_KEYS:usize=0x464C_5754;
+
+/// A key that reached the source while Undo was offered: the user's own Ctrl+Z (the
+/// application undoes the paste itself), or any other key.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum Typed{UndoKey,Other}
+pub fn arm_undo_watch(source:isize){UNDO_SOURCE.store(source,Ordering::Relaxed);UNDO_WATCH.store(source!=0,Ordering::Release);}
+pub fn disarm_undo_watch(){UNDO_WATCH.store(false,Ordering::Release);}
+
+/// Whether a key down ends the Undo offer: not one of ours, not a lone modifier or lock
+/// key, not Escape (it closes the pill; it writes nothing).
+pub fn ends_undo(vk:u32,extra:usize)->bool{
+    extra!=OUR_KEYS&&!matches!(vk,0x10..=0x12|0x14|0x1B|0x5B|0x5C|0x90|0x91|0xA0..=0xA5)
+}
 
 pub fn escape_scope(source:isize,overlay:isize){
     SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
@@ -299,9 +319,18 @@ pub fn executable_name(path:&str)->Option<String>{
 /// The low-level keyboard hook, on the main thread. It stays minimal (LowLevelHooksTimeout):
 /// a few atomics, the async state of the modifiers and, for a letter while the menu is
 /// open over the source, one ToUnicodeEx. `on_menu_key` runs on its own thread.
-pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static)->Result<(),String>{
+pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static,on_typed:impl Fn(Typed)+Send+'static)->Result<(),String>{
     use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,WH_KEYBOARD_LL,WM_KEYDOWN,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
     unsafe extern "system" fn keyboard(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&UNDO_WATCH.load(Ordering::Acquire){
+            let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let message=wparam.0 as u32;
+            if (message==WM_KEYDOWN||message==WM_SYSKEYDOWN)&&ends_undo(key.vkCode,key.dwExtraInfo)&&foreground()==UNDO_SOURCE.load(Ordering::Relaxed){
+                UNDO_WATCH.store(false,Ordering::Release);
+                let undo=key.vkCode==0x5A&&held(VK_CONTROL)&&!held(VK_MENU)&&!held(VK_SHIFT)&&!held(VK_LWIN)&&!held(VK_RWIN);
+                if let Some(typed)=TYPED.get(){let _=typed.try_send(if undo{Typed::UndoKey}else{Typed::Other});}
+            }
+        }
         if code>=0&&OVERLAY_VISIBLE.load(Ordering::Acquire){
             let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
             let message=wparam.0 as u32;
@@ -330,6 +359,10 @@ pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static)->Result<
     let (sender,receiver)=std::sync::mpsc::sync_channel::<MenuKey>(32);
     let _=MENU_KEYS.set(sender);
     std::thread::Builder::new().name("menu-keys".into()).spawn(move||{for key in receiver{on_menu_key(key);}})
+        .map_err(|_|"La gestion du clavier est indisponible.".to_string())?;
+    let (sender,receiver)=std::sync::mpsc::sync_channel::<Typed>(4);
+    let _=TYPED.set(sender);
+    std::thread::Builder::new().name("undo-watch".into()).spawn(move||{for typed in receiver{on_typed(typed);}})
         .map_err(|_|"La gestion du clavier est indisponible.".to_string())?;
     unsafe{
         let module=GetModuleHandleW(None).map_err(|_|"Module clavier indisponible.".to_string())?;
@@ -925,7 +958,8 @@ fn key_input(key: VIRTUAL_KEY, extended: bool, up: bool) -> INPUT {
                 wScan: scan,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                // Ours: the Undo watch of the hook never takes them for the user's.
+                dwExtraInfo: OUR_KEYS,
             },
         },
     }
@@ -967,6 +1001,28 @@ pub fn send_paste_chord() -> Result<(), u32> {
     Ok(())
 }
 
+/// Sends Ctrl+Z to the foreground window (Undo of lot 9, option A): one chord, the target
+/// editor undoes its own paste. On a partial injection the keys already pressed are
+/// released and the count sent is returned.
+pub fn send_undo_chord() -> Result<(), u32> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_Z;
+    let inputs = [
+        key_input(VK_CONTROL, false, false),
+        key_input(VK_Z, false, false),
+        key_input(VK_Z, false, true),
+        key_input(VK_CONTROL, false, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        if sent > 0 {
+            let release = [key_input(VK_Z, false, true), key_input(VK_CONTROL, false, true)];
+            unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        }
+        return Err(sent);
+    }
+    Ok(())
+}
+
 /// Waits, at most `timeout`, for the clipboard counter to leave `before`.
 pub fn wait_clipboard_change(before: u32, timeout: Duration) -> Option<u32> {
     let deadline = Instant::now() + timeout;
@@ -999,6 +1055,17 @@ mod tests {
         }
         let sequence = std::thread::spawn(clipboard_sequence).join().unwrap();
         assert_ne!(sequence, 0);
+    }
+
+    #[test]
+    fn only_a_key_that_writes_and_is_not_ours_ends_the_undo_offer() {
+        // Letters, digits, Enter, Backspace, arrows, Ctrl+Z's Z: the user acts in the source.
+        for vk in [0x41, 0x5A, 0x31, 0x0D, 0x08, 0x2E, 0x25, 0x20] { assert!(ends_undo(vk, 0), "{vk:#x}"); }
+        // Another tool's injected keys count too (dictation types into the source).
+        assert!(ends_undo(0x41, 0x1234));
+        // Our own chords, lone modifiers, lock keys and Escape never do.
+        assert!(!ends_undo(0x56, OUR_KEYS));
+        for vk in [0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91, 0x1B] { assert!(!ends_undo(vk, 0), "{vk:#x}"); }
     }
 
     #[test]
