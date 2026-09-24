@@ -4,6 +4,7 @@ import { t as tNow, useT } from './i18n';
 import { MenuGrid } from './settings/MenuGrid';
 import { deleteAction } from './settings/grid';
 import { ShortcutRecorder } from './settings/ShortcutRecorder';
+import type { Registrations } from './settings/registrations';
 import type { ActionDefinition, Settings, ShortcutBinding } from './types';
 
 type Props = {
@@ -11,10 +12,12 @@ type Props = {
   persist: (settings: Settings, immediate: boolean) => void;
   record: (id: string | null, shortcut: string) => Promise<string | null>;
   busy: boolean;
+  // What Windows answered for each binding (src/settings/registrations.ts).
+  registrations?: Registrations;
 };
 // « Actions »: the Îlot's grid (order, letters, which ones), each action's instruction, and
 // the direct shortcuts that run one action without the menu. Action names are user data.
-export function ActionSettings({ settings, persist, record, busy }: Props) {
+export function ActionSettings({ settings, persist, record, busy, registrations }: Props) {
   const t = useT();
   const ilot = settings.uiVersion === 'ilot';
   const edit = (id: string, patch: (action: ActionDefinition) => ActionDefinition, immediate: boolean) => persist({ ...settings, actions: settings.actions.map(a => a.id === id ? patch(a) : a) }, immediate);
@@ -55,7 +58,7 @@ export function ActionSettings({ settings, persist, record, busy }: Props) {
     {direct.length ? <div className="shortcut-list">{direct.map(b => <article className="shortcut-card" key={b.id}>
       <div className="shortcut-card-heading"><SettingSwitch label={t('shortcuts.enable')} checked={b.enabled} onCheckedChange={enabled => binding(b.id, { enabled })} /><span>{t(b.enabled ? 'shortcuts.on' : 'shortcuts.off')}</span>
         {settings.shortcutBindings.length > 1 && <button className="icon-button" aria-label={t('shortcuts.delete')} disabled={busy} onClick={() => persist({ ...settings, shortcutBindings: settings.shortcutBindings.filter(v => v.id !== b.id) }, true)}><Icon name="close" size={14} /></button>}</div>
-      <ShortcutRecorder shortcut={b.shortcut} enabled={b.enabled} label={t('shortcuts.field')} busy={busy} record={shortcut => record(b.id, shortcut)} />
+      <ShortcutRecorder shortcut={b.shortcut} enabled={b.enabled} label={t('shortcuts.field')} busy={busy} record={shortcut => record(b.id, shortcut)} registration={registrations?.(b)} />
       {/* A second menu binding (rare) opens the menu too: no action, no destination to pick. */}
       {b.kind === 'menu' ? <p className="settings-help">{t('shortcuts.opensMenu')}</p> : <div className="shortcut-options"><label>{t('shortcuts.action')}<select value={b.actionId} disabled={busy} onChange={e => binding(b.id, { actionId: e.target.value })}>{settings.actions.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
         <label>{t('shortcuts.result')}<select value={b.outputMode} disabled={busy} onChange={e => binding(b.id, { outputMode: e.target.value as 'display' | 'replace' })}><option value="display">{t('shortcuts.display')}</option><option value="replace">{t('shortcuts.replace')}</option></select></label></div>}

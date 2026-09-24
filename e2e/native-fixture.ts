@@ -31,15 +31,27 @@ let overlayPosition = { x: 400 + 120 - 432, y: 300 + 18 + 8 - 104 };
 // The next `choose_action` is refused, as when the chosen action was deleted meanwhile.
 let refuseChoice = false;
 // Lot 10: what Windows answered for each binding (`shortcut_status`); by default every enabled
-// chord is registered. A test sets a binding's state (another application holds the chord: 'taken').
+// chord is registered. A test sets a binding's state (another application holds the chord: 'taken'),
+// or the URL does before the window opens (`&shortcutTaken=<binding id>`).
 let shortcutStates: Record<string, BindingState> = {};
+const takenAtStart = new URLSearchParams(location.search).get('shortcutTaken');
+if (takenAtStart) shortcutStates[takenAtStart] = 'taken';
 const shortcutStatus = (): ShortcutStatus[] => settings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: shortcutStates[b.id] ?? (b.enabled ? 'registered' : 'disabled') }));
 mockIPC((command, args) => {
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
   if (command === 'get_history') return [];
   if (command === 'system_motion') return windowsMotion;
-  if (command === 'save_settings') { const next = args?.settings as Settings; if (refuseShortcut && JSON.stringify(next.shortcutBindings) !== JSON.stringify(settings.shortcutBindings)) return Promise.reject('Le raccourci est déjà utilisé ou indisponible.'); settings = next; return; }
+  if (command === 'save_settings') {
+    const next = args?.settings as Settings;
+    if (refuseShortcut && JSON.stringify(next.shortcutBindings) !== JSON.stringify(settings.shortcutBindings)) return Promise.reject('Le raccourci est déjà utilisé ou indisponible.');
+    // As Rust: a binding saved on another chord registered it (a taken one refuses the save), and
+    // every save sends the state of each shortcut.
+    for (const binding of next.shortcutBindings) if (settings.shortcutBindings.find(b => b.id === binding.id)?.shortcut !== binding.shortcut) delete shortcutStates[binding.id];
+    settings = next;
+    void emit('shortcut-status', shortcutStatus());
+    return;
+  }
   if (command === 'check_connection') return { connected, message: connected ? 'Modèle trouvé.' : 'Serveur indisponible.' };
   if (command === 'frontend_ready') return currentCapture;
   if (command === 'translate') request = args?.request as TranslationRequest;

@@ -252,6 +252,9 @@ const dictionary = {
   'shortcuts.none': { en: 'No direct shortcut.', fr: 'Aucun raccourci direct.' },
   'shortcuts.opensMenu': { en: 'Opens the menu.', fr: 'Ouvre le menu.' },
   'shortcuts.taken': { en: 'Another app already uses this shortcut, or Windows refused it. Choose another one.', fr: 'Une autre application utilise déjà ce raccourci, ou Windows l’a refusé. Choisissez-en un autre.' },
+  // Lot 10: what Windows answered for a saved chord (`shortcut_status`), under its row.
+  'shortcuts.stateTaken': { en: 'Another app is already using {shortcut}, so Windows did not give it to FlowTranslate. Record another combination, or close that app.', fr: 'Une autre application utilise déjà {shortcut} : Windows ne l’a pas donné à FlowTranslate. Enregistrez une autre combinaison, ou fermez cette application.' },
+  'shortcuts.stateFailed': { en: 'Windows refused {shortcut}: it does nothing for now. Record another combination.', fr: 'Windows a refusé {shortcut} : il ne fait rien pour l’instant. Enregistrez une autre combinaison.' },
   'shortcuts.duplicate': { en: 'Another FlowTranslate shortcut already uses this combination.', fr: 'Un autre raccourci de FlowTranslate utilise déjà cette combinaison.' },
   'shortcuts.unknown': { en: 'This combination is not recognized.', fr: 'Cette combinaison n’est pas reconnue.' },
   'shortcuts.altGrConflict': { en: '{shortcut} is also AltGr+{key} on this keyboard: you could no longer type {character}.', fr: '{shortcut} est aussi AltGr+{key} sur ce clavier : vous ne pourriez plus taper {character}.' },
