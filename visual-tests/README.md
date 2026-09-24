@@ -17,6 +17,29 @@ de l’Îlot, le parcours par défaut de l’application. Le parcours 0.4 (régl
 `npm run ui:check -- --grep @v4` ou `npm run ui:check -- --grep @ilot` vérifie un
 jeu seul.
 
+## Images de l’Îlot : EN ATTENTE DE REVUE PAR LUCAS
+
+Générées le 25/09/2026 (lot 14) **sans revue**, par
+`--update-snapshots=missing --grep @ilot`, puis vérifiées deux fois à l’identique.
+Elles figent le rendu actuel, elles ne l’approuvent pas : tant que Lucas ne les a
+pas revues (référence visuelle : design-lab/), un test `@ilot` vert veut seulement
+dire « rien n’a changé depuis la génération ». Après revue : corriger ce qui doit
+l’être, régénérer avec `npm run ui:reference -- --grep @ilot`, puis retirer cette
+mention.
+
+28 images dans `references/win32/chromium/ilot/`, chacune en `-light` et `-dark`,
+en anglais (langue par défaut de l’application), mouvements réduits :
+
+| Image | Ce qu’elle montre |
+|---|---|
+| `compact`, `grid`, `prompt` | l’Îlot au repos, en grille, champ de consigne (lot 7) |
+| `working-perle`, `working-nebuleuse`, `working-ruban` | la pilule de travail et son indicateur (lot 8) |
+| `done` | la coche et Annuler (lot 9) ; horloge figée, l’anneau montre 6 s sur 8 |
+| `error-config`, `error-transient`, `error-paste`, `error-content` | une pilule d’erreur par famille (lot 10) |
+| `long` | la bande de lecture d’un long résultat (lot 11) |
+| `settings` | les Réglages de l’Îlot (lot 13) |
+| `halo` | le halo sur trois lignes, voile fixe (lot 6) |
+
 ## État des images 0.4 (25/09/2026, lot 14)
 
 Périmées, **ni acceptées ni régénérées** : 20 des 21 images diffèrent du rendu
