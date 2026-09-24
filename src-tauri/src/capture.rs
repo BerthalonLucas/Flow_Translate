@@ -37,6 +37,10 @@ fn ui_automation() -> Result<UIAutomation, ()> {
     })
 }
 
+/// What `selection` answers when the control is readable but holds no selection (none,
+/// or collapsed to the caret by a click or an arrow key).
+const NO_SELECTION: &str = "Aucune sélection active.";
+
 /// Text, visible rectangles (physical, one per run as `GetBoundingRectangles` gives
 /// them), length and editability of the current UIA selection.
 fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
@@ -48,12 +52,12 @@ fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), St
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?
         .into_iter()
         .next()
-        .ok_or_else(|| "Aucune sélection active.".to_string())?;
+        .ok_or_else(|| NO_SELECTION.to_string())?;
     let text = range
         .get_text(6001)
         .map_err(|_| "Impossible de lire la sélection.".to_string())?;
     if text.is_empty() {
-        return Err("Aucune sélection active.".into());
+        return Err(NO_SELECTION.into());
     }
     if text.encode_utf16().count() >= 6001 {
         return Err("La sélection dépasse 6 000 unités de texte et pourrait être tronquée.".into());
@@ -294,12 +298,21 @@ pub fn validate_target(target: &TargetIdentity) -> Result<(), String> {
         return Err("La cible a changé; remplacement refusé.".into());
     }
     if target.anchor.is_none() { return Ok(()); }
-    if let Ok((text, rects, selection_len, _)) = selection(&element) {
-        if text != target.selected_text || selection_len != target.selection_len || target.anchor != anchor_of(&rects) {
-            return Err("La sélection a changé; remplacement refusé.".into());
-        }
+    if selection_changed(target, &selection(&element)) {
+        return Err("La sélection a changé; remplacement refusé.".into());
     }
     Ok(())
+}
+
+/// Whether what UI Automation answers now differs from the captured selection: another
+/// text, length or last rectangle, or no selection at all while the control still answers
+/// (a click or an arrow collapsed it to the caret: a paste would insert there instead of
+/// replacing). A control that stopped answering is not a change.
+fn selection_changed(target: &TargetIdentity, now: &Result<(String, Vec<Rect>, usize, bool), String>) -> bool {
+    match now {
+        Ok((text, rects, selection_len, _)) => *text != target.selected_text || *selection_len != target.selection_len || target.anchor != anchor_of(rects),
+        Err(message) => message == NO_SELECTION,
+    }
 }
 
 /// How a paste ended: the field read the result back (`confirmed`), or the chord went
@@ -418,6 +431,18 @@ fn control_text(hwnd: isize) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_selection_collapsed_to_the_caret_is_a_change_but_a_silent_control_is_not() {
+        let line = Rect { x: 100., y: 200., width: 300., height: 18. };
+        let target = TargetIdentity { runtime_id: Some(vec![1]), native_window: 1, control: 0, selected_text: "Deux lignes".into(), anchor: Some(line), selection_len: 11, editable: true };
+        let same: Result<(String, Vec<Rect>, usize, bool), String> = Ok(("Deux lignes".into(), vec![Rect { y: 182., ..line }, line], 11, true));
+        assert!(!selection_changed(&target, &same));
+        assert!(selection_changed(&target, &Err(NO_SELECTION.into())), "collapsed by a click: a paste would insert at the caret");
+        assert!(selection_changed(&target, &Ok(("Deux lignes".into(), vec![Rect { y: 230., ..line }], 11, true))), "scrolled: the anchor moved");
+        assert!(selection_changed(&target, &Ok(("Autre".into(), vec![line], 5, true))));
+        assert!(!selection_changed(&target, &Err("La sélection n’est pas accessible par UI Automation.".into())), "a control that stopped answering is not a change");
+    }
 
     #[test]
     fn a_paste_replaces_a_uia_selection_or_a_proved_copy_but_never_a_console_or_a_password() {
