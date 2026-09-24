@@ -286,7 +286,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('wheel', onWheel, true); };
   }, []);
 
-  // The keys the window receives before the Îlot listens (Sol's measure of lot 9: a key sent in
+  // The keys the window receives before the Îlot listens (the native agent's measure of lot 9: a key sent in
   // the ~25 ms after `focus_overlay` activated the overlay was lost twice): Rust has given the
   // WebView the foreground, but the Îlot only shows once the window's side is read (two more
   // IPC answers and a render). Installed with the stage's first frame, before `focus_overlay` is
