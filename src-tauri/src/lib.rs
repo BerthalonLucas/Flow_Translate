@@ -766,8 +766,9 @@ fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening, source: 
     let result = match opening {
         Opening::Direct(execution) => store_capture(&app, state, captured, source, Some(execution), None),
         Opening::Menu(settings) => {
-            // The last action chosen in this application, if it still exists.
-            let process = host::process_name(source);
+            // The last action chosen in this application, if it still exists. The demo reads
+            // no window: it is never tied to the one in front (review n°5).
+            let process = (!state.demo).then(|| host::process_name(source)).flatten();
             let last_action_id = process.as_deref()
                 .and_then(|process| state.menu_memory.lock().ok().and_then(|memory| memory.get(process).map(String::from)))
                 .filter(|id| settings.actions.iter().any(|action| &action.id == id));
@@ -1503,6 +1504,10 @@ fn return_foreground(overlay: isize, source: isize) {
 /// with the returned `actionId`, as for any capture. The source gets the keyboard back
 /// if the overlay held it, and the overlay turns non-activatable (the pill never steals
 /// the focus again, until the next capture).
+/// The application a choice is remembered for: a saved action in real use only.
+fn remembered_process(process: Option<String>, instruction: bool, simulated: bool) -> Option<String> {
+    process.filter(|_| !instruction && !simulated)
+}
 #[tauri::command]
 fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String, action_id: String, instruction: Option<String>) -> Result<ExecutionInfo, String> {
     let (info, source, process) = {
@@ -1514,8 +1519,9 @@ fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String,
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, true);
     return_foreground(overlay, source);
-    // The memory per application (lot 4): a saved action only, never a free instruction.
-    if let Some(process) = process.filter(|_| instruction.is_none()) {
+    // The memory per application (lot 4): a saved action only, never a free instruction, and
+    // never in the demo or simulated modes (review n°5: they write no user data).
+    if let Some(process) = remembered_process(process, instruction.is_some(), state.simulated) {
         if let Ok(mut memory) = state.menu_memory.lock() {
             if memory.remember(&process, &info.action_id) { let _ = memory.save(); }
         }
@@ -2340,6 +2346,15 @@ mod tests {
         assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
         assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
         assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
+    }
+    #[test]
+    fn a_choice_is_remembered_in_real_use_only() {
+        let chrome = || Some("chrome.exe".to_string());
+        assert_eq!(remembered_process(chrome(), false, false).as_deref(), Some("chrome.exe"));
+        assert_eq!(remembered_process(chrome(), true, false), None, "a free instruction");
+        // Review n°5: --demo-selection and --simulate-inference write no menu-memory.json.
+        assert_eq!(remembered_process(chrome(), false, true), None);
+        assert_eq!(remembered_process(None, false, false), None);
     }
     #[test]
     fn only_a_menu_that_still_waits_takes_the_keyboard() {
