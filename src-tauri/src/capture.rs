@@ -113,6 +113,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             }),
             replay: None,
             execution: None,
+            menu: None,
         };
         return Ok(StoredCapture {
             public,
@@ -158,6 +159,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         screen: None,
                         replay: None,
                         execution: None,
+                        menu: None,
                     };
                     let target = Some(TargetIdentity {
                         runtime_id: Some(runtime_id),
@@ -235,6 +237,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         screen: None,
         replay: None,
         execution: None,
+        menu: None,
     };
     Ok(StoredCapture { public, target })
 }
@@ -339,6 +342,11 @@ pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<D
     #[cfg(windows)]
     if reactivate && crate::host::foreground() != target.native_window {
         use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::SetForegroundWindow};
+        // Not under a held chord: released over the source, Alt would first move its
+        // focus to its menu bar (Win11 Notepad) and the revalidation would refuse.
+        if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
+            return Err("Relâchez les touches du raccourci, puis réessayez depuis la bulle.".into());
+        }
         if !unsafe { SetForegroundWindow(HWND(target.native_window as *mut _)) }.as_bool() {
             return Err("Impossible de réactiver la fenêtre source; utilisez Copier.".into());
         }

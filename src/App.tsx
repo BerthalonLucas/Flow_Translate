@@ -7,6 +7,7 @@ import { motion } from 'motion/react';
 import { Icon, Segmented, SettingSwitch } from './ui';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
+import { NativeMenuProbe } from './menu/NativeMenuProbe'; // PROVISIONAL (lots 3–4), replaced by the Îlot of lot 7
 import { useTranslation } from './useTranslation';
 import { shareSettings, useSettings } from './useSettings';
 import { useDocumentPreferences } from './preferences';
@@ -229,7 +230,7 @@ function OverlayWindow({ standaloneDemo }: { standaloneDemo: boolean }) {
     <div className="preview-backgrounds" role="group" aria-label={t('preview.backgrounds')}>
       {([['light', 'preview.light'], ['dark', 'preview.dark'], ['color', 'preview.color']] as const).map(([value, key]) => <button key={value} type="button" aria-pressed={background === value} onClick={() => setBackground(value)}>{t(key)}</button>)}
     </div>
-  </>}<GlassOverlay controller={controller} /></div>;
+  </>}<GlassOverlay controller={controller} /><NativeMenuProbe controller={controller} /></div>;
 }
 
 function DemoWindow() { return <DemoDesktop controller={useTranslation(false)} />; }

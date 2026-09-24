@@ -2,7 +2,8 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
 import { t } from './i18n';
-import type { Capture, CaptureNotice, CaptureTarget, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
+import { defaultActionId } from './actionDefaults';
+import type { Capture, CaptureNotice, CaptureTarget, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
@@ -55,7 +56,7 @@ export function useTranslation(readyOnMount = false) {
     discardPending();
     requestRef.current = id;
     dispatch({ type: 'START', requestId: id, mode });
-    void bridge.translate({ id, captureId: capture.id, text: capture.text, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? 'translate-fr' }).catch((error: unknown) => {
+    void bridge.translate({ id, captureId: capture.id, text: capture.text, mode, actionId: capture.execution?.actionId ?? settingsRef.current?.defaultActionId ?? defaultActionId }).catch((error: unknown) => {
       if (requestRef.current === id) dispatch({ type: 'STREAM', event: { requestId: id, kind: 'error', message: typeof error === 'string' ? error : t('error.startFailed') } });
     });
   }, [discardPending]);
@@ -82,9 +83,28 @@ export function useTranslation(readyOnMount = false) {
       dispatch({ type: 'STREAM', event: { requestId, kind: 'done' } });
       return;
     }
+    // A menu capture (Îlot) waits for its choice: `choose` freezes it in Rust, then translates.
+    if (capture.menu && !capture.execution) return;
     // The shortcut translates at once, clipboard fallback included: no confirmation step.
     start(capture);
   }, [discardPending, start]);
+
+  // Îlot (lots 3–4): the choice made in the menu, once per menu capture. Rust returns the
+  // execution (always « replace »); the translation then starts like any capture's.
+  const choosingRef = useRef<string | null>(null);
+  const choose = useCallback(async (actionId: string, instruction?: string) => {
+    const capture = captureRef.current;
+    if (!capture?.menu || capture.execution || closingRef.current || choosingRef.current === capture.id) return;
+    choosingRef.current = capture.id;
+    let execution;
+    try { execution = await bridge.chooseAction(capture.id, actionId, instruction); }
+    finally { if (choosingRef.current === capture.id) choosingRef.current = null; }
+    if (captureRef.current?.id !== capture.id || closingRef.current) return;
+    const chosen = { ...capture, execution };
+    captureRef.current = chosen;
+    dispatch({ type: 'CHOOSE', captureId: capture.id, execution });
+    start(chosen);
+  }, [start]);
 
   useEffect(() => {
     let off: Array<() => void> = [];
@@ -119,6 +139,14 @@ export function useTranslation(readyOnMount = false) {
         if (event.status === 'fallback') showNotice(event.message);
       }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
+      // Lot 4: the menu shortcut pressed twice within 400 ms runs, without the menu, the
+      // last action of that application (else the default action). Handled here, not in
+      // the menu, so it holds even before the menu has rendered.
+      bridge.on<MenuRepeat>('menu-repeat', ({ captureId }) => {
+        const capture = captureRef.current;
+        if (capture?.id !== captureId || !capture.menu || capture.execution) return;
+        void choose(capture.menu.lastActionId ?? settingsRef.current?.defaultActionId ?? defaultActionId).catch(() => undefined);
+      }),
     ]).then(async listeners => {
       if (disposed) listeners.forEach(unlisten => unlisten());
       else {
@@ -133,7 +161,7 @@ export function useTranslation(readyOnMount = false) {
       }
     }).catch(() => { if (!disposed) setInitError('connection'); });
     return () => { disposed = true; off.forEach(unlisten => unlisten()); };
-  }, [discardPending, flush, readyOnMount, receiveCapture, showNotice]);
+  }, [choose, discardPending, flush, readyOnMount, receiveCapture, showNotice]);
 
   // Rust pastes as soon as the result is complete; if nothing reports back, the glass opens.
   useEffect(() => {
@@ -157,7 +185,7 @@ export function useTranslation(readyOnMount = false) {
     void bridge.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
-  return { state, settings, screen, dispatch, receiveCapture, start, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
+  return { state, settings, screen, dispatch, receiveCapture, start, choose, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;

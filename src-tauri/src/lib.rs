@@ -1,11 +1,12 @@
 mod actions;
-use actions::{Execution, OutputMode};
+use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
 mod clipboard_guard;
 mod crypto;
 mod history;
 mod host;
 mod inference;
+mod menu_memory;
 mod placement;
 mod settings;
 mod system_motion;
@@ -15,6 +16,7 @@ mod types;
 use arboard::Clipboard;
 use chrono::Utc;
 use history::HistoryStore;
+use menu_memory::MenuMemory;
 use settings::SettingsStore;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -28,9 +30,45 @@ struct Active {
     id: String,
     cancel: CancellationToken,
 }
+/// The Îlot menu of a capture (lot 3): what it froze until the choice. `choose_action`
+/// runs once per capture, against these settings (actions, profiles, mode). `process`
+/// is the source's executable name, the key of the memory per application (lot 4).
+#[derive(Clone)]
+struct MenuSession {
+    capture_id: String,
+    settings: Settings,
+    process: Option<String>,
+    last_action_id: Option<String>,
+    chosen: bool,
+}
+/// The last press of a menu shortcut (lot 4). A second press of the same binding within
+/// 400 ms is a double press: never a new capture, the menu runs its last action.
+#[derive(Clone, Debug)]
+struct MenuPress {
+    binding_id: String,
+    at: std::time::Instant,
+    /// Set once the press's capture is stored; None while it is still being taken.
+    capture_id: Option<String>,
+    /// A double press that arrived while the capture was still being taken.
+    repeat: bool,
+}
+const REPEAT_WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
+fn is_repeat(previous: Option<&MenuPress>, binding_id: &str, at: std::time::Instant) -> bool {
+    previous.is_some_and(|press| press.binding_id == binding_id && at >= press.at && at.duration_since(press.at) < REPEAT_WINDOW)
+}
+/// What a double press does: emit `menu-repeat` for a menu still waiting, or nothing
+/// (its capture is still being taken: the repeat is emitted once stored; or the menu is
+/// already chosen or closed).
+#[derive(Debug, PartialEq, Eq)]
+enum Repeat {
+    Emit(String),
+    Swallow,
+}
 struct Inner {
     settings: Settings,
     capture: Option<StoredCapture>,
+    menu: Option<MenuSession>,
+    menu_press: Option<MenuPress>,
     pending_capture: Option<Capture>,
     active: Option<Active>,
     completed: Option<CompletedResult>,
@@ -74,6 +112,8 @@ impl Inner {
         Self {
             settings,
             capture: None,
+            menu: None,
+            menu_press: None,
             pending_capture: None,
             active: None,
             completed: None,
@@ -133,6 +173,44 @@ impl Inner {
             .as_ref()
             .is_some_and(|a| a.id == id && !a.cancel.is_cancelled())
     }
+    /// `choose_action` under the state lock: once per menu capture, against its frozen
+    /// settings; the capture then carries the execution like a direct one.
+    fn choose(&mut self, capture_id: &str, action_id: &str, instruction: Option<&str>) -> Result<ExecutionInfo, String> {
+        if !self.visible || self.pending_dismiss.is_some() || self.capture.as_ref().is_none_or(|capture| capture.public.id != capture_id) {
+            return Err("La capture n’est plus active.".into());
+        }
+        let menu = self.menu.as_mut().filter(|menu| menu.capture_id == capture_id).ok_or("Cette capture n’attend pas de choix.")?;
+        if menu.chosen { return Err("Une action a déjà été choisie pour cette sélection.".into()); }
+        let execution = Execution::chosen(&menu.settings, action_id, instruction)?;
+        menu.chosen = true;
+        let info = execution.info.clone();
+        if let Some(capture) = self.capture.as_mut() { capture.public.execution = Some(info.clone()); }
+        self.execution = Some(execution);
+        Ok(info)
+    }
+    /// A press of the menu binding `binding_id` at `at` (lot 4): None when it is not a
+    /// double press (the caller captures); otherwise what the double press does.
+    fn repeat_press(&mut self, binding_id: &str, at: std::time::Instant) -> Option<Repeat> {
+        if !is_repeat(self.menu_press.as_ref(), binding_id, at) { return None; }
+        let press = self.menu_press.as_mut()?;
+        let Some(capture_id) = press.capture_id.clone() else {
+            press.repeat = true;
+            return Some(Repeat::Swallow);
+        };
+        let waiting = self.visible && self.pending_dismiss.is_none() && self.menu.as_ref().is_some_and(|menu| menu.capture_id == capture_id && !menu.chosen);
+        Some(if waiting { Repeat::Emit(capture_id) } else { Repeat::Swallow })
+    }
+    /// The press at `at` got its capture stored (Some) or none (None): returns the capture
+    /// to repeat when a double press arrived meanwhile.
+    fn settle_press(&mut self, at: std::time::Instant, capture_id: Option<&str>) -> Option<String> {
+        let press = self.menu_press.as_mut().filter(|press| press.at == at)?;
+        let Some(capture_id) = capture_id else {
+            self.menu_press = None;
+            return None;
+        };
+        press.capture_id = Some(capture_id.to_string());
+        press.repeat.then(|| capture_id.to_string())
+    }
     fn complete_pending_dismiss(&mut self, capture_id: &str, generation: u64) -> bool {
         if self.pending_dismiss.as_ref().is_none_or(|pending| pending.0 != capture_id || pending.1 != generation) {
             return false;
@@ -148,6 +226,7 @@ struct AppState {
     inner: Arc<Mutex<Inner>>,
     settings_store: SettingsStore,
     settings_lock: Mutex<()>,
+    menu_memory: Mutex<MenuMemory>,
     history: HistoryStore,
     demo: bool,
     demo_clipboard: bool,
@@ -170,12 +249,15 @@ fn register_shortcut(app: &AppHandle, value: &str) -> Result<(), String> {
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _, event| {
             if event.state == ShortcutState::Pressed {
+                // Dated here, before the capture's own delay: the double press (lot 4)
+                // compares the presses, not the ends of their captures.
+                let pressed_at = std::time::Instant::now();
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<AppState>();
                     // Every press translates the current selection (clipboard fallback
                     // included); the docked tab brings the previous glass back on hover.
-                    if let Err(message) = capture_with_binding(app.clone(), &state, Some(shortcut_id)) {
+                    if let Err(message) = capture_with_binding(app.clone(), &state, Some((shortcut_id, pressed_at))) {
                         capture_error(&app, &message, true);
                     }
                 });
@@ -248,6 +330,7 @@ fn store_capture(
     captured: StoredCapture,
     source: isize,
     mut execution: Option<Execution>,
+    menu: Option<MenuSession>,
 ) -> Result<Capture, String> {
     let mut captured = captured;
     // An anchored capture opens on its selection's screen; the others on the cursor's.
@@ -257,7 +340,14 @@ fn store_capture(
     if let Some(run) = execution.as_mut() {
         captured.public.execution = Some(run.info.clone());
     }
+    let menu = menu.map(|session| MenuSession { capture_id: captured.public.id.clone(), ..session });
+    captured.public.menu = menu.as_ref().map(|session| MenuInfo { last_action_id: session.last_action_id.clone() });
     let public = captured.public.clone();
+    // A new capture lowers the no-activate state of the previous choice (the display
+    // glass stays clickable into focus, as in 0.4); a menu takes its keys at once.
+    let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
+    host::set_no_activate(overlay, false);
+    let is_menu = menu.is_some();
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         i.cancel(None);
@@ -265,6 +355,7 @@ fn store_capture(
         i.notice_generation = i.notice_generation.wrapping_add(1);
         i.side = None;
         i.capture = Some(captured);
+        i.menu = menu;
         i.execution = execution;
         i.visible = true;
         i.source_window = source;
@@ -288,6 +379,7 @@ fn store_capture(
         }
         i.frontend_ready
     };
+    host::set_menu_open(is_menu, source, overlay);
     position(app, state, 280., 90., None)?;
     let fallback_app = app.clone();
     let fallback_id = public.id.clone();
@@ -379,9 +471,10 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
         }),
         screen: None,
         execution: result.execution.clone().map(|mut info| { info.output_mode = OutputMode::Display; info }),
+        menu: None,
     };
     let capture_id = public.id.clone();
-    store_capture(app, &state, StoredCapture { public, target: None }, host::foreground(), None)?;
+    store_capture(app, &state, StoredCapture { public, target: None }, host::foreground(), None, None)?;
     let mut i = state.inner.lock().map_err(|_| lock_error())?;
     if i.capture.as_ref().is_some_and(|c| c.public.id == capture_id) {
         i.completed = Some(CompletedResult { capture_id, ..result });
@@ -390,22 +483,69 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 fn capture_text(app: AppHandle, state: State<'_, AppState>) -> Result<Capture, String> {
-    capture_with_binding(app, &state, None)
+    capture_with_binding(app, &state, None)?.ok_or_else(|| "Sélectionnez un texte dans une autre application.".into())
 }
-fn capture_with_binding(app: AppHandle, state: &AppState, shortcut_id: Option<u32>) -> Result<Capture, String> {
+/// What a shortcut opens: one action at once, or (a `menu` binding under the Îlot) the
+/// menu beside the selection, with the settings of the moment frozen for the choice.
+enum Opening {
+    Direct(Execution),
+    Menu(Box<Settings>),
+}
+/// Whether `handle` is one of FlowTranslate's own windows.
+fn ours(app: &AppHandle, handle: isize) -> bool {
+    handle != 0 && ["overlay", "capsule", "settings"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, handle)))
+}
+/// None when nothing was captured on purpose: a press while one of our windows holds
+/// the foreground (the Îlot has the keyboard) never captures our own window.
+fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32, std::time::Instant)>) -> Result<Option<Capture>, String> {
     if let Some(window) = app.get_webview_window("settings") {
         // The hidden settings window can hold the foreground for an instant at startup
         // (the demo capture of the probe met it): only the shown one refuses a capture.
         if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err("Fermez les réglages avant d’utiliser un raccourci.".into()); }
     }
-    let execution = {
-        let i = state.inner.lock().map_err(|_| lock_error())?;
-        let binding = if let Some(id) = shortcut_id {
-            Some(i.settings.shortcut_bindings.iter().find(|b| b.enabled && actions::parse_shortcut(&b.shortcut).is_ok_and(|key| key.id() == id)).ok_or("Ce raccourci n’est plus actif.")?)
+    let opening = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        let binding = if let Some((id, _)) = shortcut {
+            Some(i.settings.shortcut_bindings.iter().find(|b| b.enabled && actions::parse_shortcut(&b.shortcut).is_ok_and(|key| key.id() == id)).ok_or("Ce raccourci n’est plus actif.")?.clone())
         } else { None };
-        Execution::snapshot(&i.settings, binding)?
+        match binding {
+            Some(binding) if binding.kind == BindingKind::Menu && i.settings.ui_version == UiVersion::Ilot => {
+                let at = shortcut.map_or_else(std::time::Instant::now, |(_, at)| at);
+                match i.repeat_press(&binding.id, at) {
+                    Some(repeat) => Err(repeat),
+                    None => {
+                        i.menu_press = Some(MenuPress { binding_id: binding.id.clone(), at, capture_id: None, repeat: false });
+                        Ok((Opening::Menu(Box::new(i.settings.clone())), Some(at)))
+                    }
+                }
+            }
+            _ => Ok((Opening::Direct(Execution::snapshot(&i.settings, binding.as_ref())?), None)),
+        }
     };
+    let (opening, pressed_at) = match opening {
+        Ok(opening) => opening,
+        Err(Repeat::Emit(capture_id)) => {
+            let _ = app.emit_to("overlay", "menu-repeat", MenuRepeatEvent { capture_id });
+            return Ok(None);
+        }
+        Err(Repeat::Swallow) => return Ok(None),
+    };
+    let result = capture_opening(&app, state, opening);
+    if let Some(at) = pressed_at {
+        let stored = result.as_ref().ok().and_then(|capture| capture.as_ref()).map(|capture| capture.id.clone());
+        let repeat = state.inner.lock().map_err(|_| lock_error())?.settle_press(at, stored.as_deref());
+        if let Some(capture_id) = repeat {
+            let _ = app.emit_to("overlay", "menu-repeat", MenuRepeatEvent { capture_id });
+        }
+    }
+    result
+}
+/// Takes the capture of a press (or of `capture_text`) and stores it with what it opens.
+fn capture_opening(app: &AppHandle, state: &AppState, opening: Opening) -> Result<Option<Capture>, String> {
+    let app = app.clone();
     let source = host::foreground();
+    // The demo capture reads no window; any other never takes one of ours as its source.
+    if !state.demo && ours(&app, source) { return Ok(None); }
     let mut captured = capture::capture_current(state.demo, source)?;
     if state.demo_long {
         captured.public.text = "Bonjour, voici une démonstration longue destinée à vérifier le lecteur compact, son retour à la ligne, le menu placé au-dessus du verre et la stabilité du texte pendant les changements de présentation.".into();
@@ -416,11 +556,22 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut_id: Option<u3
         captured.public.can_replace = false;
         captured.target = None;
     }
-    let result = store_capture(&app, state, captured, source, Some(execution));
+    let result = match opening {
+        Opening::Direct(execution) => store_capture(&app, state, captured, source, Some(execution), None),
+        Opening::Menu(settings) => {
+            // The last action chosen in this application, if it still exists.
+            let process = host::process_name(source);
+            let last_action_id = process.as_deref()
+                .and_then(|process| state.menu_memory.lock().ok().and_then(|memory| memory.get(process).map(String::from)))
+                .filter(|id| settings.actions.iter().any(|action| &action.id == id));
+            let session = MenuSession { capture_id: String::new(), settings: *settings, process, last_action_id, chosen: false };
+            store_capture(&app, state, captured, source, None, Some(session))
+        }
+    };
     if result.is_ok() {
         reset_tray_tooltip(&app, state.simulated);
     }
-    result
+    result.map(Some)
 }
 #[tauri::command]
 fn frontend_ready(state: State<'_, AppState>) -> Result<Option<Capture>, String> {
@@ -449,6 +600,9 @@ fn translate(
             || !i.visible
         {
             return Err("La capture n’est plus active.".into());
+        }
+        if i.execution.is_none() && i.menu.as_ref().is_some_and(|menu| menu.capture_id == request.capture_id && !menu.chosen) {
+            return Err("Choisissez d’abord une action dans le menu.".into());
         }
         let run = i.execution.as_ref().ok_or("Cette capture ne peut pas être relancée. Sélectionnez à nouveau le texte.")?;
         if request.action_id != run.info.action_id {
@@ -623,6 +777,9 @@ fn result_for(state: &AppState, id: &str) -> Result<CompletedResult, String> {
 /// A « replace » capture delivers its first complete result by pasting it over the
 /// selection (0.4.0), once, as soon as inference ends. The state lock is held through
 /// the native paste: a new capture, a relaunch or a dismissal cannot commit in between.
+/// Like `replace_result` (lot 3): when our own window holds the foreground (the Îlot had
+/// the keyboard, a click on the pill), the source is brought back and revalidated after
+/// that; when another application holds it, nothing is pasted.
 fn schedule_auto_delivery(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -636,8 +793,11 @@ fn schedule_auto_delivery(app: &AppHandle) {
             c.public.can_replace = false;
             c.target.take()
         });
+        let fg = host::foreground();
+        let ours = ["overlay", "capsule"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
         let outcome = target.as_ref().ok_or_else(|| "Aucune sélection à remplacer; le résultat reste dans la bulle.".to_string())
-            .and_then(|target| capture::paste(target, &result.translated_text, false));
+            .and_then(|target| if fg != target.native_window && !ours { Err("La fenêtre source a changé; remplacement refusé.".to_string()) } else { Ok(target) })
+            .and_then(|target| capture::paste(target, &result.translated_text, true));
         let capture_id = result.capture_id.clone();
         drop(i);
         let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
@@ -702,6 +862,14 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
 
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
     host::close_escape_scope();
+    host::set_menu_open(false, 0, 0);
+    // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
+    // back before the window hides, its selection untouched and nothing pasted. Hiding
+    // the active window alone would let Windows pick the next one in the z-order.
+    let source = state.inner.lock().map_err(|_| lock_error())?.source_window;
+    if app.get_webview_window("overlay").is_some_and(|overlay| host::belongs_to(&overlay, host::foreground())) {
+        host::give_foreground(source);
+    }
     let pending = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if i.pending_dismiss.is_some() { return Ok(()); }
@@ -778,8 +946,19 @@ fn quit_app(app: AppHandle) {
 fn override_cursor(x: Option<i32>, y: Option<i32>) -> Result<(), String> {
     host::override_cursor(x.zip(y))
 }
+/// Activates the visible overlay so the WebView receives the keyboard (the Îlot menu,
+/// lot 3). True when the overlay really holds the foreground afterwards; false leaves
+/// the menu to the hook's keyboard fallback (`menu-key`).
 #[tauri::command]
-fn focus_overlay(app: AppHandle) -> Result<(), String> {
+async fn focus_overlay(app: AppHandle) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || focus_overlay_now(&app))
+        .await
+        .map_err(|_| "Activation interrompue.".to_string())?
+}
+/// Off the main thread: the frontend asks as soon as the menu capture arrives, and the
+/// window only shows once its first geometry is placed (or 300 ms later) on the main
+/// thread, so the wait for it must not block that thread.
+fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
     let capture_id = {
         let state = app.state::<AppState>();
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -794,7 +973,16 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
     let w = app
         .get_webview_window("overlay")
         .ok_or_else(|| "Traduction indisponible.".to_string())?;
-    host::activate(&w)?;
+    let shown_by = std::time::Instant::now() + std::time::Duration::from_millis(900);
+    while !host::is_visible(&w) {
+        let current = app.state::<AppState>().inner.lock().map_err(|_| lock_error())?.capture.as_ref().is_some_and(|capture| capture.public.id == capture_id);
+        if !current || std::time::Instant::now() >= shown_by { return Err("La capture n’est plus active.".into()); }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // Test runs only (the WebView2 probe sets FLOWTRANSLATE_CDP_URL): a refused foreground
+    // cannot be provoked on demand, so FLOWTRANSLATE_REFUSE_FOCUS exercises the fallback.
+    let refuse = std::env::var_os("FLOWTRANSLATE_CDP_URL").is_some() && std::env::var_os("FLOWTRANSLATE_REFUSE_FOCUS").is_some();
+    let focused = if refuse { false } else { host::activate(&w)? };
     let (current, should_hide) = {
         let state = app.state::<AppState>();
         let i = state.inner.lock().map_err(|_| lock_error())?;
@@ -812,7 +1000,60 @@ fn focus_overlay(app: AppHandle) -> Result<(), String> {
         }
         return Err("La capture n’est plus active.".into());
     }
-    Ok(())
+    Ok(focused)
+}
+
+/// Gives the foreground back from the overlay to the source, once the chord's modifiers
+/// are up. A double press (lot 4) chooses while Ctrl+Alt are still held: released over
+/// the source, Alt would move its focus to its menu bar (Win11 Notepad, measured on
+/// 2026-09-24) and the revalidation would then refuse the paste. Until then the overlay
+/// keeps the foreground and receives the release.
+fn return_foreground(overlay: isize, source: isize) {
+    if overlay == 0 || host::foreground() != overlay { return; }
+    if !host::modifiers_down() {
+        host::give_foreground(source);
+        return;
+    }
+    std::thread::spawn(move || {
+        let _ = host::wait_modifiers_released(std::time::Duration::from_millis(1500));
+        if host::foreground() == overlay { host::give_foreground(source); }
+    });
+}
+
+/// The choice made in the Îlot, once per menu capture (lot 3): a saved action of the
+/// settings frozen at the capture, or a free instruction (`actionId` = « instruction »,
+/// 1 to 1,000 characters, never logged) that becomes an ephemeral action. The capture
+/// then carries its execution (always « replace ») and the frontend calls `translate`
+/// with the returned `actionId`, as for any capture. The source gets the keyboard back
+/// if the overlay held it, and the overlay turns non-activatable (the pill never steals
+/// the focus again, until the next capture).
+#[tauri::command]
+fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String, action_id: String, instruction: Option<String>) -> Result<ExecutionInfo, String> {
+    let (info, source, process) = {
+        let mut i = state.inner.lock().map_err(|_| lock_error())?;
+        let info = i.choose(&capture_id, &action_id, instruction.as_deref())?;
+        (info, i.source_window, i.menu.as_ref().and_then(|menu| menu.process.clone()))
+    };
+    host::set_menu_open(false, 0, 0);
+    let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
+    host::set_no_activate(overlay, true);
+    return_foreground(overlay, source);
+    // The memory per application (lot 4): a saved action only, never a free instruction.
+    if let Some(process) = process.filter(|_| instruction.is_none()) {
+        if let Ok(mut memory) = state.menu_memory.lock() {
+            if memory.remember(&process, &info.action_id) { let _ = memory.save(); }
+        }
+    }
+    Ok(info)
+}
+/// Whether `shortcut` is also AltGr + a key on the active layout (the foreground
+/// window's), and the character that chord types there (lot 4, for the recorder of the
+/// settings window). A plain space typed by Ctrl+Space is not a conflict.
+#[tauri::command]
+fn shortcut_conflict(shortcut: String) -> Result<ShortcutConflict, String> {
+    let parsed = actions::parse_shortcut(&shortcut)?;
+    let character = actions::altgr_key(&parsed).and_then(|(vk, shift)| host::altgr_character(vk, shift)).filter(|c| *c != ' ');
+    Ok(ShortcutConflict { alt_gr: character.is_some(), character: character.map(String::from) })
 }
 /// The frontend reserves the window once per form (src/layout.ts): anchored, the short
 /// glass with the menu under its pill; bottom, the reader band with the menu above its
@@ -1242,7 +1483,9 @@ fn watch_context(app: AppHandle) {
                     .is_some_and(|w| host::belongs_to(&w, fg))
             });
             let down = host::escape_down();
-            if host::take_escape() || (down && !escape_was_down && (fg == snapshot.0 || ours)) {
+            // While the Îlot waits for a choice, Escape is the menu's (« back, then close »),
+            // in the WebView or as a `menu-key`; the frontend dismisses when it closes.
+            if !host::menu_open() && (host::take_escape() || (down && !escape_was_down && (fg == snapshot.0 || ours))) {
                 let _ = dismiss(&app, &state);
             }
             escape_was_down = down;
@@ -1324,6 +1567,7 @@ pub fn run() {
                 inner: Arc::new(Mutex::new(Inner::new(settings))),
                 settings_store: store,
                 settings_lock: Mutex::new(()),
+                menu_memory: Mutex::new(MenuMemory::load(&root)),
                 history,
                 demo,
                 demo_clipboard,
@@ -1388,7 +1632,15 @@ pub fn run() {
                     let _ = open_settings(app.handle().clone());
                 }
             }
-            host::install_escape_hook()?;
+            let keys = app.handle().clone();
+            host::install_keyboard_hook(move |key| {
+                // The keyboard fallback of the Îlot: only while its capture still waits.
+                let state = keys.state::<AppState>();
+                let capture_id = state.inner.lock().ok().and_then(|i| i.menu.as_ref().filter(|menu| i.visible && !menu.chosen).map(|menu| menu.capture_id.clone()));
+                if let Some(capture_id) = capture_id {
+                    let _ = keys.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
+                }
+            })?;
             watch_context(app.handle().clone());
             system_theme::watch(app.handle().clone());
             system_motion::watch(app.handle().clone());
@@ -1417,6 +1669,8 @@ pub fn run() {
             complete_overlay_dismiss,
             open_settings,
             focus_overlay,
+            choose_action,
+            shortcut_conflict,
             override_cursor,
             resize_overlay,
             overlay_dimming,
@@ -1451,6 +1705,73 @@ mod tests {
         assert!(!i.execution.as_mut().unwrap().claim_delivery("completed"));
         i.execution.as_mut().unwrap().begin("retry");
         assert!(!i.execution.as_mut().unwrap().claim_delivery("retry"));
+    }
+    fn menu_capture(i: &mut Inner, id: &str) {
+        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None });
+        i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false });
+        i.execution = None;
+        i.visible = true;
+    }
+    #[test]
+    fn a_second_press_of_the_menu_within_400_ms_repeats_and_never_captures() {
+        let t0 = std::time::Instant::now();
+        let ms = |n: u64| t0 + std::time::Duration::from_millis(n);
+        let press = |at| MenuPress { binding_id: "menu".into(), at, capture_id: None, repeat: false };
+        let mut i = Inner::new(Settings::default());
+        assert_eq!(i.repeat_press("menu", t0), None, "a first press captures");
+        i.menu_press = Some(press(t0));
+        // The first capture is still being taken: swallowed, then emitted once it is stored.
+        assert_eq!(i.repeat_press("menu", ms(150)), Some(Repeat::Swallow));
+        menu_capture(&mut i, "first");
+        assert_eq!(i.settle_press(t0, Some("first")).as_deref(), Some("first"));
+        // Stored and waiting: emitted at once, up to 399 ms after the first press.
+        assert_eq!(i.repeat_press("menu", ms(399)), Some(Repeat::Emit("first".into())));
+        assert_eq!(i.repeat_press("menu", ms(400)), None, "400 ms later it is a new press");
+        assert_eq!(i.repeat_press("other", ms(100)), None, "another binding is a new press");
+        // Chosen already, or closing: nothing, and still no new capture.
+        i.menu.as_mut().unwrap().chosen = true;
+        assert_eq!(i.repeat_press("menu", ms(200)), Some(Repeat::Swallow));
+        i.menu.as_mut().unwrap().chosen = false;
+        i.pending_dismiss = Some(("first".into(), 1));
+        assert_eq!(i.repeat_press("menu", ms(200)), Some(Repeat::Swallow));
+        // A press that captured nothing leaves no trace; a stale settle changes nothing.
+        i.menu_press = Some(press(ms(1000)));
+        assert_eq!(i.settle_press(ms(900), None), None);
+        assert!(i.menu_press.is_some());
+        assert_eq!(i.settle_press(ms(1000), None), None);
+        assert!(i.menu_press.is_none());
+        assert_eq!(i.repeat_press("menu", ms(1100)), None);
+        // Without a double press, a stored capture repeats nothing.
+        i.menu_press = Some(press(ms(2000)));
+        assert_eq!(i.settle_press(ms(2000), Some("second")), None);
+    }
+    #[test]
+    fn a_menu_capture_is_chosen_once_against_its_frozen_settings_then_carries_its_execution() {
+        let mut i = Inner::new(Settings::default());
+        menu_capture(&mut i, "menu");
+        // The settings changing after the capture do not change what the menu runs.
+        i.settings.actions.retain(|a| a.id != "correct");
+        assert!(i.choose("other", "correct", None).is_err(), "stale capture");
+        assert!(i.choose("menu", "missing", None).is_err());
+        assert!(!i.menu.as_ref().unwrap().chosen, "a refused choice leaves the menu open");
+        let info = i.choose("menu", "correct", None).unwrap();
+        assert_eq!((info.action_id.as_str(), info.output_mode), ("correct", OutputMode::Replace));
+        assert_eq!(i.capture.as_ref().unwrap().public.execution.as_ref(), Some(&info));
+        assert_eq!(i.execution.as_ref().unwrap().info, info);
+        assert!(i.choose("menu", "correct", None).is_err(), "once per capture");
+        // A free instruction: its reserved id, frozen in Rust (the frontend never resends it).
+        menu_capture(&mut i, "free");
+        assert!(i.choose("free", actions::INSTRUCTION_ACTION_ID, Some(&"x".repeat(1001))).is_err());
+        let info = i.choose("free", actions::INSTRUCTION_ACTION_ID, Some("Plus poli")).unwrap();
+        assert_eq!(info.action_id, actions::INSTRUCTION_ACTION_ID);
+        assert!(i.execution.as_ref().unwrap().action.prompt_template.contains("Plus poli"));
+        // A dismissed or direct capture has nothing to choose.
+        menu_capture(&mut i, "closing");
+        i.pending_dismiss = Some(("closing".into(), 1));
+        assert!(i.choose("closing", "correct", None).is_err());
+        i.pending_dismiss = None;
+        i.menu = None;
+        assert!(i.choose("closing", "correct", None).is_err());
     }
     #[test]
     fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {

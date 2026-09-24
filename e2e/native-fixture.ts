@@ -1,10 +1,10 @@
-import { defaultActions, defaultBindings } from '../src/actionDefaults';
+import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from '../src/actionDefaults';
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 import type { Capture, ExecutionInfo, Settings, TranslationRequest } from '../src/types';
 
-let settings: Settings = { mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [],
+let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
 // canReplace is false here; a test raises it with `target` (Rust knows it at the capture since 0.4.0).
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.
@@ -21,6 +21,9 @@ let refuseReplace = false;
 let resolveCopy: (() => void) | undefined;
 // Rust's reading of « Effets d'animation »: unknown until a test sets it.
 let windowsMotion: { reduced: boolean } | null = null;
+// Îlot (lots 3–4): whether the overlay gets the foreground, and the menu capture's choice.
+let overlayFocus = true;
+const chosen = new Set<string>();
 mockIPC((command, args) => {
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
@@ -30,6 +33,17 @@ mockIPC((command, args) => {
   if (command === 'check_connection') return { connected, message: connected ? 'Modèle trouvé.' : 'Serveur indisponible.' };
   if (command === 'frontend_ready') return currentCapture;
   if (command === 'translate') request = args?.request as TranslationRequest;
+  if (command === 'focus_overlay') return overlayFocus;
+  if (command === 'choose_action') {
+    const { captureId, actionId, instruction } = args as { captureId: string; actionId: string; instruction?: string };
+    if (captureId !== currentCapture.id || !currentCapture.menu) return Promise.reject('Cette capture n’attend pas de choix.');
+    if (chosen.has(captureId)) return Promise.reject('Une action a déjà été choisie pour cette sélection.');
+    const action = settings.actions.find(item => item.id === actionId);
+    if (instruction !== undefined ? actionId !== instructionActionId || instructionError(instruction) : !action) return Promise.reject('L’action n’existe plus.');
+    chosen.add(captureId);
+    return { actionId, actionName: action?.name ?? instructionActionName, outputMode: 'replace', mode: settings.mode } satisfies ExecutionInfo;
+  }
+  if (command === 'shortcut_conflict') return (args as { shortcut: string }).shortcut === 'Ctrl+Alt+E' ? { altGr: true, character: '€' } : { altGr: false };
   if (command === 'start_drag') return Promise.reject('Synthetic drag failure');
   if (command === 'dismiss_overlay') return emit('overlay-dismiss-requested', { captureId: currentCapture.id });
   if (command === 'copy_result' && heldCopy) return new Promise<void>(resolve => { resolveCopy = resolve; });
@@ -61,6 +75,12 @@ Object.assign(window, { nativeFixture: {
   systemMotion: (reduced: boolean) => { windowsMotion = { reduced }; return emit('system-motion', windowsMotion); },
   settings: (next: Partial<Settings>) => { settings = { ...settings, ...next }; return emit('settings-changed', settings); },
   unanchored: (id: string) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null }; return emit('capture', currentCapture); },
+  // A `menu` capture under the Îlot: no execution until choose_action.
+  captureMenu: (id: string, lastActionId: string | null = null, text?: string) => { currentCapture = { ...capture(id, text), canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
+  refuseFocus: () => { overlayFocus = false; },
+  menuKey: (key: string, shiftKey = false, captureId = currentCapture.id) => emit('menu-key', { captureId, key, shiftKey }),
+  // Lot 4: the menu shortcut pressed twice within 400 ms while its menu waits.
+  menuRepeat: (captureId = currentCapture.id) => emit('menu-repeat', { captureId }),
   replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, anchor: null, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality' } }; return emit('capture', currentCapture); },
 } });
 await import('../src/main');

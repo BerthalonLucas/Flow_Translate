@@ -314,7 +314,7 @@ test('IPC fixture: a refused shortcut keeps the previous combination and explain
   await page.getByRole('button', { name: 'Change', exact: true }).click();
   await page.keyboard.press('Control+Alt+Y');
   await expect(page.getByRole('alert')).toHaveText('Le raccourci est déjà utilisé ou indisponible.');
-  await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'T']);
+  await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Space']);
   await expect(page.locator('.save-status')).toHaveText('Saved');
 });
 

@@ -9,6 +9,17 @@ describe('translationReducer', () => {
     const clipboard = { ...selected, source: 'clipboard' as const, canReplace: false };
     expect(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: clipboard }).phase).toBe('idle');
   });
+  it('keeps a menu capture waiting, then gives it the chosen execution once and waits for the paste', () => {
+    const menu: Capture = { ...selected, menu: { lastActionId: null } };
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: menu });
+    expect(state).toMatchObject({ phase: 'idle', delivery: null, requestId: null });
+    const execution = { actionId: 'correct', actionName: 'Fix grammar', outputMode: 'replace' as const, mode: 'quality' as const };
+    expect(translationReducer(state, { type: 'CHOOSE', captureId: 'stale', execution })).toBe(state);
+    state = translationReducer(state, { type: 'TARGET', captureId: 'c1', canReplace: false });
+    state = translationReducer(state, { type: 'CHOOSE', captureId: 'c1', execution });
+    expect(state).toMatchObject({ delivery: 'pending', capture: { execution, canReplace: false, menu: { lastActionId: null } } });
+    expect(translationReducer(state, { type: 'CHOOSE', captureId: 'c1', execution: { ...execution, actionId: 'translate' } })).toBe(state);
+  });
   it('ignores events belonging to a stale request', () => {
     const active = translationReducer(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected }), { type: 'START', requestId: 'new', mode: 'quality' });
     expect(translationReducer(active, { type: 'STREAM', event: { requestId: 'old', kind: 'done' } })).toEqual(active);
