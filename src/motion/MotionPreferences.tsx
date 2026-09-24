@@ -2,22 +2,14 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNod
 import { MotionConfig, useReducedMotionConfig } from 'motion/react';
 import type { MotionPreference, MotionPreset } from '../types';
 import { reducedMotionConfig, resolveMotion } from './preference';
+import { subscribeSystemMotion, systemReducesMotion } from './system';
 import { motionTokens, type MotionTokens } from './tokens';
 import { contentPresence, stateTransition, surfacePresence, type Grow } from './presence';
 
-const reduceQuery = '(prefers-reduced-motion: reduce)';
-const subscribe = (onChange: () => void) => {
-  const query = window.matchMedia?.(reduceQuery);
-  query?.addEventListener('change', onChange);
-  return () => query?.removeEventListener('change', onChange);
-};
-const snapshot = () => Boolean(window.matchMedia?.(reduceQuery).matches);
-
-// Whether Windows asks to reduce animations. In WebView2, prefers-reduced-motion reflects the
-// « Effets d'animation » switch of Windows, so no native call is needed; the Settings window
-// (lot 13) shows « Windows demande de réduire les animations » from this.
+// Whether Windows asks to reduce animations (system.ts), live; the Settings window shows
+// « Windows demande de réduire les animations » from this.
 export function useSystemReducesMotion(): boolean {
-  return useSyncExternalStore(subscribe, snapshot, () => false);
+  return useSyncExternalStore(subscribeSystemMotion, systemReducesMotion, () => false);
 }
 
 const PresetContext = createContext<MotionPreset>('smooth');

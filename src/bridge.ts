@@ -1,10 +1,10 @@
 import { defaultActions, defaultBindings } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, SystemMotion, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-motion';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -109,6 +109,9 @@ export const bridge = {
   checkConnection: (mode: Mode) => command<ConnectionStatus>('check_connection', { mode }),
   getHistory: () => command<HistoryEntry[]>('get_history'),
   deleteHistory: (id: string | null) => command<void>('delete_history', { id }),
+  // Whether Windows asks to reduce animations (Rust reads SPI_GETCLIENTAREAANIMATION); null or
+  // undefined when unknown, always unknown in the browser preview.
+  systemMotion: () => command<SystemMotion | null | undefined>('system_motion'),
   on: event,
   setDemoCapture: (capture: Capture, scenario: DemoScenario = 'normal') => { demoCapture = capture; demoScenario = scenario; },
   // Browser preview only: what Rust emits when the shortcut finds nothing to translate.

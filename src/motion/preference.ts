@@ -1,10 +1,11 @@
 import type { MotionPreference } from '../types';
+import { subscribeSystemMotion, systemReducesMotion } from './system';
 
 export type ResolvedMotion = 'full' | 'reduced';
 
-// « Animations : suivre Windows / toujours / réduites ». WebView2 reports the Windows
-// « Effets d'animation » switch as prefers-reduced-motion; the resolved value is written as
-// data-motion on <html> for the CSS.
+// « Animations : suivre Windows / toujours / réduites ». Whether Windows reduces comes from
+// system.ts (Rust's reading of « Effets d'animation », else prefers-reduced-motion); the
+// resolved value is written as data-motion on <html> for the CSS.
 export function resolveMotion(preference: MotionPreference, prefersReduced: boolean): ResolvedMotion {
   if (preference === 'full' || preference === 'reduced') return preference;
   return prefersReduced ? 'reduced' : 'full';
@@ -17,10 +18,7 @@ export function reducedMotionConfig(preference: MotionPreference): 'user' | 'nev
 
 // Applies the preference now and follows the system while it is « system ».
 export function applyMotion(preference: MotionPreference, root: HTMLElement = document.documentElement): () => void {
-  const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-  const update = () => { root.dataset.motion = resolveMotion(preference, Boolean(query?.matches)); };
+  const update = () => { root.dataset.motion = resolveMotion(preference, systemReducesMotion()); };
   update();
-  if (preference !== 'system' || !query) return () => undefined;
-  query.addEventListener('change', update);
-  return () => query.removeEventListener('change', update);
+  return preference === 'system' ? subscribeSystemMotion(update) : () => undefined;
 }

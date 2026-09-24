@@ -8,6 +8,7 @@ mod host;
 mod inference;
 mod placement;
 mod settings;
+mod system_motion;
 mod types;
 use arboard::Clipboard;
 use chrono::Utc;
@@ -739,6 +740,12 @@ fn complete_overlay_dismiss(app: AppHandle, state: State<'_, AppState>, capture_
 fn dismiss_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     dismiss(&app, &state)
 }
+// Whether Windows asks to reduce animations, for « Animations : suivre Windows » (see
+// system_motion.rs); null when unknown.
+#[tauri::command]
+fn system_motion() -> Option<system_motion::SystemMotion> {
+    system_motion::current()
+}
 #[tauri::command]
 fn open_settings(app: AppHandle) -> Result<(), String> {
     let w = app
@@ -1388,6 +1395,7 @@ pub fn run() {
             }
             host::install_escape_hook()?;
             watch_context(app.handle().clone());
+            system_motion::watch(app.handle().clone());
             if demo {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -1421,7 +1429,8 @@ pub fn run() {
             start_drag,
             check_connection,
             get_history,
-            delete_history
+            delete_history,
+            system_motion
         ])
         .run(tauri::generate_context!())
         .expect("Impossible de démarrer FlowTranslate");

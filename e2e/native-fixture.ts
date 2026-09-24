@@ -19,10 +19,13 @@ let connected = false;
 let refuseShortcut = false;
 let refuseReplace = false;
 let resolveCopy: (() => void) | undefined;
+// Rust's reading of « Effets d'animation »: unknown until a test sets it.
+let windowsMotion: { reduced: boolean } | null = null;
 mockIPC((command, args) => {
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
   if (command === 'get_history') return [];
+  if (command === 'system_motion') return windowsMotion;
   if (command === 'save_settings') { const next = args?.settings as Settings; if (refuseShortcut && JSON.stringify(next.shortcutBindings) !== JSON.stringify(settings.shortcutBindings)) return Promise.reject('Le raccourci est déjà utilisé ou indisponible.'); settings = next; return; }
   if (command === 'check_connection') return { connected, message: connected ? 'Modèle trouvé.' : 'Serveur indisponible.' };
   if (command === 'frontend_ready') return currentCapture;
@@ -55,6 +58,7 @@ Object.assign(window, { nativeFixture: {
   target: (captureId: string, canReplace: boolean) => emit('capture-target', { captureId, canReplace }),
   notice: (message: string) => emit('capture-notice', { message }),
   workArea: (width: number, height: number, scale = 1) => emit('work-area', { width, height, scale }),
+  systemMotion: (reduced: boolean) => { windowsMotion = { reduced }; return emit('system-motion', windowsMotion); },
   settings: (next: Partial<Settings>) => { settings = { ...settings, ...next }; return emit('settings-changed', settings); },
   unanchored: (id: string) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null }; return emit('capture', currentCapture); },
   replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, anchor: null, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality' } }; return emit('capture', currentCapture); },
