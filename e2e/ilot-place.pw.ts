@@ -352,6 +352,43 @@ test('in the margin, a wider shape after the check (an Undo refused) is placed a
   expect(error.x + error.width).toBeLessThanOrEqual(reserve.width - 32);
 });
 
+test('« Undone » goes back to the strip’s corner, against the original text; once the window moved, the Îlot leaves without it', async ({ page }) => {
+  await openIlot(page);
+  await working(page, 'back');
+  const lines = [{ x: 300, y: 300, width: 420, height: 18 }, { x: 300, y: 318, width: 260, height: 18 }];
+  await paste(page, lines);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await settled(page);
+  const placed = await box(page);
+  expect(placed.x + placed.width).toBeCloseTo(560 - origin.x, 0);
+  const frames = await follow(page, 'back', () => page.locator('.shape-layer:not(.is-leaving) .result-undo').click(), 800);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'undone');
+  // At rest at the strip's corner (its right edge on the selection's end, its top 8 px under it).
+  const last = frames.at(-1)!;
+  expect(Math.abs(frames.at(-4)!.shape.x - last.shape.x)).toBeLessThan(0.5);
+  expect(last.shape.x + last.shape.width).toBeCloseTo(cornerX, 0);
+  expect(last.shape.y).toBeCloseTo(reserve.frame.y, 0);
+  for (const frame of frames) expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+
+  // The window moved for the pill's place: the strip's corner is no longer by the original text.
+  await working(page, 'moved');
+  await paste(page, Array.from({ length: 12 }, (_, index) => ({ x: 100, y: 300 + 18 * index, width: 600, height: 18 })));
+  await expect.poll(() => moves(page)).toHaveLength(1);
+  await expect.poll(() => opacity(page)).toBe('1');
+  await page.evaluate(() => {
+    const seen = window as unknown as { sawUndone?: boolean };
+    seen.sawUndone = false;
+    new MutationObserver(() => { if (document.querySelector('[data-result-content="undone"]')) seen.sawUndone = true; }).observe(document.body, { subtree: true, childList: true });
+  });
+  await page.locator('.shape-layer:not(.is-leaving) .result-undo').click();
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(2);
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { sawUndone?: boolean }).sawUndone)).toBe(false);
+  expect(await calls(page, 'undo_result')).toHaveLength(2);
+});
+
 test('Undo withdrawn on the pill’s way to the margin: it never sweeps over the text, the check alone lands at the margin’s left edge, every frame in the region', async ({ page }) => {
   await openIlot(page, { pillPlacement: 'margin' });
   await working(page, 'hop');

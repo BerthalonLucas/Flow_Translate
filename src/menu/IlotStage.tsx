@@ -74,8 +74,9 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *             Outside the window: the corner fades out at once, `move_overlay` moves the window
  *             once everything rests (never while anything animates), `result_pill` answers again
  *             for the moved window, and the pill fades back in at its place. A refusal leaves it
- *             where it is. Later shapes (the check alone, « Undone ») keep that place's corner
- *             (the left edge in the margin).
+ *             where it is. The check alone keeps that place's corner (the left edge in the margin);
+ *             « Undone » goes back to the strip's corner, against the original text, or, the
+ *             window moved, the Îlot leaves without it.
  */
 
 // How long the Îlot waits for Rust's placement before it opens anyway (below the selection); the
@@ -571,7 +572,8 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   };
   // Outside the window: faded out and at rest only (no spring, the corner still), the window
   // moves so the pill lands on its place; Rust answers again for the moved window, and the pill
-  // fades back in there. A refused move: back in sight where it was.
+  // fades back in there. A refused move: back in sight where it was. A pill with nothing left to
+  // place once moved (« Undone » after the paste's Undo) leaves.
   tryMoveRef.current = () => {
     const pending = windowMove.current;
     const size = shapeNow.current;
@@ -589,21 +591,28 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
       if (!alive.current || closingRef.current) return;
       if (!moved) { reveal(); return; }
       windowShift.current = { x: windowShift.current.x + dx, y: windowShift.current.y + dy };
+      if (!stillPlacing(pending.requestId)) { leave(); return; }
       // The pill stands at its place in the moved window; Rust's answer for it refines that.
       const now = shapeNow.current ?? size;
       let place: IlotPlace = { ...pending.place, x: pending.place.x - dx, y: pending.place.y - dy };
       let pillSide = pending.side;
       const again = await bridge.resultPill(pending.requestId, now.width, now.height).catch(() => null);
       if (!alive.current || closingRef.current) return;
+      if (!stillPlacing(pending.requestId)) { leave(); return; }
       if (usable(again) && again.inside && ilotFits(again, now)) { place = ilotPlace(again, now, growth); pillSide = again.side; }
       jump(place, pillSide);
       reveal();
     });
   };
 
+  // « Undone » goes back to the strip's corner, against the original text, while the window stands
+  // where Rust put it; once it moved (or while it moves) that corner is elsewhere, and the Îlot
+  // leaves without it. Decided once, at its first frame.
+  const undoneAway = useRef<boolean | null>(null);
+  if (outcome.stage === 'undone' && undoneAway.current === null) undoneAway.current = moveInFlight.current || windowShift.current.x !== 0 || windowShift.current.y !== 0;
   const stage: ResultStage | null = outcome.stage === 'working' ? { stage: 'working', indicator }
     : outcome.stage === 'done' ? { stage: 'done', afterReplace, clock: clock?.clock, busy, drawn: Boolean(clock?.withUndo) && !afterReplace.undo }
-    : outcome.stage === 'undone' ? { stage: 'undone' }
+    : outcome.stage === 'undone' ? undoneAway.current ? null : { stage: 'undone' }
     : outcome.stage === 'error' ? { stage: 'error', error: outcome.code, source: outcome.source, mode: state.mode, model: settings?.profiles[state.mode]?.model }
     : null;
   const content = stage && resultContent(stage, {
@@ -619,6 +628,18 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   // The check's pill may keep the work pill's size (the check alone, 44 × 28): no shape change
   // then, so the place is asked here (once: a change of shape asked first).
   useEffect(() => { const size = shapeNow.current; if (placing.current.open && size) placeRef.current(size); }, [outcome.stage, empty, rustPasted, requestId, side]);
+  // « Undone » back at the strip's corner: on the same side of the text, a glide; across it, or
+  // out of sight, a hop. Whatever waited for the window's move is dropped.
+  const undoneHere = outcome.stage === 'undone' && undoneAway.current === false && presentation === 'anchored';
+  useLayoutEffect(() => {
+    if (!undoneHere) return;
+    windowMove.current = null;
+    if (veil.current.hidden) hop(null, null);
+    else if (placed.current) {
+      if ((placedSide.current ?? side) === side) glide(null, null);
+      else hop(null, null);
+    }
+  }, [undoneHere]); // eslint-disable-line react-hooks/exhaustive-deps -- once, when « Undone » comes
   const lastContent = useRef(content);
   if (content && !closing) lastContent.current = content;
   const pill = closing || !content ? lastContent.current : content;
