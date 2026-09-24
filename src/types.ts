@@ -25,7 +25,7 @@ export type ShortcutConflict = { altGr: boolean; character?: string };
 // Second step of a capture: the document offsets and the Win32 control decide « Remplacer » behind the shown window.
 export type CaptureTarget = { captureId: string; canReplace: boolean };
 // A short message in place of the old MessageBox: a pill alone, or a line in the open glass.
-export type CaptureNotice = { message: string };
+export type CaptureNotice = { message: string; code?: ErrorCode };
 export type Profile = { endpoint: string; model: string; apiKey: string };
 // textSize: reading presets (16/24 · 22/33, 18/27 · 24/36, 20/30 · 26/39); autoClose: reading budget × 0.7, × 1, × 1.5, or never.
 export type TextSize = 'normal' | 'large' | 'xlarge';
@@ -51,9 +51,9 @@ export type AfterReplace = { check: boolean; undo: boolean; undoSeconds: number;
 export type Settings = { mode: Mode; actions: ActionDefinition[]; shortcutBindings: ShortcutBinding[]; defaultActionId: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; textSize: TextSize; autoClose: AutoClose; uiVersion: UiVersion;
   language: Language; theme: Theme; motion: MotionPreference; motionPreset: MotionPreset; indicator: Indicator; afterReplace: AfterReplace;
   undoStrategy: UndoStrategy; pillPlacement: PillPlacement; glassMaterial: GlassMaterial; menuActionIds: string[]; profiles: Record<Mode, Profile> };
-export type StreamEvent = { requestId: string; kind: 'delta' | 'done' | 'error'; text?: string; message?: string };
+export type StreamEvent = { requestId: string; kind: 'delta' | 'done' | 'error'; text?: string; message?: string; code?: ErrorCode };
 export type HistoryEntry = { id: string; sourceText: string; translatedText: string; actionName: string; mode: Mode; createdAt: string };
-export type ConnectionStatus = { connected: boolean; message: string };
+export type ConnectionStatus = { connected: boolean; message: string; code?: ErrorCode };
 export type TranslationRequest = { actionId: string; id: string; captureId: string; text: string; mode: Mode };
 // What the session shows: the waiting pill, the short glass beside the selection, or the reader band.
 export type Form = 'pending' | 'short' | 'reader';
@@ -78,4 +78,12 @@ export type SettingsField = 'menuShortcut' | ProfileField | `${Mode}.${ProfileFi
 export type SettingsFocus = { field: SettingsField };
 export type ExecutionInfo = { actionId: string; actionName: string; outputMode: OutputMode; mode: Mode };
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
-export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string };
+export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string; code?: ErrorCode };
+// Lot 10: what failed, beside the French message of 0.4 (translation error, result-delivery
+// fallback, capture-notice, target-invalidated, check_connection). The list of src/result/errors.ts;
+// an unknown code reads as 'internal'. Never any text of the server or of the user.
+export type ErrorCode = 'unreachable' | 'timeout' | 'unauthorized' | 'model_not_found' | 'bad_endpoint' | 'busy' | 'length' | 'stream_broken'
+  | 'paste_blocked' | 'target_changed' | 'not_editable' | 'too_long' | 'cancelled' | 'server_error' | 'no_selection' | 'protected_field' | 'keys_held' | 'internal';
+// Lot 10: whether each binding's chord works (`shortcut_status`, event `shortcut-status`); taken: another application holds it.
+export type BindingState = 'registered' | 'taken' | 'failed' | 'disabled';
+export type ShortcutStatus = { bindingId: string; shortcut: string; state: BindingState };

@@ -10,7 +10,7 @@ Le remplacement (0.4.0) colle, comme Wispr Flow : la sélection existe encore da
 
 ## Inférence et confidentialité
 
-Les profils acceptent HTTP seulement sur une adresse de bouclage et HTTPS ailleurs. Une base terminée par `/v1` est acceptée sans dupliquer le chemin. Les redirections HTTP sont désactivées. Le flux OpenAI SSE accepte les séparateurs LF et CRLF, les fragments UTF-8 et les événements répartis entre paquets. Seule une fin `finish_reason=stop` suivie de `[DONE]` produit l’événement `done`; une limite de longueur ou une fin prématurée produit une erreur. Une nouvelle requête annule la précédente et les événements périmés sont ignorés.
+Les profils acceptent HTTP seulement sur une adresse de bouclage et HTTPS ailleurs. Une base terminée par `/v1` est acceptée sans dupliquer le chemin. Les redirections HTTP sont désactivées. Le flux OpenAI SSE accepte les séparateurs LF et CRLF, les fragments UTF-8 et les événements répartis entre paquets. Seule une fin `finish_reason=stop` suivie de `[DONE]` produit l’événement `done`; une limite de longueur ou une fin prématurée produit une erreur. Depuis le lot 10 (Îlot), chaque erreur qui atteint le front porte un code (`error::ErrorKind` : statut HTTP, transport, flux, capture, collage) à côté du message français ; le corps de la réponse ne sert qu’à classer (un 404 qui parle du modèle) et n’en sort jamais (docs/BRIDGE.md). Une nouvelle requête annule la précédente et les événements périmés sont ignorés.
 
 Le programme n’écrit dans les journaux ni source, ni traduction, ni clé, ni presse-papiers. Il ne contient aucune commande shell ou ouverture d’URL arbitraire.
 
