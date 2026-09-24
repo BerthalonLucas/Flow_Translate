@@ -1,4 +1,5 @@
 mod actions;
+mod backdrop;
 mod browser_keys;
 use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
@@ -520,6 +521,7 @@ fn store_capture(
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, false);
     halo::hide(app);
+    backdrop::hide(app);
     host::disarm_undo_watch();
     let is_menu = menu.is_some();
     let ready = {
@@ -1360,6 +1362,7 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
         let state = handle.state::<AppState>();
         let should_hide = state.inner.lock().map(|mut i| i.complete_pending_dismiss(&capture_id, generation)).unwrap_or(false);
         if should_hide {
+            backdrop::hide(&handle);
             if let Some(window) = handle.get_webview_window("overlay") { let _ = host::hide(&window); }
         }
     }).map_err(|_| "Fermeture de la traduction indisponible.".to_string())
@@ -1371,6 +1374,7 @@ fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
         host::set_menu_open(false, 0, 0);
     }
     halo::hide(app);
+    backdrop::hide(app);
     host::disarm_undo_watch();
     // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
     // back before the window hides, its selection untouched and nothing pasted. Hiding
@@ -1524,6 +1528,7 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
     };
     if !current {
         if should_hide {
+            backdrop::hide(app);
             let _ = host::hide(&w);
         }
         return Err("La capture n’est plus active.".into());
@@ -1966,8 +1971,37 @@ fn finish_position(
           if apply_rect || apply_regions { i.last_overlay = Some((rect, regions)); }
           Ok(())
         })();
+        // Lot 12 phase B: a new shape or place cloaks the Acrylic until it rests.
+        if result.is_ok() && (apply_rect || apply_regions) {
+            let trial = state.inner.lock().is_ok_and(|i| i.settings.glass_material == GlassMaterial::Acrylic);
+            backdrop::reshape(&handle, trial);
+        }
         if let Some(placed) = placed { let _ = placed.send(result); }
     }).map_err(|_| "Placement indisponible.".to_string())
+}
+/// Lot 12 phase B: where the Acrylic goes under the shape at rest, or None to keep the painted
+/// glass (src-tauri/src/backdrop.rs): the Îlot journey (uiVersion `ilot`, a menu capture) on
+/// screen with its single region, the trial on and Windows able to draw it. The region is the
+/// one last applied, over the window's real rectangle; the theme is the one the pages resolve.
+fn backdrop_target(app: &AppHandle) -> Option<backdrop::Target> {
+    let state = app.state::<AppState>();
+    let i = state.inner.lock().ok()?;
+    if !i.visible || i.pending_dismiss.is_some() || i.dragging { return None; }
+    let journey = i.settings.ui_version == UiVersion::Ilot && i.capture.as_ref().is_some_and(|capture| capture.public.menu.is_some());
+    let (_, regions) = i.last_overlay.as_ref()?;
+    backdrop::material(i.settings.glass_material, journey && regions.len() == 1, backdrop::conditions).ok()?;
+    let region = regions[0];
+    let dark = match i.settings.theme {
+        Theme::Dark => true,
+        Theme::Light => false,
+        Theme::System => system_theme::current().is_some_and(|theme| theme.dark),
+    };
+    let s = i.scale;
+    drop(i);
+    let overlay = host::handle(&app.get_webview_window("overlay")?);
+    let window = host::window_rect(overlay)?;
+    let rect = Rect { x: window.x + (region.x * s).round(), y: window.y + (region.y * s).round(), width: (region.width * s).round(), height: (region.height * s).round() };
+    Some(backdrop::Target { overlay, rect, dark })
 }
 fn reset_tray_tooltip(app: &AppHandle, simulated: bool) {
     let Some(language) = app.state::<AppState>().inner.lock().ok().map(|i| i.settings.language) else { return };
