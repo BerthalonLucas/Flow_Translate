@@ -1,7 +1,7 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Rect, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Rect, Refusal, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
 
 type Unlisten = () => void;
 type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status' | 'undo-state';
@@ -33,6 +33,11 @@ function demoTranslation(text: string, actionId: string) {
 }
 
 const azertyAltGr: Record<string, string> = { e: '€', '2': '~', '3': '#', '4': '{', '5': '[', '6': '|', '7': '`', '8': '\\', '9': '^', '0': '@', bracketleft: ']', equal: '}' };
+
+// A `{message, code}` refusal (replace_result) read as its message, for the callers of 0.4.
+function refusalMessage(reason: unknown): unknown {
+  return typeof reason === 'object' && reason !== null && typeof (reason as Refusal).message === 'string' ? (reason as Refusal).message : reason;
+}
 
 async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (native) return tauriInvoke<T>(name, args);
@@ -129,7 +134,7 @@ export const bridge = {
   translate: (request: TranslationRequest) => command<void>('translate', { request }),
   cancel: (requestId: string) => command<void>('cancel_translation', { requestId }),
   copy: (requestId: string) => command<void>('copy_result', { requestId }),
-  replace: (requestId: string) => command<void>('replace_result', { requestId }),
+  replace: (requestId: string) => command<void>('replace_result', { requestId }).catch((reason: unknown) => { throw refusalMessage(reason); }),
   dismiss: () => command<void>('dismiss_overlay'),
   completeDismiss: (captureId: string) => command<void>('complete_overlay_dismiss', { captureId }),
   // field (lot 10): the Settings open on that field (Rust's side comes with lot 10).
@@ -194,5 +199,8 @@ export const bridge = {
   // UndoOutcome: `undone`, `refused` or `failed`, with a code); null keeps the Îlot's check alone
   // until the front handles those outcomes. Then: `(requestId: string) => command<UndoOutcome>('undo_result', { requestId })`.
   undoResult: null as ((requestId: string) => Promise<UndoOutcome>) | null,
+  // `replace_result` with its refusal as Rust sends it, `{message, code}` (Refusal): the code says
+  // why (target_changed, keys_held, not_editable, paste_blocked); `replace` keeps the message only.
+  replaceResult: (requestId: string) => command<void>('replace_result', { requestId }),
 };
 

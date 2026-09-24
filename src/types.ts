@@ -105,3 +105,6 @@ export type UndoOutcome = { requestId: string; status: UndoStatus; confirmed: bo
 // Lot 9, event `undo-state`: Undo withdrawn; typed: a key reached the source; undo_key: the user's own Ctrl+Z; caret_moved: the text is no longer before the caret.
 export type UndoLoss = 'typed' | 'undo_key' | 'caret_moved';
 export type UndoState = { requestId: string; available: false; reason: UndoLoss };
+// Since the review of da-ilot, `replace_result` rejects with its code beside the French message of
+// 0.4: target_changed, keys_held, not_editable, paste_blocked (bridge.replaceResult keeps it).
+export type Refusal = { message: string; code: ErrorCode };

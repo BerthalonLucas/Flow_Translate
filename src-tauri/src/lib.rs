@@ -5,7 +5,7 @@ mod capture;
 mod clipboard_guard;
 mod crypto;
 mod error;
-use error::{AppError, ErrorKind};
+use error::{AppError, ErrorKind, Refusal};
 mod halo;
 mod history;
 mod host;
@@ -301,6 +301,24 @@ impl Inner {
         capture.public.anchor = None;
         self.side = None;
         Invalidated::Redock
+    }
+    /// `replace_result` under the state lock: the completed result's target, spent once (the
+    /// capture can no longer be replaced afterwards: `spent`, the frontend is told). Refused
+    /// with a code (review of da-ilot, front): a result no longer current `paste_blocked`, a
+    /// capture that can no longer be replaced or a foreign window in front `target_changed`.
+    /// `in_front(window)`: that window, or one of ours, holds the foreground.
+    fn replace_target(&mut self, request_id: &str, capture_id: &str, in_front: impl FnOnce(isize) -> bool) -> (Result<TargetIdentity, AppError>, bool) {
+        if !self.visible || self.active.is_some() || self.pending_dismiss.is_some() || self.completed.as_ref().is_none_or(|done| done.request_id != request_id) {
+            return (Err(AppError::new(ErrorKind::PasteBlocked, "Ce résultat n’est plus actif.")), false);
+        }
+        let gone = || AppError::new(ErrorKind::TargetChanged, "La sélection n’est plus disponible; utilisez Copier.");
+        let Some(capture) = self.capture.as_mut().filter(|c| c.public.id == capture_id && c.public.can_replace) else { return (Err(gone()), false) };
+        let Some(target) = capture.target.take() else { return (Err(gone()), false) };
+        capture.public.can_replace = false;
+        if !in_front(target.native_window) {
+            return (Err(AppError::new(ErrorKind::TargetChanged, "La fenêtre source a changé; remplacement refusé.")), true);
+        }
+        (Ok(target), true)
     }
     /// The menu of `capture_id` still waits for its choice.
     fn menu_waits(&self, capture_id: &str) -> bool {
@@ -1320,27 +1338,21 @@ fn copy_result(state: State<'_, AppState>, request_id: String) -> Result<(), Str
 /// « Remplacer » from the menu of the glass: the same paste, the source window brought
 /// back to the front first (the click was on our window). One attempt per result.
 #[tauri::command]
-async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
-    let r = result_for(&state, &request_id)?;
+async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), Refusal> {
+    let r = result_for(&state, &request_id).map_err(|message| AppError::new(ErrorKind::PasteBlocked, message))?;
     // UI Automation uses an MTA worker, never the WebView's STA UI thread.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let mut i = state.inner.lock().map_err(|_| lock_error())?;
-        if !i.visible || i.active.is_some() || i.pending_dismiss.is_some()
-            || i.completed.as_ref().is_none_or(|done| done.request_id != r.request_id) {
-            return Err("Ce résultat n’est plus actif.".into());
-        }
+        let mut i = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?;
         let fg = host::foreground();
         let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
-        let c = i.capture.as_mut().filter(|c| c.public.id == r.capture_id && c.public.can_replace)
-            .ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
-        let target = c.target.take().ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
-        c.public.can_replace = false;
-        let capture_id = c.public.id.clone();
-        let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id, can_replace: false });
-        if fg != target.native_window && !ours { return Err("La fenêtre source a changé; remplacement refusé.".into()); }
-        capture::paste(&target, &r.translated_text, true).map(|_| ()).map_err(String::from)
-    }).await.map_err(|_| "Le remplacement a été interrompu; utilisez Copier.".to_string())?
+        let (target, spent) = i.replace_target(&r.request_id, &r.capture_id, |window| fg == window || ours);
+        if spent {
+            let _ = app.emit_to("overlay", "capture-target", CaptureTarget { capture_id: r.capture_id.clone(), can_replace: false });
+        }
+        // Held through the paste, as for the automatic one: nothing commits in between.
+        capture::paste(&target?, &r.translated_text, true).map(|_| ())
+    }).await.map_err(|_| AppError::new(ErrorKind::PasteBlocked, "Le remplacement a été interrompu; utilisez Copier."))?.map_err(Refusal::from)
 }
 fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) -> Result<(), String> {
     let handle = app.clone();
@@ -2386,6 +2398,29 @@ mod tests {
         assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
         assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
         assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
+    }
+    #[test]
+    fn a_refused_replacement_says_why_with_its_code() {
+        let target = |window| TargetIdentity { runtime_id: None, native_window: window, control: 0, selected_text: "Texte".into(), anchor: None, selection_len: 5, editable: true, check: types::TargetCheck::Uia };
+        let ready = || {
+            let mut i = Inner::new(Settings::default());
+            menu_capture(&mut i, "c");
+            i.capture.as_mut().unwrap().target = Some(target(7));
+            i.completed = Some(CompletedResult { execution: None, request_id: "r".into(), capture_id: "c".into(), source_text: String::new(), translated_text: String::new(), mode: Mode::Quality, complete: true });
+            i
+        };
+        let code = |(result, spent): (Result<TargetIdentity, AppError>, bool)| (result.err().map(|e| e.kind), spent);
+        // Another request than the completed one: nothing is spent.
+        assert_eq!(code(ready().replace_target("old", "c", |_| true)), (Some(ErrorKind::PasteBlocked), false));
+        // Another application in front: refused, and the capture can no longer be replaced.
+        let mut i = ready();
+        assert_eq!(code(i.replace_target("r", "c", |window| window == 8)), (Some(ErrorKind::TargetChanged), true));
+        assert!(!i.capture.as_ref().unwrap().public.can_replace);
+        assert_eq!(code(i.replace_target("r", "c", |_| true)), (Some(ErrorKind::TargetChanged), false), "spent once");
+        // The source (or one of our windows) in front: the target, once.
+        let mut i = ready();
+        let (result, spent) = i.replace_target("r", "c", |window| window == 7);
+        assert_eq!((result.map(|t| t.native_window).ok(), spent), (Some(7), true));
     }
     #[test]
     fn an_invalidated_capture_keeps_its_place_under_the_ilot_and_docks_under_v4() {

@@ -78,6 +78,20 @@ impl From<AppError> for String {
     }
 }
 
+/// A command refused with its code (`replace_result`), sent to the frontend as
+/// `{message, code}` like the events of lot 10: the French message of 0.4 and the code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Refusal {
+    pub message: String,
+    pub code: ErrorKind,
+}
+
+impl From<AppError> for Refusal {
+    fn from(error: AppError) -> Self {
+        Self { message: error.message, code: error.kind }
+    }
+}
+
 /// A plain string error from a helper that knows nothing better (a lock, an emit): internal.
 impl From<String> for AppError {
     fn from(message: String) -> Self {
@@ -117,6 +131,12 @@ mod tests {
             assert_eq!(serde_json::to_value(kind).unwrap(), serde_json::json!(name));
             assert_eq!(serde_json::from_value::<ErrorKind>(serde_json::json!(name)).unwrap(), kind);
         }
+    }
+
+    #[test]
+    fn a_refused_command_carries_its_message_and_its_code() {
+        let refusal = Refusal::from(AppError::new(ErrorKind::KeysHeld, "Relâchez les touches du raccourci, puis réessayez depuis la bulle."));
+        assert_eq!(serde_json::to_value(&refusal).unwrap(), serde_json::json!({"message": "Relâchez les touches du raccourci, puis réessayez depuis la bulle.", "code": "keys_held"}));
     }
 
     #[test]
