@@ -53,7 +53,8 @@ export type IlotKeyContext = {
   tiles: IlotTile[];
   columns: number;
   letters: Map<string, string>;
-  // The action Entrée relaunches: the last one when it is among the actions, else the first.
+  // The action Entrée relaunches: the last one when it is among the actions (or, past the grid,
+  // among every known action), else the first.
   last: IlotAction | undefined;
   // Tile the highlight starts on: the last action's tile, else the first.
   lastTile: number;
@@ -61,9 +62,11 @@ export type IlotKeyContext = {
   promptAvailable: boolean;
 };
 
-export function ilotKeyContext(actions: readonly IlotAction[], lastActionId: string | undefined, promptAvailable: boolean): IlotKeyContext {
+// `known`: every saved action, so a last action (or the default one) outside the grid is still the
+// one Enter relaunches, as the double press does; its letter stays with the grid's.
+export function ilotKeyContext(actions: readonly IlotAction[], lastActionId: string | undefined, promptAvailable: boolean, known: readonly IlotAction[] = []): IlotKeyContext {
   const tiles = ilotTiles(actions);
-  const last = actions.find(action => action.id === lastActionId) ?? actions[0];
+  const last = actions.find(action => action.id === lastActionId) ?? known.find(action => action.id === lastActionId) ?? actions[0];
   const lastTile = Math.max(0, tiles.findIndex(tile => tile.kind === 'action' && tile.action.id === last?.id));
   return { tiles, columns: gridColumns(tiles.length), letters: letterTable(actions), last, lastTile, promptAvailable };
 }

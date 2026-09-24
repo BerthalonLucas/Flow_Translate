@@ -1,4 +1,6 @@
-import type { AutoClose, Form, Presentation, Screen, TextSize } from './types';
+import type { AutoClose, Form, HitRegion, Presentation, Rect, Screen, TextSize } from './types';
+import { ilotMetrics } from './menu/metrics';
+import { surfaceRadius } from './motion/surface';
 
 // Calibrated reading (2026-09-14): two forms decided once, on the real result. The short
 // glass (≤ 8 lines at 380 px) opens beside the selection; anything longer is a reader
@@ -67,6 +69,52 @@ export function bottomReserve(screen: Pick<Screen, 'width' | 'height'>, preset: 
   const reader = readerMetrics(screen, preset);
   // top halo, menu, 6 px gap, pill band, reader glass, bottom halo
   return { width: reader.width + 2 * halo.x, height: halo.top + menu.reserve + 6 + glass.overlap + reader.maxHeight + halo.bottomForm };
+}
+
+// The Îlot (lot 7) has its own window, reserved once per capture for its largest shape: the
+// field's width by the grid's height (283 × 116, src/menu/metrics.ts), plus the halo. Its shapes
+// then only change the hit-test regions, never the window (plan §4.3).
+//   anchored  `frame` is the compact strip (283 × 32) that Rust places beside the selection like
+//             the glass (8 px under it, or 8 px over it when the room below is short; its right
+//             edge on the selection's end, clamped into the work area). The Îlot hangs from the
+//             strip's right edge and grows away from the selection, by at most 84 px: the
+//             reserve keeps that room on both sides, since the side is only known once Rust
+//             placed the window (ilotSide). 347 × 264.
+//   bottom    no anchor (clipboard): the box rests on the window's bottom edge, centred, and
+//             grows up; Rust docks the window bottom-centre. 347 × 152.
+export type IlotSide = 'below' | 'above';
+type ShapeSize = { width: number; height: number };
+export const ilotBox = { width: ilotMetrics.prompt.width, height: ilotMetrics.grid.height };
+const ilotGrowth = ilotBox.height - ilotMetrics.compactHeight;
+export function ilotReserve(presentation: Presentation): { width: number; height: number; frame: HitRegion } {
+  const width = ilotBox.width + 2 * halo.x;
+  if (presentation === 'bottom') return { width, height: halo.top + ilotBox.height + halo.bottomForm, frame: { x: halo.x, y: halo.top, width: ilotBox.width, height: ilotBox.height, radius: 0 } };
+  const y = halo.top + ilotGrowth;
+  return { width, height: y + ilotMetrics.compactHeight + ilotGrowth + halo.bottom, frame: { x: halo.x, y, width: ilotBox.width, height: ilotMetrics.compactHeight, radius: 0 } };
+}
+// The hit-test region of a shape in that window. Given two shapes (the start of a change), the
+// box that holds both: they share the corner, or the bottom edge, that faces the selection, and
+// the smaller radius keeps both corners inside. Whole pixels, inside the window.
+export function ilotRegion(presentation: Presentation, side: IlotSide, ...shapes: ShapeSize[]): HitRegion {
+  const reserve = ilotReserve(presentation);
+  const { frame } = reserve;
+  const width = Math.min(reserve.width, Math.ceil(Math.max(...shapes.map(shape => shape.width))));
+  const height = Math.min(reserve.height, Math.ceil(Math.max(...shapes.map(shape => shape.height))));
+  const radius = Math.min(...shapes.map(shape => surfaceRadius(shape.height)), width / 2, height / 2);
+  const bottomEdge = frame.y + frame.height;
+  if (presentation === 'bottom') {
+    const x = Math.max(0, Math.floor((reserve.width - width) / 2));
+    return { x, y: Math.max(0, bottomEdge - height), width: Math.min(reserve.width - x, Math.ceil((reserve.width + width) / 2) - x), height, radius };
+  }
+  const x = Math.max(0, frame.x + frame.width - width);
+  const y = side === 'below' ? frame.y : Math.max(0, bottomEdge - height);
+  return { x, y, width: Math.min(reserve.width - x, width), height: Math.min(reserve.height - y, height), radius };
+}
+// Which side Rust chose, read back from where it put the window (physical pixels, like the
+// anchor): the strip below the middle of the selection means below.
+export function ilotSide(windowTop: number, scale: number, anchor: Rect): IlotSide {
+  const stripTop = windowTop + ilotReserve('anchored').frame.y * scale;
+  return stripTop >= anchor.y + anchor.height / 2 ? 'below' : 'above';
 }
 
 // Reading budget: orientation plus 350 ms per word, between 5 s and 30 s (short) or 90 s
