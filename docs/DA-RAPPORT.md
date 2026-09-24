@@ -1,7 +1,7 @@
 # DA « Îlot » : rapport de fin de mission (0.5.0)
 
-Rédigé le 25 septembre 2026, pour la décision de sortie de la 0.5.0. Branche `da-ilot` à
-`13f3957`, poussée ; rien dans `main`, aucun tag. Plan : [DA-PLAN.md](DA-PLAN.md). Décisions par
+Rédigé le 25 septembre 2026, pour la décision de sortie de la 0.5.0. Branche `da-ilot`, poussée,
+en PR brouillon vers `main` ; rien dans `main`, aucun tag. Plan : [DA-PLAN.md](DA-PLAN.md). Décisions par
 défaut : dernière section de [UI-DECISIONS.md](UI-DECISIONS.md). Contrat : [BRIDGE.md](BRIDGE.md).
 Recette : [RECETTE.md](RECETTE.md).
 
@@ -17,13 +17,15 @@ d’AGENTS.md, dont les noms de rôles désignent un autre outil.
   par défaut, y compris après une mise à jour depuis la 0.4 ; la 0.4 reste derrière le réglage
   caché `uiVersion: "v4"`. En suspens : la décision Acrylic (lot 12), la recette manuelle et les
   notes de version (lot 14).
-- **Tests.** Dernière validation locale verte : Vitest 206, `cargo test` 105 + 1 ignoré,
-  Playwright 219, build. **CI rouge sur `13f3957`** : un test Playwright intermittent (§3.1).
+- **Tests.** Validation locale complète verte à `f9f7639` : tsc, Vitest 206, `cargo test` 105 + 1
+  ignoré, build, Playwright 219. La CI était rouge 8 fois sur 11 depuis `45241a7`, toujours sur
+  un test qui mesurait mal, corrigé dans `4bf97d7` (§3.1). CI verte sur `050f031`, premier commit
+  poussé avec le correctif.
 - **Vraie fenêtre.** Parcours complet prouvé dans Chrome, en clair et en sombre, en inférence
   simulée : Îlot, pilule, balayage, collage revalidé, coche, Annuler, mots changés, erreurs. Une
   erreur de serveur réelle aussi (serveur arrêté). Aucune inférence réelle par les agents ; Lucas a
   essayé une version intermédiaire avec son serveur : « c’est vraiment bien ».
-- **Jamais vérifié.** 150 et 200 %, deux écrans, Word, Outlook, Edge, Teams, AZERTY en vrai,
+- **Jamais vérifié.** 125, 150 et 200 %, deux écrans, Word, Outlook, Edge, Teams, AZERTY en vrai,
   erreurs réelles autres que « injoignable » (§6).
 - **Avant la sortie**, décidé par Lucas et pas encore fait : la mise en valeur du texte et ses
   retours du 24/09 (§8). Neuf points restent à trancher (§7).
@@ -60,25 +62,44 @@ Hors lots :
 
 ### 3.1 Tests automatiques
 
-| Contrôle | Base `origin/main` (`ca4168c`) | Dernière validation (`13f3957`, 25/09) |
+| Contrôle | Base `origin/main` (`ca4168c`) | Dernière validation (`f9f7639`, 25/09) |
 |---|---|---|
 | `tsc -b` | non relevé | OK |
 | Vitest | en échec : 10 fichiers d’anciens worktrees ramassés | 206/206 (29 fichiers) |
 | `npm run build` | OK | OK |
 | `cargo test` | OK | 105 passés, 1 ignoré (il demande un vrai vLLM) |
 | Playwright | en échec : réoptimisation de Vite, premier chargement à froid de 13 s | 219/219 |
-| `npm run ui:check` | non relevé | 30 passés, 18 en échec, tous `@v4` |
+| `npm run ui:check` | non relevé | 30 passés, 18 en échec, tous `@v4` (à `13f3957`) |
 
 - Le lot 0 a remis la base au vert (24 tests unitaires, 74 Playwright) ; la suite a grandi lot par
   lot jusqu’aux chiffres ci-dessus.
 - Contraste ≥ 4,5:1 : calculé sur les tokens, sur bureau blanc et noir (`src/theme.test.ts`), pas
   mesuré sur capture.
-- **CI GitHub « Validate and build » : rouge sur `13f3957`** (job frontend, 1 échec sur 219). Le
-  test `e2e/result.pw.ts:73` (coche et Annuler, préréglage bouncy) mesure une échelle de 1,005 sur
-  le contenu pendant le ressort, pour une tolérance de 0,005. Le même test a échoué sur `839340d`,
-  `d70e6d1` et `8fd30d0`, pas sur `47cdc08` ni `b8bf020`, et jamais en local. Cause non établie.
-- Autres instabilités connues : `e2e/native-bridge.pw.ts:134` sous forte charge (antérieur à la
-  branche), « very long reader » une fois sous charge.
+- **CI GitHub « Validate and build » : rouge 8 fois sur 11 depuis `45241a7`** (lots 9-10 front,
+  qui ont ajouté le test ; rouge sur `45241a7`, `3820e44`, `3e678ff`, `e60003d`, `839340d`,
+  `d70e6d1`, `8fd30d0` et `13f3957`, vert sur `4a3cabd`, `47cdc08` et `b8bf020`), toujours sur
+  ce seul test et jamais en local. Le test
+  `e2e/result.pw.ts:73` (coche et Annuler, préréglage bouncy) mesurait une échelle de 1,005 sur le
+  contenu pendant le ressort, pour une tolérance de 0,005. Cause établie le 25/09 : le test, pas
+  l’app. Au sommet du dépassement du ressort d’entrée bouncy (échelle ≈ 1,003), Motion rend sa
+  cible une ou deux images tant que sa vitesse est presque nulle, puis le ressort reprend pendant
+  ≈ 170 ms. Le test prenait ce `transform: none` passager pour la fin de l’entrée, mesurait donc
+  le morph avec la queue de l’entrée (≈ 0,25 %), plus l’arrondi d’`offsetWidth` au pixel entier
+  (jusqu’à 1 % sur 100 px). Correctif `4bf97d7`, sans tolérance relâchée : l’entrée n’est finie
+  qu’après 300 ms sans transformation, et l’échelle se mesure sur la taille non arrondie ; même
+  correctif dans `e2e/ilot.pw.ts`, qui avait le même motif. Mesuré ensuite : aucune échelle
+  d’ancêtre pendant le morph, écart de 3·10⁻⁶ (1,2·10⁻³ avant, en local). CI verte ensuite sur `050f031` (Playwright
+  219, `cargo test` 105 + 1 ignoré).
+- Une vraie course de test, trouvée en relançant la suite : `e2e/ilot-bridge.pw.ts:248` (touches
+  reçues avant l’Îlot). La fixture ne retenait que la prochaine lecture de la position de la
+  fenêtre ; la glace la lit aussi, et sous charge sa lecture consommait la retenue destinée à
+  l’Îlot, qui apparaissait trop tôt. Reproduit en provoquant cette lecture (2 échecs sur 3), corrigé
+  dans `050f031` (6 sur 6, puis 48 sur 48 sur le fichier répété).
+- Pages encore blanches 5 s après leur chargement, dans la suite complète locale seulement (une
+  dizaine de workers contre un seul serveur Vite de développement), un test différent à chaque
+  fois, avant toute action du test : `e2e/working-pill.pw.ts:246`, `e2e/theme-language.pw.ts:45`,
+  `e2e/ilot.pw.ts:150` ; chacun passe seul ou répété. Jamais vu sur la CI. Déjà connues sous
+  charge : `e2e/native-bridge.pw.ts:134` (antérieur à la branche), « very long reader ».
 
 ### 3.2 Vraie fenêtre
 
@@ -250,7 +271,6 @@ Non expliqué :
   le curseur). Pas reproduit ensuite (2 passages sur 2, clair et sombre) ; cause non établie. La
   sonde dit désormais si une région arrive « en retard » ou « jamais » (`b8bf020`).
 - Harnais : 3 raccourcis sur environ 70 sans capture.
-- CI : le test `e2e/result.pw.ts:73` (§3.1).
 
 ## 7. À trancher par Lucas
 
@@ -302,10 +322,7 @@ Retours de Lucas du 24/09, sur la version d’essai :
 
 Et aussi :
 
-- rendre `e2e/result.pw.ts:73` stable en CI ;
-- mettre à jour la recette et les notes 0.5.0, qui disent encore le lot 9 front « en attente »
-  (la ligne « Validation » des notes reste à écrire), et la phrase de BRIDGE.md sur l’aperçu et
-  la fixture « en `v4` jusqu’au lot 14 » ;
+- écrire la ligne « Validation » des notes 0.5.0, avec les vérifications réellement faites ;
 - dérouler la recette manuelle : aucune case n’est cochée ;
 - `scripts/capture-ui-preview.mjs` et `scripts/profile-ui.mjs` sont cassés : ils cherchent les
   libellés français de la 0.4 ;
@@ -316,7 +333,8 @@ Et aussi :
 ## 9. Conduite de la mission
 
 - Du 24/09 au matin au 25/09 vers 00:40 : 87 commits (30 feat, 42 fix, 7 docs, 6 test, 2 chore)
-  et 22 fusions, 194 fichiers. Un worktree et un port Playwright par agent ; à chaque lot,
+  et 22 fusions, 194 fichiers, jusqu’à `13f3957`. Puis, le 25/09 : ce rapport, le ménage des noms
+  et des docs (recette, notes 0.5.0, pont) et le correctif du test intermittent. Un worktree et un port Playwright par agent ; à chaque lot,
   intégration, validation complète et poussée de `da-ilot`.
 - Incidents :
   - une réponse à un agent de workflow en a lancé une copie : deux agents dans le même worktree
@@ -327,10 +345,13 @@ Et aussi :
     présence qui ignore les événements injectés ;
   - des preuves supprimées : elles montraient le bureau ou une ligne d’une messagerie de Lucas ;
   - les preuves des lots 9 et 10 ont laissé une sentinelle aléatoire dans le presse-papiers de
-    Lucas, à la place de son contenu.
+    Lucas, à la place de son contenu ;
+  - la CI n’a pas été relue après chaque poussée : rouge 8 fois sur 11 depuis `45241a7`, vu
+    seulement à la rédaction de ce rapport. Les « validé » de ces lots ne valaient que pour la
+    validation locale.
 - Coût, relevé à partir du 24/09 à 20:43 seulement : de 20:43 à 23:14, 43 points de la fenêtre de
-  5 h pour 6 points de l’hebdomadaire ; un relecteur, 410 à 430 k jetons. Hebdomadaire à 79 % le
-  25/09 à 00:50.
+  5 h pour 6 points de l’hebdomadaire ; un relecteur, 410 à 430 k jetons. Hebdomadaire à 80 % le
+  25/09 à 01:05.
 - Poste de Lucas : 0.5.0 d’essai installée (branche locale `da-ilot-test`, antérieure aux
   corrections du lot 9 et à la fin du lot 14), réglages neufs à sa demande. L’ancien fichier, déjà
   migré, est sauvegardé dans
