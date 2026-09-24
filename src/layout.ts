@@ -119,15 +119,16 @@ export function ilotRoom(windowX: number, scale: number, work: Pick<Rect, 'x' | 
 // How far right of the strip's corner a shape's corner sits: `x`, the pill's place after the paste
 // (0 before; ilotPlace, placeX), then a slide so the shape stays in the work area: nothing while it
 // fits left of its corner (always at the strip's corner, up to the strip's width: Rust clamped the
-// strip), else what it overhangs, whole pixels, never past the reserve's spare (its halo kept) nor
-// the work area's right edge. Kept in the window whatever the place. Unknown room: no slide (the
-// browser preview, a screen the point is not on).
+// strip), else what it overhangs, whole pixels, never past the work area's right edge. Whatever the
+// place, the corner never goes past the reserve's spare, and the shape's left edge keeps the halo's
+// room in the window: its shadow is never cut. Unknown room: no slide (the browser preview, a
+// screen the point is not on).
 export function ilotShift(width: number, room: IlotRoom | null, x = 0): number {
   const at = room && { left: room.left + x, right: room.right - x };
   const overhang = at ? Math.ceil(width - at.left) : 0;
   const slide = at && overhang > 0 ? Math.max(0, Math.min(overhang, ilotSpare - x, Math.floor(at.right))) : 0;
   const corner = ilotReserve('anchored').frame.x + ilotStrip;
-  return Math.max(width - corner, Math.min(x + slide, ilotReserve('anchored').width - corner));
+  return Math.max(width - corner + halo.x, Math.min(x + slide, ilotSpare));
 }
 // Lot 9: where the pill goes after Rust's paste, from `result_pill` (its top-left corner in the
 // window as it stands, logical) for a pill of `size`: the offset of its corner from the strip's,
@@ -148,10 +149,12 @@ export function ilotPlace(target: Pick<PillTarget, 'x' | 'y' | 'side'>, size: { 
 export function placeX(place: IlotPlace | null, width: number): number {
   return !place ? 0 : place.keepLeft ? place.x + width - place.width : place.x;
 }
-// Whether a pill of `size` at that target lies inside the reserved window.
+// Whether a pill of `size` at that target lies inside the reserved window with its shadow's room
+// (the halo: 32 px on each side, 20 above, 44 below): any closer to an edge, the window would cut
+// the shadow, and the window moves instead (`move_overlay`).
 export function ilotFits(target: Pick<PillTarget, 'x' | 'y'>, size: { width: number; height: number }): boolean {
   const reserve = ilotReserve('anchored');
-  return target.x >= 0 && target.y >= 0 && target.x + size.width <= reserve.width && target.y + size.height <= reserve.height;
+  return target.x >= halo.x && target.y >= halo.top && target.x + size.width <= reserve.width - halo.x && target.y + size.height <= reserve.height - halo.bottom;
 }
 // The hit-test region of a shape in that window. Given several shapes (the start of a change, a
 // pill on its way to its place), the box that holds them all: they share the corner, or the

@@ -139,6 +139,10 @@ describe('Îlot window (lot 7)', () => {
     expect(placeX(null, 240)).toBe(0);
     expect(ilotFits({ x: 362, y: 122 }, pill)).toBe(true);
     for (const target of [{ x: -1, y: 122 }, { x: 472, y: 122 }, { x: 362, y: 237 }, { x: 362, y: -2 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
+    // The shadow's room kept (the halo: 32 px each side, 20 above, 44 below in the 581 × 264
+    // window): a pill any closer to an edge would have its shadow cut by the window.
+    for (const target of [{ x: 32, y: 20 }, { x: 439, y: 192 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(true);
+    for (const target of [{ x: 31, y: 122 }, { x: 440, y: 122 }, { x: 362, y: 19 }, { x: 362, y: 193 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
   });
   it('slides a placed pill only by what the work area needs, and keeps any shape in the window', () => {
     const wide = ilotRoom(520 - 432, 1, { x: 0, width: 1920 });
@@ -151,9 +155,11 @@ describe('Îlot window (lot 7)', () => {
     expect(ilotShift(110, clamped, -100)).toBe(-100);
     expect(ilotShift(250, clamped, -100)).toBe(-33);
     expect(ilotShift(400, clamped, -100)).toBe(117);
-    // Whatever the place, the shape stays in the window (0 to 581, the strip's corner at 432).
-    expect(ilotShift(260, null, -300)).toBe(-172);
-    expect(ilotShift(110, null, 200)).toBe(149);
+    // Whatever the place, the shape stays in the window with its shadow's room (32 to 549, the
+    // strip's corner at 432): its left edge at 32 at least, its corner 117 right of the strip's at
+    // most. Before the review of lot 9 the bounds were the window's own edges (−172 and 149).
+    expect(ilotShift(260, null, -300)).toBe(-140);
+    expect(ilotShift(110, null, 200)).toBe(117);
   });
   it('covers a placed pill and its way there, above or below the selection', () => {
     // From the strip's corner to 40 px right and 18 px below it: both positions.

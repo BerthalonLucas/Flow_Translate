@@ -288,6 +288,28 @@ test('a place outside the window: the pill fades out as soon as Rust answers, no
   expect(move.shape).toEqual({ width: final.width, height: final.height });
 });
 
+test('a place in the window but too close to its edge for the shadow: the window moves instead, the shadow keeps its room', async ({ page }) => {
+  await openIlot(page);
+  await working(page, 'edge');
+  // Seven lines: the last ends at x = 560, its bottom at 426, the pill's top at 434: 212 in the
+  // window, its bottom within 264 but past 220 (the 44 px of shadow below).
+  const lines = Array.from({ length: 7 }, (_, index) => ({ x: 300, y: 300 + 18 * index, width: index === 6 ? 260 : 420, height: 18 }));
+  await paste(page, lines);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await expect.poll(() => calls(page, 'move_overlay')).toHaveLength(1);
+  await expect.poll(() => opacity(page)).toBe('1');
+  await settled(page);
+  const pill = await box(page);
+  const window = await fixture(page).run(f => f.windowPosition());
+  expect(pill.x + pill.width + window.x).toBeCloseTo(560, 0);
+  expect(pill.y + window.y).toBeCloseTo(434, 0);
+  // In the moved window, the shadow's room on every side (32 px on the sides, 20 above, 44 below).
+  expect(pill.x).toBeGreaterThanOrEqual(32);
+  expect(pill.y).toBeGreaterThanOrEqual(20);
+  expect(pill.x + pill.width).toBeLessThanOrEqual(reserve.width - 32);
+  expect(pill.y + pill.height).toBeLessThanOrEqual(reserve.height - 44);
+});
+
 test('Undo withdrawn on the pill’s way to the margin: it never sweeps over the text, the check alone lands at the margin’s left edge, every frame in the region', async ({ page }) => {
   await openIlot(page, { pillPlacement: 'margin' });
   await working(page, 'hop');
