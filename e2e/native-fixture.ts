@@ -135,9 +135,11 @@ const placedWindow = () => {
 let moved = { x: 0, y: 0 };
 let movedFor: string | undefined;
 const windowNow = () => { const at = windowOverride ?? placedWindow(); return { x: at.x + moved.x, y: at.y + moved.y }; };
-// The next read of that position answers only once released: the Îlot waits for its side.
+// While held, every read of that position answers only once released: the Îlot waits for its
+// side. Every read, not the next one: the glass reads it too (the working pill's side), and its
+// read can come after the hold under load.
 let holdPosition = false;
-let releasePosition: (() => void) | undefined;
+let heldReads: Array<() => void> = [];
 // The work area of the screen holding a point (`monitorFromPoint`, physical pixels), for the room
 // the Îlot has around its strip: one 1920 × 1080 screen, its taskbar 40 high.
 let workArea = { x: 0, y: 0, width: 1920, height: 1040 };
@@ -177,8 +179,7 @@ mockIPC((command, args) => {
   if (command === 'focus_overlay') return overlayFocus;
   if (command === 'plugin:window|inner_position') {
     if (!holdPosition) return windowNow();
-    holdPosition = false;
-    return new Promise(resolve => { releasePosition = () => resolve(windowNow()); });
+    return new Promise(resolve => { heldReads.push(() => resolve(windowNow())); });
   }
   if (command === 'plugin:window|monitor_from_point') return monitor();
   if (command === 'choose_action') {
@@ -298,9 +299,9 @@ Object.assign(window, { nativeFixture: {
   unanchoredMenu: (id: string, lastActionId: string | null = null) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null, canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   // Rust placed the window elsewhere (above the selection, another screen): physical pixels.
   windowAt: (x: number, y: number) => { windowOverride = { x, y }; },
-  // The next read of the window's position waits for releasePosition (the Îlot not shown yet).
+  // The reads of the window's position wait for releasePosition (the Îlot not shown yet).
   holdPosition: () => { holdPosition = true; },
-  releasePosition: () => { releasePosition?.(); releasePosition = undefined; },
+  releasePosition: () => { holdPosition = false; for (const read of heldReads.splice(0)) read(); },
   // The work area of the anchor's screen (physical pixels): a taskbar on the left, another screen.
   workAreaAt: (x: number, y: number, width: number, height: number) => { workArea = { x, y, width, height }; },
   menuKey: (key: string, shiftKey = false, captureId = currentCapture.id) => emit('menu-key', { captureId, key, shiftKey }),
