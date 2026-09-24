@@ -127,7 +127,7 @@ select, input[type="text"], input[type="number"], textarea { font: inherit; font
 .desk[data-dark="true"] .mail-fields div { border-color: rgba(255,255,255,.07); }
 .mail-body { position: relative; flex: 1; padding: 12px 18px 18px; font-size: 14.5px; line-height: 1.62; overflow: auto; user-select: text; cursor: text; }
 .mail-body p { margin: 0 0 10px; }
-.para { border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-color 160ms ease; }
+.para { white-space: pre-wrap; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-color 160ms ease; }
 .sel-range, .para.is-sel { background-color: rgba(0,120,215,.22); border-radius: 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .desk[data-dark="true"] .sel-range { background-color: rgba(80,160,255,.3); }
 .task { position: absolute; left: 0; right: 0; bottom: 0; height: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px; color: rgba(0,0,0,.55); background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
@@ -144,8 +144,10 @@ select, input[type="text"], input[type="number"], textarea { font: inherit; font
 .surface .s-fx { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
 .surface .s-fx > * { position: absolute; inset: 0; border-radius: inherit; }
 .surface .s-clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
-.surface .layer { position: absolute; left: 0; top: 0; width: max-content; }
-.surface.grow-up .layer { top: auto; bottom: 0; }
+/* Content stays centred in the box while the box springs to its new size. */
+.surface .layer { position: absolute; left: 50%; top: 50%; width: max-content; transform: translate(-50%, -50%); }
+.surface { transition: left 420ms cubic-bezier(.23,1,.32,1), top 420ms cubic-bezier(.23,1,.32,1), bottom 420ms cubic-bezier(.23,1,.32,1); }
+:root[data-motion="reduced"] .surface { transition: none; }
 .surface .layer.is-leaving { pointer-events: none; }
 .surface button { font: inherit; color: inherit; }
 
@@ -308,3 +310,8 @@ select, input[type="text"], input[type="number"], textarea { font: inherit; font
 .anim-state { font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
 .anim-state i { width: 8px; height: 8px; border-radius: 50%; background: var(--lab-ok); }
 .anim-state.off i { background: var(--lab-warn); }
+
+/* Changed words stay marked while Undo is possible, then fade. */
+.chg-hold { border-radius: 3px; background-color: rgba(141,159,255,.32); transition: background-color 900ms ease-out; animation: chg-in 260ms ease-out both; }
+.chg-hold.is-leaving { background-color: transparent; }
+@keyframes chg-in { from { background-color: transparent; } }

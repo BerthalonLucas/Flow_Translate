@@ -56,7 +56,12 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
     const last = lastRects[lastRects.length - 1] || els[els.length - 1].getBoundingClientRect();
     const firstRect = els[0].getClientRects()[0] || els[0].getBoundingClientRect();
     const left = Math.max(10, Math.min(last.right - dr.left - 30, dr.width - 330));
-    if (cfgRef.current.anchor === 'above') {
+    if (cfgRef.current.anchor === 'margin') {
+      // Beside the text column, level with the last line: never over any text.
+      const col = body.current.getBoundingClientRect();
+      setGrow('down');
+      setPos({ left: Math.round(col.right - dr.left + 8), top: Math.round(last.top - dr.top - 4), bottom: 'auto' });
+    } else if (cfgRef.current.anchor === 'above') {
       setGrow('up');
       setPos({ left: Math.max(10, Math.min(firstRect.left - dr.left, dr.width - 330)), bottom: dr.bottom - firstRect.top + 8, top: 'auto' });
     } else {
@@ -114,6 +119,8 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
     if (outcome.id !== 'success') { setPhase('error'); status(`Erreur simulée : ${outcome.label} (après ${ms} ms)`); return; }
     showResult(r, r.preview ? 'preview' : 'commit');
     setPhase(r.preview ? 'preview' : 'done');
+    // The new text can be longer: move the pill beside it, never over it.
+    requestAnimationFrame(() => requestAnimationFrame(place));
     status(r.preview ? `Aperçu prêt en ${ms} ms : Entrée garde, Tab essaie la suivante, Échap annule` : `Remplacé en ${ms} ms`);
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -301,7 +308,7 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
       <div className="mail-fields"><div>{lang === 'fr' ? 'À' : 'To'} : Claire Martin</div><div>{lang === 'fr' ? 'Objet' : 'Subject'} : Q3 report</div></div>
       <div className="mail-body" ref={body} onMouseUp={onMouseUp}>
         {PARAGRAPHS.map(p => <p key={p.id}><Para id={p.id} text={texts[p.id]} disp={display[p.id]} range={sel.find(x => x.pid === p.id)}
-          showSel={!['done', 'undone'].includes(phase)} working={workingIds.includes(p.id)} cfg={cfg} /></p>)}
+          showSel={!['done', 'undone'].includes(phase)} working={workingIds.includes(p.id)} leaving={phase !== 'done' && phase !== 'preview'} cfg={cfg} /></p>)}
       </div>
     </div>
     <div className="task"><span>⌂</span><span>{lang === 'fr' ? 'Mail' : 'Mail'}</span><span>·</span><span>FlowTranslate</span></div>
@@ -316,7 +323,7 @@ const wholeParas = (ids, texts) => PARAGRAPHS.filter(p => ids.includes(p.id)).ma
 function offsetIn(el, node, offset) { const r = document.createRange(); r.setStart(el, 0); r.setEnd(node, offset); return r.toString().length; }
 
 // One paragraph: text before, the selected or rewritten range, text after.
-function Para({ id, text, disp, range, showSel, working, cfg }) {
+function Para({ id, text, disp, range, showSel, working, leaving, cfg }) {
   // While the model works, the range carries the effect (no selection tint unless asked).
   if (working && range) {
     const fxStyle = cfg.textFxParams[cfg.textFx];
@@ -332,7 +339,7 @@ function Para({ id, text, disp, range, showSel, working, cfg }) {
     const { start, end, ops, whole, fx, diff, key } = disp;
     const perWord = ['blur', 'rise', 'type'].includes(fx);
     const vars = { '--stagger': `${cfg.replaceParams.stagger}ms`, '--blur': `${cfg.replaceParams.blur}px`, '--wdur': `${cfg.replaceParams.dur}ms`, '--diff-hold': `${cfg.diffHold}ms`, '--diff-fade': `${cfg.diffFade}ms` };
-    const chg = diff === 'fade' ? 'chg-fade' : diff === 'persist' ? 'chg-persist' : diff === 'underline' ? 'chg-underline' : '';
+    const chg = diff === 'undo' ? `chg-hold ${leaving ? 'is-leaving' : ''}` : diff === 'fade' ? 'chg-fade' : diff === 'persist' ? 'chg-persist' : diff === 'underline' ? 'chg-underline' : '';
     let i = 0;
     const parts = ops.map((op, k) => {
       const nodes = tokenize(op.text).map((t, j) => /^\s+$/.test(t) ? t : <span key={j} className="w" style={perWord ? { '--i': i++ } : undefined}>{t}</span>);
@@ -342,7 +349,7 @@ function Para({ id, text, disp, range, showSel, working, cfg }) {
     const fxCls = { blur: 'rx-blur', rise: 'rx-rise', type: 'rx-type', fade: 'rx-fade', crossblur: 'rx-crossblur' }[fx] || '';
     const selected = showSel && range && range.start === start && range.end === end;
     return <span className="para" data-pid={id}>{text.slice(0, start)}
-      <span key={key} className={`${fxCls} ${wholeCls} ${selected ? 'sel-range' : ''}`} style={vars} data-range={selected ? '' : undefined}>{parts}</span>
+      <span key={key} className={`${fxCls} ${wholeCls} ${selected ? 'sel-range' : ''}`} style={vars} data-range>{parts}</span>
       {text.slice(end)}</span>;
   }
   if (range && showSel) return <span className="para" data-pid={id}>{text.slice(0, range.start)}<span className="sel-range" data-range>{text.slice(range.start, range.end)}</span>{text.slice(range.end)}</span>;

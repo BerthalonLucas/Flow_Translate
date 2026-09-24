@@ -8,7 +8,7 @@ import { MENU_BY_ID } from './menus.jsx';
 import { LOADER_BY_ID, injectMorphKeyframes } from './loaders.jsx';
 import { setClock, resolve, LINEAR_OK } from './motion.js';
 
-const STORE = 'flowtranslate-labo-v2';
+const STORE = 'flowtranslate-labo-v3';
 function load() {
   try { const raw = localStorage.getItem(STORE); if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }; } catch { /* storage unavailable */ }
   return DEFAULTS;

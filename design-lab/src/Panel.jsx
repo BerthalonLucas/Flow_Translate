@@ -91,7 +91,7 @@ export function Panel({ cfg, set, tab, setTab }) {
             <Seg value={cfg.shortcut} options={[['ctrl-alt-space', 'Ctrl+Alt+Espace'], ['ctrl-alt', 'Ctrl+Alt seul'], ['double-shift', 'Maj deux fois']]} onChange={v => set({ shortcut: v })} />
           </Field>
           <Field label="Position">
-            <Seg value={cfg.anchor} options={[['below', 'Sous la sélection'], ['above', 'Au-dessus']]} onChange={v => set({ anchor: v })} />
+            <Seg value={cfg.anchor} options={[['below', 'Sous la sélection'], ['above', 'Au-dessus'], ['margin', 'Dans la marge']]} onChange={v => set({ anchor: v })} />
           </Field>
           <Check label="Proposer d’abord la dernière action utilisée (Entrée la relance)" checked={cfg.rememberLast} onChange={v => set({ rememberLast: v })} />
         </div>
@@ -156,7 +156,7 @@ export function Panel({ cfg, set, tab, setTab }) {
         </div>
         <div className="group">
           <Field label="Mots changés" desc="Traduction, mail et consigne libre changent tout : c’est alors tout le bloc qui est marqué. Faisable par-dessus les mots dans les applications qui exposent leur texte (Word, Outlook, Edge, Chrome…).">
-            <Seg value={cfg.diff} options={[['off', 'Rien'], ['fade', 'Surligné puis s’efface'], ['persist', 'Surligné jusqu’au clic'], ['underline', 'Souligné coloré']]} onChange={v => set({ diff: v })} />
+            <Seg value={cfg.diff} options={[['undo', 'Surligné tant qu’on peut annuler'], ['fade', 'Surligné puis s’efface'], ['persist', 'Surligné jusqu’au clic'], ['underline', 'Souligné coloré'], ['off', 'Rien']]} onChange={v => set({ diff: v })} />
           </Field>
           {cfg.diff === 'fade' && <>
             <Slider label="Reste visible" value={cfg.diffHold} min={0} max={3000} step={50} unit=" ms" onChange={v => set({ diffHold: v })} />
@@ -166,7 +166,7 @@ export function Panel({ cfg, set, tab, setTab }) {
         <div className="group">
           <Check label="Coche de confirmation" checked={cfg.check} onChange={v => set({ check: v })} />
           <Check label="Bouton Annuler (et Ctrl+Z)" checked={cfg.undo} onChange={v => set({ undo: v })} />
-          {cfg.undo && <Slider label="Annulation possible pendant" value={cfg.undoSeconds} min={2} max={15} step={1} unit=" s" onChange={v => set({ undoSeconds: v })} />}
+          {cfg.undo && <Slider label="Annulation possible pendant" value={cfg.undoSeconds} min={2} max={20} step={1} unit=" s" onChange={v => set({ undoSeconds: v })} />}
           <p className="small muted">Le compte à rebours se met en pause quand la souris est sur la pilule. Sans coche ni Annuler, la pilule disparaît dès le remplacement.</p>
         </div>
         <div className="group">

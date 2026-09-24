@@ -138,7 +138,7 @@ export function mockRewrite(pid, fullText, start, end, outId) {
   return lead + ow.slice(a, b).join(' ') + trail;
 }
 
-// ——— Defaults (Lucas, 24 septembre : Îlot, Perle, Lucide, verre clair / sombre) ———
+// ——— Defaults (Lucas, 24 septembre : Îlot, Perle, Lucide, verre clair / sombre, Apple smooth, mots changés visibles pendant l’annulation) ———
 export const DEFAULTS = {
   lang: 'en',
   iconSet: 'lucide',
@@ -162,15 +162,15 @@ export const DEFAULTS = {
   outcome: 'success',
   replaceFx: 'fade',
   replaceParams: { stagger: 22, blur: 6, dur: 320 },
-  diff: 'fade',
+  diff: 'undo',
   diffHold: 600,
   diffFade: 1200,
   check: true,
   undo: true,
-  undoSeconds: 5,
+  undoSeconds: 8,
   errorStyle: 'pill',
-  motionPreset: 'apple-snappy',
-  motion: MOTION_PRESETS['apple-snappy'],
+  motionPreset: 'apple-smooth',
+  motion: MOTION_PRESETS['apple-smooth'],
   theme: 'system',
   materialLightPreset: 'apple-light',
   materialLight: MATERIAL_PRESETS['apple-light'],
