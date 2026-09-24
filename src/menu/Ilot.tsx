@@ -1,7 +1,7 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useT } from '../i18n';
 import { Icon, iconFromLucide } from '../ui';
-import { ilotKeyContext, resolveIlotKey, tileCommand, type CompactItem, type IlotAction, type IlotCommand, type IlotMode, type IlotTile, type KeyInput } from './keys';
+import { ilotKeyContext, keyInputOf, resolveIlotKey, tileCommand, type CompactItem, type IlotAction, type IlotCommand, type IlotMode, type IlotTile, type KeyInput } from './keys';
 import { ilotMetrics } from './metrics';
 import { MorphSurface, type ShapeChange, type SurfaceOrigin, type SurfaceSize } from './MorphSurface';
 import './ilot.css';
@@ -35,6 +35,9 @@ import './ilot.css';
  *                  and moves the focus (roving focus). 'injected': Rust forwards the menu keys
  *                  (`menu-key`, KeyboardEvent.key) through the handle's press(); the free
  *                  instruction is unavailable then (pastille and tile dimmed, Space ignored).
+ *   onRequestKeyboard()  'injected' only: the pastille or the « Ask » tile clicked asks for the
+ *                  keyboard; the field opens once the promise answers true (the parent then
+ *                  passes keyboard 'focused').
  *   ref            IlotHandle: press(key, { shiftKey }) → whether the menu used the key.
  *   initialMode    'compact' by default (the lab scenarios open on 'grid' or 'prompt').
  *   shape          'menu' (default) or 'pill': the same surface, never unmounted, springs to the
@@ -63,6 +66,7 @@ export type IlotProps = {
   origin?: SurfaceOrigin;
   originX?: string;
   keyboard?: IlotKeyboard;
+  onRequestKeyboard?: () => Promise<boolean>;
   initialMode?: IlotMode;
   shape?: IlotShape;
   pill?: PillContent | null;
@@ -89,7 +93,7 @@ function ActionIcon({ action, size }: { action: IlotAction; size: 14 | 16 }) {
   return name ? <Icon name={name} size={size} /> : null;
 }
 
-export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', initialMode = 'compact', shape = 'menu', pill, onShapeChange, ref }: IlotProps) {
+export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', onRequestKeyboard, initialMode = 'compact', shape = 'menu', pill, onShapeChange, ref }: IlotProps) {
   const t = useT();
   const promptAvailable = keyboard !== 'injected';
   const context = useMemo(() => ilotKeyContext(actions, lastActionId, promptAvailable, knownActions), [actions, lastActionId, promptAvailable, knownActions]);
@@ -151,11 +155,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
       if (target instanceof HTMLElement && target.matches('input, textarea, select, [contenteditable]') && !target.closest('[data-ilot]')) return;
-      const used = latest.current({
-        key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey,
-        altGraph: event.getModifierState?.('AltGraph') ?? false, isComposing: event.isComposing || event.keyCode === 229,
-      });
-      if (used) { event.preventDefault(); event.stopPropagation(); }
+      if (latest.current(keyInputOf(event))) { event.preventDefault(); event.stopPropagation(); }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -176,13 +176,21 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
   useEffect(() => stopHover, []);
   useEffect(() => { if (mode !== 'compact' || shape !== 'menu') stopHover(); }, [mode, shape]);
 
-  const pick = (tile: IlotTile) => apply(tileCommand(tile, promptAvailable));
+  // The field from the pointer: at once with the keyboard; without it, once the keyboard is
+  // granted, if the menu still shows.
+  const shapeNow = useRef(shape);
+  shapeNow.current = shape;
+  const openField = () => {
+    if (promptAvailable) { apply({ type: 'prompt', seed: '' }); return; }
+    void onRequestKeyboard?.().then(granted => { if (granted && shapeNow.current === 'menu') apply({ type: 'prompt', seed: '' }); }, () => undefined);
+  };
+  const pick = (tile: IlotTile) => tile.kind === 'ask' ? openField() : apply(tileCommand(tile, promptAvailable));
   const describe = t('ilot.describe');
   const unavailable = promptAvailable ? undefined : t('ilot.unavailable');
 
   let content: ReactNode;
   if (shape === 'pill') content = pill?.node;
-  else if (mode === 'prompt') content = <PromptField seed={seed.text} label={describe} onSubmit={onInstruction} onCancel={() => apply({ type: 'compact' })} />;
+  else if (mode === 'prompt') content = <PromptField seed={seed.text} label={describe} onSubmit={onInstruction} />;
   else if (mode === 'grid') content = <div role="menu" aria-label={t('ilot.menu')} className="ilot-grid" style={{ gridTemplateColumns: `repeat(${context.columns}, ${ilotMetrics.tile.width}px)` }}>
     {context.tiles.map((tile, index) => {
       const isHot = index === safeHot;
@@ -215,7 +223,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
       {last && <span className="ilot-sep" aria-hidden="true" />}
       <button role="menuitem" type="button" tabIndex={focusable === 'ask' ? 0 : -1} className="ilot-btn ilot-ask" data-item="ask"
         ref={element => { compactItems.current.ask = element; }} aria-label={describe} aria-keyshortcuts="Space /" aria-disabled={promptAvailable ? undefined : true} aria-description={unavailable}
-        onClick={() => { if (promptAvailable) apply({ type: 'prompt', seed: '' }); }}>
+        onClick={openField}>
         <span className="ilot-dot" />
       </button>
     </div>;
@@ -229,8 +237,11 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
 }
 
 // menus.jsx:33-43: the free instruction in a real <input>, so AltGr characters, dead keys and IME
-// composition reach it as typed. Enter sends, Escape goes back to the compact state.
-function PromptField({ seed, label, onSubmit, onCancel }: { seed: string; label: string; onSubmit: (text: string) => void; onCancel: () => void }) {
+// composition reach it as typed. Enter sends, and so does a click on the drawn ↵; Escape goes back
+// to the compact state (the Îlot's table, keys.ts, wherever the focus is). A press anywhere else in
+// the field (its dot, its ↵, its padding) keeps the focus in the input (review of bc57857,
+// finding 5).
+function PromptField({ seed, label, onSubmit }: { seed: string; label: string; onSubmit: (text: string) => void }) {
   const [value, setValue] = useState(seed);
   const input = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
@@ -239,22 +250,18 @@ function PromptField({ seed, label, onSubmit, onCancel }: { seed: string; label:
     field.focus({ preventScroll: true });
     field.setSelectionRange(field.value.length, field.value.length);
   }, []);
-  return <div className="ilot-field">
+  const submit = () => {
+    const text = cleanInstruction(value);
+    if (text) onSubmit(text);
+  };
+  return <div className="ilot-field" onMouseDown={event => { if (event.target !== input.current) event.preventDefault(); }}>
     <span className="ilot-dot" aria-hidden="true" />
     <input ref={input} className="ilot-input" value={value} placeholder={label} aria-label={label} maxLength={ilotMetrics.instructionMax}
       autoComplete="off" enterKeyHint="send" onChange={event => setValue(event.target.value)}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          const text = cleanInstruction(value);
-          if (text) onSubmit(text);
-        } else if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          onCancel();
-        } else if (event.key === 'Tab') event.preventDefault();
+        if (event.key === 'Enter') { event.preventDefault(); submit(); } else if (event.key === 'Tab') event.preventDefault();
       }} />
-    <span className="ilot-keycap" aria-hidden="true">↵</span>
+    <span className="ilot-keycap" aria-hidden="true" onClick={submit}>↵</span>
   </div>;
 }

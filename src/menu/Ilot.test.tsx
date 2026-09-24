@@ -78,12 +78,40 @@ describe('Ilot', () => {
     expect(mode()).toBe('prompt');
     const input = document.activeElement as HTMLInputElement;
     expect(input.value).toBe('x');
-    await keydown('Escape');
-    expect(mode()).toBe('prompt');
     await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
     expect(mode()).toBe('compact');
+    expect(calls.onClose).not.toHaveBeenCalled();
+    // The focus outside the input (review of bc57857, finding 5): Escape still goes back one step.
+    await keydown('x');
+    expect(mode()).toBe('prompt');
+    (document.activeElement as HTMLElement).blur();
+    await keydown('Escape');
+    expect(mode()).toBe('compact');
+    expect(calls.onClose).not.toHaveBeenCalled();
     await keydown('Escape');
     expect(calls.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Review of bc57857, finding 5: a click on the field's dot or ↵ took the focus from the input.
+  it('keeps the focus in the field when its dot or ↵ is pressed, and sends on the ↵ like Enter', async () => {
+    const { calls, keydown, present } = await mount();
+    await keydown(' ');
+    const input = present().querySelector<HTMLInputElement>('input')!;
+    expect(document.activeElement).toBe(input);
+    for (const part of ['.ilot-dot', '.ilot-keycap', '.ilot-field']) {
+      const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      present().querySelector(part)!.dispatchEvent(press);
+      expect(press.defaultPrevented, part).toBe(true);
+    }
+    const onInput = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    input.dispatchEvent(onInput);
+    expect(onInput.defaultPrevented).toBe(false);
+    // Blank: nothing is sent; a (synthetic) instruction is sent trimmed, once per click.
+    await act(async () => { present().querySelector<HTMLElement>('.ilot-keycap')!.click(); });
+    expect(calls.onInstruction).not.toHaveBeenCalled();
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '  plus court  '); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => { present().querySelector<HTMLElement>('.ilot-keycap')!.click(); });
+    expect(calls.onInstruction).toHaveBeenCalledWith('plus court');
   });
 
   it('takes only the keys it is given when Rust forwards them, without a field', async () => {
@@ -98,6 +126,24 @@ describe('Ilot', () => {
     expect(await press('ArrowDown')).toBe(true);
     expect(await press('Enter')).toBe(true);
     expect(calls.onChoose).toHaveBeenCalledWith('translate');
+  });
+
+  // Review of bc57857, finding 3: the dimmed ✦ and « Ask » did nothing once the keys came from Rust.
+  it('asks for the keyboard when the pastille or the « Ask » tile is clicked without it, and opens the field once granted', async () => {
+    const onRequestKeyboard = vi.fn(async () => false);
+    const { mode, present, press, render } = await mount({ keyboard: 'injected', onRequestKeyboard });
+    await act(async () => { present().querySelector<HTMLButtonElement>('[data-item="ask"]')!.click(); });
+    expect(onRequestKeyboard).toHaveBeenCalledTimes(1);
+    expect(mode()).toBe('compact');
+    expect(present().querySelector('input')).toBeNull();
+    // Granted from the grid's « Ask » tile: the parent then passes the keyboard it holds.
+    onRequestKeyboard.mockResolvedValue(true);
+    expect(await press('Tab')).toBe(true);
+    await act(async () => { present().querySelector<HTMLButtonElement>('[data-tile="ask"]')!.click(); });
+    expect(onRequestKeyboard).toHaveBeenCalledTimes(2);
+    await render({ keyboard: 'focused', onRequestKeyboard });
+    expect(mode()).toBe('prompt');
+    expect(document.activeElement).toBe(present().querySelector('input'));
   });
 
   it('becomes the pill on the same surface, ignores the menu keys there, and starts over compact', async () => {

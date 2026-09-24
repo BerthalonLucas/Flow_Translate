@@ -39,6 +39,10 @@ export function useTranslation(readyOnMount = false) {
     menuKeysRef.current = [];
     return keys;
   }, []);
+  // The same count as the keys arrive, ahead of the render: a keyboard answer compares with it, so
+  // a key forwarded just before the window got the keyboard is not taken for a later one.
+  const menuKeyCount = useRef({ captureId: '', count: 0 });
+  const forwardedKeys = useCallback((captureId: string) => menuKeyCount.current.captureId === captureId ? menuKeyCount.current.count : 0, []);
   // Deltas are buffered until the stream ends: the glass shows a ring, then the whole
   // result lands at once (one native resize instead of one per line). An error or an
   // interruption still surfaces the partial text through flush().
@@ -82,6 +86,7 @@ export function useTranslation(readyOnMount = false) {
     captureRef.current = capture;
     closingRef.current = null;
     menuKeysRef.current = [];
+    menuKeyCount.current = { captureId: capture.id, count: 0 };
     setMenuKeys({ captureId: capture.id, count: 0 });
     setClosingCaptureId(null);
     window.clearTimeout(noticeTimer.current);
@@ -106,13 +111,16 @@ export function useTranslation(readyOnMount = false) {
   // Îlot (lots 3–4): the choice made in the menu, once per menu capture. Rust returns the
   // execution (always « replace »); the translation then starts like any capture's.
   const choosingRef = useRef<string | null>(null);
+  // The same, for the Îlot: a choice on its way (the double press included) is not an abandon.
+  const [choosingCaptureId, setChoosingCaptureId] = useState<string | null>(null);
   const choose = useCallback(async (actionId: string, instruction?: string) => {
     const capture = captureRef.current;
     if (!capture?.menu || capture.execution || closingRef.current || choosingRef.current === capture.id) return;
     choosingRef.current = capture.id;
+    setChoosingCaptureId(capture.id);
     let execution;
     try { execution = await bridge.chooseAction(capture.id, actionId, instruction); }
-    finally { if (choosingRef.current === capture.id) choosingRef.current = null; }
+    finally { if (choosingRef.current === capture.id) { choosingRef.current = null; setChoosingCaptureId(null); } }
     if (captureRef.current?.id !== capture.id || closingRef.current) return;
     const chosen = { ...capture, execution };
     captureRef.current = chosen;
@@ -166,6 +174,8 @@ export function useTranslation(readyOnMount = false) {
         const capture = captureRef.current;
         if (capture?.id !== key.captureId || !capture.menu || capture.execution || closingRef.current) return;
         menuKeysRef.current.push(key);
+        const counted = menuKeyCount.current;
+        menuKeyCount.current = { captureId: key.captureId, count: counted.captureId === key.captureId ? counted.count + 1 : 1 };
         setMenuKeys(current => ({ captureId: key.captureId, count: current.captureId === key.captureId ? current.count + 1 : 1 }));
       }),
     ]).then(async listeners => {
@@ -206,7 +216,7 @@ export function useTranslation(readyOnMount = false) {
     void bridge.completeDismiss(captureId).catch(() => undefined);
   }, []);
 
-  return { state, settings, screen, dispatch, receiveCapture, start, choose, menuKeys, takeMenuKeys, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
+  return { state, settings, screen, dispatch, receiveCapture, start, choose, choosingCaptureId, menuKeys, takeMenuKeys, forwardedKeys, cancelAndDismiss, completeDismiss, closingCaptureId, initError, notice };
 }
 
 export type TranslationController = ReturnType<typeof useTranslation>;

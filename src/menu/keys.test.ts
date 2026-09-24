@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gridColumns, ilotKeyContext, ilotTiles, letterTable, moveHot, resolveIlotKey, type IlotAction, type IlotState, type KeyInput } from './keys';
+import { browserShortcut, gridColumns, ilotKeyContext, ilotTiles, letterTable, moveHot, resolveIlotKey, type IlotAction, type IlotState, type KeyInput } from './keys';
 
 // The lab's five actions (design-lab/src/data.js:5-12); the sixth tile is the free instruction.
 const actions: IlotAction[] = [
@@ -165,8 +165,15 @@ describe('resolveIlotKey', () => {
     expect(press('Dead')).toBeNull();
   });
 
-  it('lets the text field handle every key, Enter and Escape included', () => {
-    for (const key of ['Enter', 'Escape', 'f', ' ', 'Tab', '1', 'ArrowDown']) expect(press(key, prompt)).toBeNull();
+  // Review of bc57857, finding 5: Escape left to the input was lost once a click on the field's dot
+  // or ↵ had moved the focus; the table now takes it wherever the focus is.
+  it('lets the text field handle every key but Escape, which goes back to the compact state', () => {
+    for (const key of ['Enter', 'f', ' ', 'Tab', '1', 'ArrowDown']) expect(press(key, prompt)).toBeNull();
+    expect(press('Escape', prompt)).toEqual({ type: 'compact' });
+    expect(press({ key: 'Escape', shiftKey: true }, prompt)).toEqual({ type: 'compact' });
+    // An IME composition cancels itself with Escape; a chord stays the system's.
+    expect(press({ key: 'Escape', isComposing: true }, prompt)).toBeNull();
+    expect(press({ key: 'Escape', ctrlKey: true }, prompt)).toBeNull();
   });
 
   it('has no field when the keys come from Rust: Space is swallowed, other characters pass', () => {
@@ -187,5 +194,42 @@ describe('resolveIlotKey', () => {
     const many = [...actions, { id: 'formal', name: 'Formal', key: 'O' }, { id: 'summary', name: 'Summary', key: 'U' }];
     expect(press('u', compact, ilotKeyContext(many, 'fix', true))).toEqual({ type: 'choose', actionId: 'summary' });
     expect(press('6', compact, ilotKeyContext(many, 'fix', true))).toEqual({ type: 'choose', actionId: 'formal' });
+  });
+});
+
+// Review of bc57857, finding 2: F5 in the focused Îlot reloaded the overlay's page (an empty window
+// and a menu scope left armed in Rust). The browser's shortcuts are swallowed; editing chords pass.
+describe('browser shortcuts in the Îlot', () => {
+  const ctrl = (key: string, extra: Partial<KeyInput> = {}): KeyInput => ({ key, ctrlKey: true, ...extra });
+  it('recognises reload, print, find, caret browsing, zoom and history, whatever the layout', () => {
+    const shortcuts: KeyInput[] = [
+      { key: 'F5' }, ctrl('F5'), { key: 'F5', shiftKey: true }, ctrl('r', { code: 'KeyR' }), ctrl('R', { shiftKey: true, code: 'KeyR' }),
+      ctrl('p'), ctrl('f'), ctrl('g'), ctrl('G', { shiftKey: true }), { key: 'F3' }, { key: 'F3', shiftKey: true }, { key: 'F7' },
+      ctrl('s'), ctrl('o'), ctrl('u'),
+      ctrl('+', { shiftKey: true, code: 'Equal' }), ctrl('=', { code: 'Equal' }), ctrl('-', { code: 'Minus' }), ctrl('0', { code: 'Digit0' }),
+      ctrl('+', { code: 'NumpadAdd' }), ctrl('-', { code: 'NumpadSubtract' }),
+      // AZERTY: Ctrl+à is Ctrl+0 for Chromium (its virtual key is VK_0).
+      ctrl('à', { code: 'Digit0' }),
+      // A Cyrillic layout: the key of R types к; Chromium still reads VK_R.
+      ctrl('к', { code: 'KeyR' }),
+      { key: 'ArrowLeft', altKey: true }, { key: 'ArrowRight', altKey: true }, { key: 'Home', altKey: true },
+      { key: 'BrowserBack' }, { key: 'BrowserForward' }, { key: 'BrowserRefresh' }, { key: 'BrowserSearch' }, { key: 'BrowserHome' },
+    ];
+    for (const input of shortcuts) expect(browserShortcut(input), JSON.stringify(input)).toBe(true);
+  });
+  it('lets the field edit, the menu keys through, and AltGr type', () => {
+    const passing: KeyInput[] = [
+      ctrl('a'), ctrl('c'), ctrl('v'), ctrl('x'), ctrl('z'), ctrl('y'), ctrl('Z', { shiftKey: true }),
+      ctrl('Backspace'), ctrl('Delete'), ctrl('ArrowLeft'), ctrl('ArrowRight', { shiftKey: true }), ctrl('Home'), ctrl('End'),
+      { key: 'r' }, { key: 'F' }, { key: 'Enter' }, { key: 'Escape' }, { key: 'Tab' }, { key: 'ArrowLeft' }, { key: '0' }, { key: '+' },
+      // AZERTY: AltGr+à is @, AltGr+= is }, AltGr+E is € (Windows adds Ctrl and Alt).
+      { key: '@', code: 'Digit0', ctrlKey: true, altKey: true, altGraph: true },
+      { key: '}', code: 'Equal', ctrlKey: true, altKey: true, altGraph: true },
+      { key: '€', code: 'KeyE', ctrlKey: true, altKey: true, altGraph: true },
+      // AZERTY: the key of Q types a (Ctrl+A selects all); nothing reads the physical key then.
+      ctrl('a', { code: 'KeyQ' }),
+      { key: 'F4', altKey: true },
+    ];
+    for (const input of passing) expect(browserShortcut(input), JSON.stringify(input)).toBe(false);
   });
 });

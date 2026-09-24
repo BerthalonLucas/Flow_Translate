@@ -480,8 +480,8 @@ pub struct Settings {
     pub pill_placement: PillPlacement,
     #[serde(default)]
     pub glass_material: GlassMaterial,
-    /// The actions of the Îlot grid, in the user's order (six at most). Empty: the
-    /// frontend shows the first actions of the list.
+    /// The actions of the Îlot grid, in the user's order (six at most). Empty: the user
+    /// emptied the grid, the Îlot offers only the free instruction.
     #[serde(default)]
     pub menu_action_ids: Vec<String>,
     pub profiles: HashMap<String, Profile>,

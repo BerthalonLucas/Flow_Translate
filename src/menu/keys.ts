@@ -72,9 +72,10 @@ export function ilotKeyContext(actions: readonly IlotAction[], lastActionId: str
 }
 
 // A key as a KeyboardEvent describes it. `altGraph`: getModifierState('AltGraph'); on Windows,
-// AltGr also sets ctrlKey and altKey (AZERTY: AltGr+E = €).
+// AltGr also sets ctrlKey and altKey (AZERTY: AltGr+E = €). `code`: the physical key.
 export type KeyInput = {
   key: string;
+  code?: string;
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
@@ -82,6 +83,34 @@ export type KeyInput = {
   altGraph?: boolean;
   isComposing?: boolean;
 };
+
+export function keyInputOf(event: KeyboardEvent): KeyInput {
+  return {
+    key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey,
+    altGraph: event.getModifierState?.('AltGraph') ?? false, isComposing: event.isComposing || event.keyCode === 229,
+  };
+}
+
+// The browser's own shortcuts, which the WebView would act on while the overlay has the keyboard
+// (review of bc57857, finding 2): reload (F5, Ctrl+R, with Shift or Ctrl), print (Ctrl+P), find
+// (Ctrl+F, Ctrl+G, F3), caret browsing (F7), zoom (Ctrl with + = - 0, keypad included), history
+// (Alt+← →, Alt+Home), save, open and source (Ctrl+S, O, U), and the keyboard's browser keys. The
+// Îlot swallows them without acting (src/menu/IlotStage.tsx). A letter is read from `key`, as
+// Chromium reads its virtual key; a layout without Latin letters falls back to the physical key.
+// Editing chords (Ctrl+A, C, V, X, Z, Y, arrows, Backspace) pass, and AltGr, which types.
+const browserLetters: ReadonlySet<string> = new Set(['r', 'p', 'f', 'g', 's', 'o', 'u']);
+const zoomKeys: ReadonlySet<string> = new Set(['+', '=', '-', '_', '0']);
+const zoomCodes: ReadonlySet<string> = new Set(['Equal', 'Minus', 'Digit0', 'NumpadAdd', 'NumpadSubtract', 'Numpad0']);
+export function browserShortcut(input: KeyInput): boolean {
+  const { key, code } = input;
+  if (input.altGraph) return false;
+  if (key.startsWith('Browser') || key === 'F3' || key === 'F5' || key === 'F7') return true;
+  if (input.ctrlKey && !input.altKey && !input.metaKey) {
+    const letter = /^[a-z]$/i.test(key) ? key.toLowerCase() : code?.match(/^Key([A-Z])$/)?.[1].toLowerCase();
+    return (letter !== undefined && browserLetters.has(letter)) || zoomKeys.has(key) || (code !== undefined && zoomCodes.has(code));
+  }
+  return Boolean(input.altKey && !input.ctrlKey && !input.metaKey && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home'));
+}
 
 export type IlotState = { mode: IlotMode; hot: number; compactHot: CompactItem };
 
@@ -138,8 +167,10 @@ export function resolveIlotKey(input: KeyInput, state: IlotState, context: IlotK
   if (input.isComposing || key === 'Process' || key === 'Dead' || key === 'Unidentified') return null;
   // menus.jsx:21: Ctrl, Meta and Alt combinations belong to the system, except AltGr, which types.
   if ((input.ctrlKey || input.metaKey || input.altKey) && !input.altGraph) return null;
-  // The field is a real <input>: it handles Enter and Escape itself (menus.jsx:40, 66).
-  if (state.mode === 'prompt') return null;
+  // The field is a real <input>: it handles Enter and every character itself (menus.jsx:40, 66).
+  // Escape goes back to the compact state wherever the focus is: a click on the field's dot or
+  // its ↵ must not leave Escape to close the whole menu (review of bc57857, finding 5).
+  if (state.mode === 'prompt') return key === 'Escape' ? { type: 'compact' } : null;
   const { tiles, promptAvailable } = context;
   const openPrompt = (seed: string): IlotCommand | null => promptAvailable ? { type: 'prompt', seed } : seed ? null : { type: 'none' };
 

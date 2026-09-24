@@ -16,7 +16,11 @@ type Fixture = {
   unanchoredMenu: (id: string, lastActionId?: string | null) => Promise<void>;
   capture: (id: string) => Promise<void>;
   refuseFocus: () => void;
+  grantFocus: () => void;
   refuseChoice: () => void;
+  holdChoice: () => void;
+  releaseChoice: () => void;
+  invalidate: (anchorLost?: boolean, captureId?: string) => Promise<void>;
   windowAt: (x: number, y: number) => void;
   menuKey: (key: string, shiftKey?: boolean, captureId?: string) => Promise<void>;
   menuRepeat: (captureId?: string) => Promise<void>;
@@ -176,6 +180,50 @@ test('Îlot: without the foreground it reads the native menu-key events, kept un
   expect(await calls(page, 'focus_overlay')).toHaveLength(1);
 });
 
+// Review of bc57857, finding 3: once in 'injected' mode the Îlot never took the keyboard back, even
+// when its window held it (a click on it in the fallback): the ✦ stayed dimmed, the keys did nothing.
+test('Îlot: in the fallback, the window\'s focus or a click on the ✦ gives the keyboard back to the Îlot', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => { f.refuseFocus(); return f.captureMenu('regain', 'correct'); });
+  const ilot = page.locator('[data-ilot]');
+  const ask = page.locator('[data-item="ask"]');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await settled(page);
+  // Windows activated the overlay (a click on it): the Îlot reads the window's own keys.
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent('focus')));
+  await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
+  await expect(ask).not.toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Tab');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  await page.keyboard.press('Space');
+  await expect(field).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+
+  // Rust forwards a key again: the source is in front, the keys are Rust's.
+  await on(page, f => f.menuKey('Tab'));
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  await on(page, f => f.menuKey('Escape'));
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  // The dimmed ✦ clicked asks for the keyboard again: refused, nothing opens; granted, the field.
+  await ask.click({ force: true });
+  await expect.poll(() => calls(page, 'focus_overlay')).toHaveLength(2);
+  await page.waitForTimeout(100);
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await expect(field).toHaveCount(0);
+  await on(page, f => f.grantFocus());
+  await ask.click({ force: true });
+  await expect.poll(() => calls(page, 'focus_overlay')).toHaveLength(3);
+  await expect(field).toBeFocused();
+  await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
+  expect(await chosen(page, 'regain')).toHaveLength(0);
+});
+
 test('Îlot: a double press runs the application\'s last action once; before the Îlot shows, it is born a pill', async ({ page }) => {
   await openIlot(page);
   await on(page, f => f.captureMenu('twice', 'shorten'));
@@ -220,6 +268,139 @@ test('Îlot: Escape goes back from the grid first, then closes without choosing 
   await expect(ilot).toHaveCount(0);
   expect(await chosen(page, 'escape')).toHaveLength(0);
   expect(await translations(page, 'escape')).toHaveLength(0);
+});
+
+// Review of bc57857, finding 1: a menu left armed after the user went back to the source
+// (a click that dropped the selection) took the keys typed there. Rust closes a menu that had the
+// keyboard; the Îlot closes on `target-invalidated` whenever no choice is made or on its way.
+test('Îlot: the selection lost before any choice closes the menu; a choice on its way keeps its journey', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('lost'));
+  await settled(page);
+  await on(page, f => f.invalidate(true, 'stale-capture'));
+  await page.waitForTimeout(100);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+  await on(page, f => f.invalidate());
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await expect.poll(() => calls(page, 'complete_overlay_dismiss')).toEqual([{ captureId: 'lost' }]);
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  expect(await chosen(page, 'lost')).toHaveLength(0);
+  expect(await translations(page, 'lost')).toHaveLength(0);
+
+  // A double press whose `choose_action` has not answered yet: the invalidation leaves it be.
+  await on(page, f => f.captureMenu('racing', 'shorten'));
+  await settled(page);
+  await on(page, f => { f.holdChoice(); return f.menuRepeat(); });
+  await expect.poll(() => chosen(page, 'racing')).toHaveLength(1);
+  await on(page, f => f.invalidate());
+  await page.waitForTimeout(100);
+  await on(page, f => f.releaseChoice());
+  await expect.poll(() => translations(page, 'racing')).toEqual([expect.objectContaining({ actionId: 'shorten' })]);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+  // Chosen: a later invalidation is the paste's to report (target_changed), not an abandon.
+  await on(page, f => f.invalidate());
+  await page.waitForTimeout(100);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+});
+
+// Review of bc57857, finding 2: F5 or Ctrl+R in the focused Îlot reloaded the overlay (an empty
+// window, a menu scope left armed in Rust). Every browser shortcut reaches the page's last listener
+// already prevented, in the menu and in its field, while the menu keys and the field's editing keep
+// working. Rust turns the WebView's accelerators off as well; headless Chromium would not reload on
+// a synthetic F5 anyway, so the test reads `defaultPrevented`.
+test('Îlot: the browser\'s shortcuts do nothing in the menu or its field; editing keys still work', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('browser', 'correct'));
+  await settled(page);
+  await page.evaluate(() => {
+    const seen: Array<{ key: string; ctrl: boolean; prevented: boolean }> = [];
+    Object.assign(window, { keysSeen: seen, wheelsSeen: [] as boolean[] });
+    window.addEventListener('keydown', event => seen.push({ key: event.key, ctrl: event.ctrlKey, prevented: event.defaultPrevented }));
+    window.addEventListener('wheel', event => (window as unknown as { wheelsSeen: boolean[] }).wheelsSeen.push(event.defaultPrevented), { passive: false });
+  });
+  const shortcuts = ['F5', 'Control+r', 'Control+Shift+R', 'Control+F5', 'Control+p', 'Control+f', 'F3', 'Control+g', 'F7', 'Alt+ArrowLeft', 'Alt+ArrowRight', 'Control+Equal', 'Control+Minus', 'Control+0'];
+  const seen = () => page.evaluate(() => (window as unknown as { keysSeen: Array<{ key: string; ctrl: boolean; prevented: boolean }> }).keysSeen.filter(key => !['Control', 'Shift', 'Alt'].includes(key.key)));
+  for (const shortcut of shortcuts) await page.keyboard.press(shortcut);
+  expect((await seen()).map(key => key.prevented)).toEqual(shortcuts.map(() => true));
+  await page.keyboard.down('Control');
+  await page.mouse.move(600, 150);
+  await page.mouse.wheel(0, -100);
+  await page.keyboard.up('Control');
+  await expect.poll(() => page.evaluate(() => (window as unknown as { wheelsSeen: boolean[] }).wheelsSeen)).toEqual([true]);
+  const ilot = page.locator('[data-ilot]');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  expect(await chosen(page, 'browser')).toHaveLength(0);
+
+  // In the field: the same shortcuts are swallowed; typing and the editing chords still work
+  // (none that touches the clipboard: the test never writes the user's).
+  await page.keyboard.press('Space');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  await expect(field).toBeFocused();
+  await page.evaluate(() => { (window as unknown as { keysSeen: unknown[] }).keysSeen.length = 0; });
+  for (const shortcut of ['F5', 'Control+r', 'Control+p', 'Control+f']) await page.keyboard.press(shortcut);
+  expect((await seen()).map(key => key.prevented)).toEqual([true, true, true, true]);
+  // A synthetic instruction, invented for the test.
+  await page.keyboard.type('plus court');
+  await page.keyboard.press('Control+Backspace');
+  await expect(field).toHaveValue('plus ');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('x');
+  await expect(field).toHaveValue('x');
+  expect((await seen()).filter(key => key.ctrl && ['Backspace', 'a'].includes(key.key)).map(key => key.prevented)).toEqual([false, false]);
+  await expect(ilot).toHaveAttribute('data-mode', 'prompt');
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+});
+
+// Review of bc57857, findings 4 and 6: with every action removed from the grid in the Settings
+// (« only the free instruction »), the Îlot still showed the first six, launchable by digit.
+test('Îlot: an emptied grid shows only « Ask »; the compact state still offers the last action', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.settings({ menuActionIds: [] }));
+  await on(page, f => f.captureMenu('empty-grid', 'shorten'));
+  const ilot = page.locator('[data-ilot]');
+  await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Shorten');
+  await page.keyboard.press('Tab');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  expect(await page.locator('[data-ilot] [data-tile]').evaluateAll(tiles => tiles.map(tile => tile.getAttribute('data-tile')))).toEqual(['ask']);
+  // No letter either: « f » opens the field with it, and 1 is the « Ask » tile.
+  await page.keyboard.press('f');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  await expect(field).toHaveValue('f');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('1');
+  await expect(field).toHaveValue('');
+  expect(await chosen(page, 'empty-grid')).toHaveLength(0);
+});
+
+// Review of bc57857, finding 5: a click on the field's dot or its drawn ↵ took the focus from the
+// input; Enter then went nowhere and Escape closed the whole menu, the instruction lost.
+test('Îlot: a click in the field keeps its focus, Escape still goes back, and the drawn ↵ sends', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('field-click', 'correct'));
+  await settled(page);
+  const ilot = page.locator('[data-ilot]');
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
+  const present = (part: string) => page.locator(`.shape-layer:not(.is-leaving) ${part}`);
+  await page.keyboard.press('Space');
+  await expect(field).toBeFocused();
+  // A synthetic instruction, invented for the test.
+  await page.keyboard.type('plus court');
+  await present('.ilot-dot').click();
+  await expect(field).toBeFocused();
+  // The focus lost all the same (the body): Escape goes back to the compact state, nothing closes.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  await expect(field).toHaveCount(0);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+  await page.keyboard.press('Space');
+  await expect(field).toBeFocused();
+  await page.keyboard.type('plus court');
+  await present('.ilot-keycap').click();
+  await expect.poll(() => chosen(page, 'field-click')).toEqual([{ captureId: 'field-click', actionId: 'instruction', instruction: 'plus court' }]);
+  await expect(ilot).toHaveAttribute('data-shape', 'pill');
 });
 
 test('Îlot: a refused choice gives the menu back, and the next choice goes through', async ({ page }) => {
