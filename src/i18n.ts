@@ -74,6 +74,12 @@ const dictionary = {
   // Settings window.
   'settings.title': { en: 'Settings', fr: 'Réglages' },
   'settings.windowTitle': { en: 'FlowTranslate Settings', fr: 'Réglages FlowTranslate' },
+  'settings.animations': { en: 'Animations', fr: 'Animations' },
+  'settings.animationsHelp': { en: 'Reduced: short fades only, no spring and no movement.', fr: 'Réduites : fondus courts seulement, sans ressort ni déplacement.' },
+  'settings.animationsSystemReduces': { en: 'Windows asks to reduce animations.', fr: 'Windows demande de réduire les animations.' },
+  'settings.animationsSystem': { en: 'Follow Windows', fr: 'Suivre Windows' },
+  'settings.animationsFull': { en: 'Always', fr: 'Toujours' },
+  'settings.animationsReduced': { en: 'Reduced', fr: 'Réduites' },
   'settings.close': { en: 'Close', fr: 'Fermer' },
   'settings.loading': { en: 'Loading settings…', fr: 'Chargement des réglages…' },
   'settings.loadError': { en: 'Settings are unavailable. Try again or restart FlowTranslate.', fr: 'Les réglages sont indisponibles. Réessayez ou redémarrez FlowTranslate.' },

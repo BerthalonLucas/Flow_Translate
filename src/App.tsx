@@ -1,15 +1,17 @@
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import { ActionSettings } from './ActionSettings';
+import { AnimationsSetting } from './AnimationsSetting';
 import { promptError } from './actionDefaults';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { Icon, Segmented, SettingSwitch, useFade } from './ui';
+import { Icon, Segmented, SettingSwitch } from './ui';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
 import { useTranslation } from './useTranslation';
 import { shareSettings, useSettings } from './useSettings';
 import { useDocumentPreferences } from './preferences';
 import { locales, t as tNow, useLanguage, useT, type MessageKey } from './i18n';
+import { MotionPreferences, useContentPresence } from './motion/MotionPreferences';
 import type { AutoClose, Capture, HistoryEntry, Language, Mode, Settings, TextSize, Theme } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
@@ -18,7 +20,7 @@ const clipboardCapture: Capture = { id: 'demo-clipboard', text: 'Je vous envoie 
 const uid = () => crypto.randomUUID?.() ?? `request-${Date.now()}`;
 
 export function Capsule() {
-  const fade = useFade();
+  const fade = useContentPresence();
   const t = useT();
   const [label, setLabel] = useState('FlowTranslate');
   const actionLabel = (settings: Settings) => settings.actions.find(action => action.id === settings.defaultActionId)?.name ?? 'FlowTranslate';
@@ -143,6 +145,7 @@ export function SettingsWindow() {
           <Segmented<Language> label={t('settings.language')} value={settings.language} options={[{ value: 'en', label: 'English' }, { value: 'fr', label: 'Français' }]} onChange={value => update('language', value)} /></div>
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.theme')}</strong><small>{t('settings.themeHelp')}</small></div>
           <Segmented<Theme> label={t('settings.theme')} value={settings.theme} options={[{ value: 'system', label: t('settings.themeSystem') }, { value: 'light', label: t('settings.themeLight') }, { value: 'dark', label: t('settings.themeDark') }]} onChange={value => update('theme', value)} /></div>
+        <AnimationsSetting value={settings.motion} onChange={value => update('motion', value)} />
       </section>
       <section>
         <h2>{t('settings.translation')}</h2>
@@ -235,11 +238,13 @@ export function App() {
   const params = useMemo(() => new URLSearchParams(location.search), []);
   const windowName = params.get('window') ?? (bridge.native ? 'overlay' : 'demo');
   const standaloneDemo = params.get('demo') === '1';
-  useDocumentPreferences(useSettings());
+  const settings = useSettings();
+  useDocumentPreferences(settings);
   useEffect(() => { document.body.className = `flowtranslate-window flowtranslate-${windowName}`; return () => { document.body.className = ''; }; }, [windowName]);
-  if (windowName === 'settings') return <SettingsWindow />;
-  if (windowName === 'capsule') return <Capsule />;
-  if (windowName === 'overlay' && (bridge.native || standaloneDemo)) return <OverlayWindow standaloneDemo={standaloneDemo} />;
-  return <DemoWindow />;
+  const content = windowName === 'settings' ? <SettingsWindow />
+    : windowName === 'capsule' ? <Capsule />
+    : windowName === 'overlay' && (bridge.native || standaloneDemo) ? <OverlayWindow standaloneDemo={standaloneDemo} />
+    : <DemoWindow />;
+  return <MotionPreferences motion={settings?.motion ?? 'system'} preset={settings?.motionPreset ?? 'smooth'}>{content}</MotionPreferences>;
 }
 

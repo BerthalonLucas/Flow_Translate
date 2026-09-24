@@ -67,7 +67,8 @@ test('the settings window switches language and theme the moment they are chosen
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(245, 245, 247)');
-  await page.getByRole('radio', { name: 'Follow Windows', exact: true }).click();
+  // « Follow Windows » also names an Animations choice: the Theme group's one.
+  await page.getByRole('radiogroup', { name: 'Theme', exact: true }).getByRole('radio', { name: 'Follow Windows', exact: true }).click();
   await expect.poll(saved).toMatchObject({ language: 'en', theme: 'system' });
   expect(await unreloaded(page)).toBe(true);
 });
@@ -127,7 +128,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
     for (const surface of surfaces) expect(surface).toEqual(pill);
     expect(pill.image).toContain(colorScheme === 'light' ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.08)');
     if (colorScheme === 'dark') expect(pill.color).toBe('rgba(28, 30, 34, 0.86)');
-    const icons = await page.locator('.glass-overlay svg.lucide').evaluateAll(nodes => nodes.map(node => ({ stroke: node.getAttribute('stroke-width'), width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })));
+    // Layout size, not the painted box: a surface still entering on its spring scales from .97.
+    const icons = await page.locator('.glass-overlay svg.lucide').evaluateAll(nodes => nodes.map(node => ({ stroke: node.getAttribute('stroke-width'), width: parseFloat(getComputedStyle(node).width), height: parseFloat(getComputedStyle(node).height) })));
     expect(icons.length).toBeGreaterThanOrEqual(4);
     for (const icon of icons) {
       expect(icon.stroke).toBe('1.5');

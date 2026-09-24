@@ -56,15 +56,17 @@
 .wait-inline { display: block; height: var(--copy-line); }
 .wait-inline .wait-spinner { height: var(--copy-line); }
 /* The result lands whole: the window is already at its final size, the short glass opens from the
-   pill row and the text fades in. Paint only, so the ResizeObserver publishes once; the clip
-   reaches past the box to keep the shadow, and holds 65 ms while the native resize lands. */
-.is-short .translation-bubble[data-reveal="true"] { animation: glass-open 260ms cubic-bezier(.2,0,0,1) both; }
-@keyframes glass-open { 0%, 25% { clip-path: inset(-24px -36px calc(100% - 51px) -36px round 52px); } 100% { clip-path: inset(-24px -36px -48px -36px round 60px); } }
-.translation-bubble[data-reveal="true"] .reveal { display: inline-block; animation: text-in 180ms ease-out 80ms both; }
+   pill row with the morph spring (the pill becoming the glass) and the text cross-fades in.
+   Paint only, so the ResizeObserver publishes once; the clip reaches past the box to keep the
+   shadow, and holds 65 ms while the native resize lands. Springs and curves come from the motion
+   preset (src/motion/tokens.ts, custom properties on <html>); the fallbacks are « smooth » curves. */
+.is-short .translation-bubble[data-reveal="true"] { animation: glass-open var(--motion-morph-ms, 680ms) var(--motion-morph-ease, cubic-bezier(.23,1,.32,1)) 65ms both; }
+@keyframes glass-open { from { clip-path: inset(-24px -36px calc(100% - 51px) -36px round 52px); } to { clip-path: inset(-24px -36px -48px -36px round 60px); } }
+.translation-bubble[data-reveal="true"] .reveal { display: inline-block; animation: text-in var(--motion-content-ms, 200ms) var(--motion-content-ease, cubic-bezier(.23,1,.32,1)) var(--motion-content-delay, 90ms) both; }
 @keyframes text-in { from { opacity: 0; } to { opacity: 1; } }
-/* The reader band rises 8 px and fades in (220 ms) once the native window rests at the bottom. */
-.is-reader .translation-bubble[data-reveal="true"] { animation: band-in 220ms cubic-bezier(.2,0,0,1) both; }
-@keyframes band-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+/* The reader band enters like any surface (glide, scale, fade on the enter spring) once the native window rests at the bottom. */
+.is-reader .translation-bubble[data-reveal="true"] { animation: band-in var(--motion-enter-ms, 613ms) var(--motion-enter-ease, cubic-bezier(.23,1,.32,1)) backwards; }
+@keyframes band-in { from { opacity: 0; transform: translateY(var(--motion-travel, 4px)) scale(var(--motion-from-scale, .97)); } to { opacity: 1; transform: none; } }
 .scroll-indicator { width: 3px !important; border-radius: 2px; background: rgb(var(--ink-rgb) / .07); opacity: 0; transition: opacity 140ms ease; user-select: none; touch-action: none; }
 .reading-area[data-indicator="true"] .scroll-indicator { opacity: 1; }
 .scroll-thumb { border-radius: 2px; background: rgb(var(--ink-rgb) / .28); transition: background-color 140ms ease; }
@@ -109,7 +111,21 @@
 .subtle-warning { margin: 12px 0 0; color: var(--warning-text); font-size: 12px; line-height: 18px; }
 .error-copy { color: var(--error-text); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; scroll-behavior: auto !important; } }
+/* Reduced motion (« Animations : réduites », or « suivre Windows » while Windows reduces them):
+   data-motion on <html> (src/motion/preference.ts), same global reach as the media query it
+   replaces. Nothing moves or springs; loops rest (paused, as the lab's loaders.css), the sweep
+   stands still; only opacity fades of 120 ms remain (≤ 150 ms, plan §Lot 2). */
+:root[data-motion="reduced"] *, :root[data-motion="reduced"] *::before, :root[data-motion="reduced"] *::after { animation-duration: .01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; scroll-behavior: auto !important; }
+:root[data-motion="reduced"] .wait-spinner svg { animation-play-state: paused !important; }
+:root[data-motion="reduced"] .wait-pill::after { animation: none !important; }
+:root[data-motion="reduced"] .translation-bubble[data-reveal="true"], :root[data-motion="reduced"] .translation-bubble[data-reveal="true"] .reveal { animation: text-in 120ms linear both !important; }
+
+/* A surface that changes shape (src/motion/surface.ts, animateSurface): the clip follows the
+   animated box, the content sits on a layer centred at its natural size, so a spring on width,
+   height and radius never scales the text (as .surface .layer in the lab, app.css:146-148). */
+.shape-clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
+.shape-layer { position: absolute; left: 50%; top: 50%; width: max-content; transform: translate(-50%, -50%); }
+.shape-layer.is-leaving { pointer-events: none; }
 
 /* Browser preview placement: the short glass grows from its anchored top-left corner; bottom forms rest on the preview's bottom edge, centred. */
 .standalone-demo > .glass-overlay { position: absolute; left: calc(50% - 190px); top: calc(50% - 60px); }

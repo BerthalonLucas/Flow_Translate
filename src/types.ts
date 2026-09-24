@@ -23,6 +23,8 @@ export type UiVersion = 'v4' | 'ilot';
 // Réglages of the Îlot art direction (docs/DA-PLAN.md); Rust persists and validates them.
 export type Theme = 'system' | 'light' | 'dark';
 export type MotionPreference = 'system' | 'full' | 'reduced';
+// Rust's reading of « Effets d'animation » (command system_motion, event system-motion).
+export type SystemMotion = { reduced: boolean };
 export type MotionPreset = 'smooth' | 'bouncy';
 export type Indicator = 'perle' | 'nebuleuse' | 'ruban';
 // Undo: Ctrl+Z sent to the source (option A) or the original pasted back (option B).
