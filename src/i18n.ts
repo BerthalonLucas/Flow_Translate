@@ -47,6 +47,9 @@ const dictionary = {
   'error.deliveryTimeout': { en: 'The replacement did not answer; the result stays in the bubble.', fr: 'Le remplacement n’a pas répondu; le résultat reste dans la bulle.' },
   // After the replacement and its errors (lots 9 and 10, src/result/): the lab's wording where it
   // has one (design-lab/src/data.js:17-18, 66-72; Simulator.jsx:264, 285, 292), at most six words.
+  'result.undo': { en: 'Undo', fr: 'Annuler' },
+  'result.undone': { en: 'Undone', fr: 'Annulé' },
+  'result.copied': { en: 'Copied', fr: 'Copié' },
   'result.action.endpoint': { en: 'Open endpoint', fr: 'Voir l’adresse' },
   'result.action.apiKey': { en: 'Fix key', fr: 'Corriger la clé' },
   'result.action.model': { en: 'Choose model', fr: 'Choisir le modèle' },
