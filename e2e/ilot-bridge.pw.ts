@@ -1,25 +1,39 @@
 import { test, expect, type Page } from '@playwright/test';
+import { ilotRegion, ilotReserve } from '../src/layout';
 
-// The Îlot contract over the IPC fixture (lots 3–4): a menu capture never translates by
-// itself, the frontend asks for the keyboard, a choice goes through `choose_action` once
-// and `translate` then runs the returned action. The keys are driven through the
-// provisional probe (src/menu/NativeMenuProbe.tsx); the Îlot of lot 7 takes these tests
-// over with its own keyboard table.
+// The Îlot in the overlay (lot 7) over the IPC fixture: a menu capture never translates by itself,
+// the Îlot asks for the keyboard once, a choice goes through `choose_action` once, `translate` then
+// runs the returned action, and the same surface becomes the working pill until the simulated
+// paste. Its window is reserved once; only the hit-test region follows the shapes. A browser run
+// with a simulated translation, not the Windows window nor an inference.
 type Call = { command: string; args?: Record<string, unknown> };
+type Region = { x: number; y: number; width: number; height: number; radius: number };
+type Geometry = { width: number; height: number; captureId: string; presentation: string; regions: Region[]; frame: Region };
 type Fixture = {
   calls: Call[];
   settings: (next: Record<string, unknown>) => Promise<void>;
   captureMenu: (id: string, lastActionId?: string | null, text?: string) => Promise<void>;
+  unanchoredMenu: (id: string, lastActionId?: string | null) => Promise<void>;
+  capture: (id: string) => Promise<void>;
   refuseFocus: () => void;
+  refuseChoice: () => void;
+  windowAt: (x: number, y: number) => void;
   menuKey: (key: string, shiftKey?: boolean, captureId?: string) => Promise<void>;
   menuRepeat: (captureId?: string) => Promise<void>;
+  done: (text?: string) => Promise<void>;
+  deliver: (status: 'applied' | 'fallback') => Promise<void>;
 };
 // Runs `run` in the page against the fixture (the function travels as source: no outer variables).
 const on = <T>(page: Page, run: (fixture: Fixture) => T | Promise<T>) => page.evaluate(`(${run.toString()})(window.nativeFixture)`) as Promise<T>;
 const calls = (page: Page, command: string) => page.evaluate(name => (window as unknown as { nativeFixture: Fixture }).nativeFixture.calls.filter(call => call.command === name).map(call => call.args ?? {}), command);
 const translations = async (page: Page, captureId: string) => (await calls(page, 'translate')).map(args => args.request as { captureId: string; actionId: string }).filter(request => request.captureId === captureId);
+const geometries = async (page: Page, captureId: string) => (await calls(page, 'resize_overlay') as Geometry[]).filter(geometry => geometry.captureId === captureId);
+const chosen = async (page: Page, captureId: string) => (await calls(page, 'choose_action')).filter(args => args.captureId === captureId);
+const box = async (page: Page) => page.locator('[data-ilot-shape]').evaluate(element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
 
 async function openIlot(page: Page) {
+  // Chromium on Windows reports the system's « Effets d'animation »: the springs run here.
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.route('**/?window=overlay&fixture=1', async route => {
     const response = await route.fetch();
@@ -29,73 +43,275 @@ async function openIlot(page: Page) {
   await expect(page.locator('.glass-overlay')).toBeVisible();
   await on(page, f => f.settings({ uiVersion: 'ilot' }));
 }
+// The Îlot at rest: entered, its shape settled.
+async function settled(page: Page, shape: 'menu' | 'pill' = 'menu') {
+  await expect(page.locator(`[data-ilot][data-shape="${shape}"]`)).toBeVisible();
+  await expect.poll(async () => { const a = await box(page); await page.waitForTimeout(80); const b = await box(page); return JSON.stringify(a) === JSON.stringify(b); }).toBe(true);
+}
+// Every frame for `ms` after `act`: the painted shape and the geometry Rust last received.
+async function follow(page: Page, captureId: string, act: () => Promise<void>, ms = 900) {
+  const frames = page.evaluate(({ captureId, ms }) => new Promise<Array<{ shape: { x: number; y: number; width: number; height: number }; geometry: Geometry }>>(resolve => {
+    const out: Array<{ shape: { x: number; y: number; width: number; height: number }; geometry: Geometry }> = [];
+    const start = performance.now();
+    const tick = () => {
+      const shape = document.querySelector('[data-ilot-shape]')?.getBoundingClientRect();
+      const geometry = (window as unknown as { nativeFixture: Fixture }).nativeFixture.calls.filter(call => call.command === 'resize_overlay' && call.args?.captureId === captureId).at(-1)?.args as Geometry;
+      if (shape) out.push({ shape: { x: shape.x, y: shape.y, width: shape.width, height: shape.height }, geometry });
+      if (performance.now() - start < ms) requestAnimationFrame(tick); else resolve(out);
+    };
+    requestAnimationFrame(tick);
+  }), { captureId, ms });
+  await act();
+  return frames;
+}
+const inside = (shape: { x: number; y: number; width: number; height: number }, region: Region) =>
+  shape.x >= region.x - 1 && shape.y >= region.y - 1 && shape.x + shape.width <= region.x + region.width + 1 && shape.y + shape.height <= region.y + region.height + 1;
 
-test('IPC fixture: an Îlot capture waits for its choice, takes the keyboard, and Enter runs the last action once', async ({ page }) => {
+test('Îlot: a menu capture opens the Îlot by its selection, takes the keyboard once, and the keyboard path runs to the paste', async ({ page }) => {
   await openIlot(page);
-  await on(page, f => f.captureMenu('menu'));
-  await expect(page.locator('[data-menu-probe]')).toHaveAttribute('data-focused', 'true');
-  expect((await calls(page, 'focus_overlay')).length).toBeGreaterThan(0);
-  expect(await translations(page, 'menu')).toHaveLength(0);
+  await on(page, f => f.captureMenu('keys'));
+  const ilot = page.locator('[data-ilot]');
+  await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  // Nothing remembered for that application: the default action (Fix grammar) under Enter.
+  await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Fix grammar');
+  expect(await calls(page, 'focus_overlay')).toHaveLength(1);
+  expect(await translations(page, 'keys')).toHaveLength(0);
+  const surface = await page.locator('[data-ilot-shape]').elementHandle();
+
+  await page.keyboard.press('Tab');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('[data-tile="translate"]')).toBeFocused();
   await page.keyboard.press('Enter');
-  // No action remembered for this application: the default one (Fix grammar).
-  await expect.poll(() => calls(page, 'choose_action')).toEqual([{ captureId: 'menu', actionId: 'correct' }]);
-  await expect.poll(() => translations(page, 'menu')).toEqual([expect.objectContaining({ captureId: 'menu', actionId: 'correct' })]);
-  // Chosen: the probe leaves, the pill waits for the native paste; a second Enter chooses nothing.
-  await expect(page.locator('[data-menu-probe]')).toHaveCount(0);
-  // Under the Îlot the waiting pill is the working pill of lot 8 (orb after 250 ms).
-  await expect(page.locator('.working-pill')).toBeVisible();
+  await expect.poll(() => calls(page, 'choose_action')).toEqual([{ captureId: 'keys', actionId: 'translate' }]);
+  await expect.poll(() => translations(page, 'keys')).toEqual([expect.objectContaining({ captureId: 'keys', actionId: 'translate' })]);
+  // The same surface, not a second one, springs to the working pill of lot 8.
+  await expect(ilot).toHaveAttribute('data-shape', 'pill');
+  expect(await page.locator('[data-ilot-shape]').evaluate((element, before) => element === before, surface)).toBe(true);
+  const pill = page.getByRole('img', { name: 'Working' });
+  await expect(pill).toHaveAttribute('data-orb', 'shown');
+  await expect(page.locator('.working-pill')).toHaveCount(0);
+  await expect.poll(async () => { const b = await box(page); return [b.width, b.height]; }).toEqual([44, 28]);
+  // Chosen: a second Enter chooses nothing.
   await page.keyboard.press('Enter');
   expect(await calls(page, 'choose_action')).toHaveLength(1);
+
+  // Rust pastes the complete result: the check, then the Îlot leaves by itself.
+  await on(page, f => f.done('Synthetic result'));
+  await on(page, f => f.deliver('applied'));
+  await expect(page.getByRole('img', { name: 'Selection replaced' })).toHaveAttribute('data-done', 'true');
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await expect.poll(() => calls(page, 'complete_overlay_dismiss')).toEqual([{ captureId: 'keys' }]);
+  await expect(ilot).toHaveCount(0);
+  expect(await calls(page, 'focus_overlay')).toHaveLength(1);
 });
 
-test('IPC fixture: without the foreground the menu reads the native menu-key events, digits pick a tile', async ({ page }) => {
+test('Îlot: the pointer unfolds the grid and picks a tile once, even clicked twice', async ({ page }) => {
   await openIlot(page);
-  await on(page, f => { f.refuseFocus(); return f.captureMenu('fallback', 'correct'); });
-  await expect(page.locator('[data-menu-probe]')).toHaveAttribute('data-focused', 'false');
-  await on(page, f => f.menuKey('2', false, 'stale-capture'));
-  await on(page, f => f.menuKey('2'));
-  // The second tile of the default grid: Translate.
-  await expect.poll(() => calls(page, 'choose_action')).toEqual([{ captureId: 'fallback', actionId: 'translate' }]);
-  await expect.poll(() => translations(page, 'fallback')).toEqual([expect.objectContaining({ actionId: 'translate' })]);
+  await on(page, f => f.captureMenu('mouse', 'shorten'));
+  await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Shorten');
+  await page.locator('[data-item="last"]').hover();
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'grid');
+  await page.locator('[data-tile="email"]').dblclick();
+  await expect.poll(() => chosen(page, 'mouse')).toEqual([{ captureId: 'mouse', actionId: 'email' }]);
+  await expect.poll(() => translations(page, 'mouse')).toEqual([expect.objectContaining({ actionId: 'email' })]);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+  await page.waitForTimeout(300);
+  expect(await chosen(page, 'mouse')).toHaveLength(1);
+  // A fallback (the paste was blocked) opens the glass with its result, as a direct capture does.
+  await on(page, f => f.done('Synthetic result'));
+  await on(page, f => f.deliver('fallback'));
+  await expect(page.locator('.translation-bubble')).toBeVisible();
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
 });
 
-test('IPC fixture: a double press of the menu shortcut runs the application\'s last action once, without a key', async ({ page }) => {
-  await openIlot(page);
-  await on(page, f => f.captureMenu('twice', 'shorten'));
-  await expect(page.locator('[data-menu-probe]')).toBeVisible();
-  await on(page, f => f.menuRepeat('stale-capture'));
-  await on(page, f => f.menuRepeat());
-  await expect.poll(() => calls(page, 'choose_action')).toEqual([{ captureId: 'twice', actionId: 'shorten' }]);
-  await expect.poll(() => translations(page, 'twice')).toEqual([expect.objectContaining({ actionId: 'shorten' })]);
-  await on(page, f => f.menuRepeat());
-  expect(await calls(page, 'choose_action')).toHaveLength(1);
-  // Nothing remembered for that application: the default action.
-  await on(page, f => f.captureMenu('first-time'));
-  await on(page, f => f.menuRepeat());
-  await expect.poll(async () => (await calls(page, 'choose_action')).at(-1)).toEqual({ captureId: 'first-time', actionId: 'correct' });
-});
-
-test('IPC fixture: Space opens a real field for a free instruction; Escape goes back, then closes without choosing', async ({ page }) => {
+test('Îlot: a free instruction goes to choose_action only; translate runs the reserved id', async ({ page }) => {
   await openIlot(page);
   await on(page, f => f.captureMenu('free', 'correct'));
-  await expect(page.locator('[data-menu-probe]')).toHaveAttribute('data-focused', 'true');
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-keyboard', 'focused');
   await page.keyboard.press('Space');
-  const field = page.getByRole('textbox', { name: 'Instruction' });
+  const field = page.getByRole('textbox', { name: 'Describe your change…' });
   await expect(field).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(field).toHaveCount(0);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'compact');
   expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
   await page.keyboard.press('Space');
+  // A synthetic instruction, invented for the test.
   await field.fill('Mets au pluriel, sans « tu »');
   await page.keyboard.press('Enter');
   await expect.poll(() => calls(page, 'choose_action')).toEqual([{ captureId: 'free', actionId: 'instruction', instruction: 'Mets au pluriel, sans « tu »' }]);
-  // The instruction is frozen in Rust: `translate` carries the reserved id, never the text of the instruction.
+  // Frozen in Rust: `translate` carries the reserved id, never the instruction.
   await expect.poll(() => translations(page, 'free')).toEqual([expect.objectContaining({ actionId: 'instruction' })]);
-  expect(JSON.stringify(await translations(page, 'free'))).not.toContain('pluriel');
+  expect(JSON.stringify(await calls(page, 'translate'))).not.toContain('pluriel');
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+});
 
-  await on(page, f => f.captureMenu('closing'));
-  await expect(page.locator('[data-menu-probe]')).toHaveAttribute('data-focused', 'true');
+test('Îlot: without the foreground it reads the native menu-key events, kept until it shows, stale ones ignored', async ({ page }) => {
+  await openIlot(page);
+  // Keys forwarded before the Îlot rendered are kept, in order.
+  await on(page, f => { f.refuseFocus(); return f.captureMenu('fallback', 'correct').then(() => f.menuKey('Tab')); });
+  const ilot = page.locator('[data-ilot]');
+  await expect(ilot).toHaveAttribute('data-keyboard', 'injected');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  // No field without the keyboard: the ✦ tile is dimmed, an unassigned letter does nothing.
+  await expect(page.locator('[data-tile="ask"]')).toHaveAttribute('aria-disabled', 'true');
+  await on(page, f => f.menuKey('z'));
+  await on(page, f => f.menuKey('Escape'));
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  await on(page, f => f.menuKey('2', false, 'stale-capture'));
+  await page.waitForTimeout(100);
+  expect(await chosen(page, 'fallback')).toHaveLength(0);
+  await on(page, f => f.menuKey('2'));
+  // The second tile of the default grid: Translate.
+  await expect.poll(() => chosen(page, 'fallback')).toEqual([{ captureId: 'fallback', actionId: 'translate' }]);
+  await expect.poll(() => translations(page, 'fallback')).toEqual([expect.objectContaining({ actionId: 'translate' })]);
+  await expect(ilot).toHaveAttribute('data-shape', 'pill');
+  expect(await calls(page, 'focus_overlay')).toHaveLength(1);
+});
+
+test('Îlot: a double press runs the application\'s last action once; before the Îlot shows, it is born a pill', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('twice', 'shorten'));
+  await settled(page);
+  await on(page, f => f.menuRepeat('stale-capture'));
+  await on(page, f => f.menuRepeat());
+  await expect.poll(() => chosen(page, 'twice')).toEqual([{ captureId: 'twice', actionId: 'shorten' }]);
+  await expect.poll(() => translations(page, 'twice')).toEqual([expect.objectContaining({ actionId: 'shorten' })]);
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+  await on(page, f => f.menuRepeat());
+  expect(await chosen(page, 'twice')).toHaveLength(1);
+
+  // The second press lands before the Îlot rendered: never the menu, straight to the pill, and
+  // the keyboard is never taken. Nothing remembered for that application: the default action.
+  const focusBefore = (await calls(page, 'focus_overlay')).length;
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    Object.assign(window, { shapesSeen: seen });
+    const record = () => document.querySelectorAll('[data-ilot]').forEach(element => { const shape = element.getAttribute('data-shape') ?? ''; if (seen.at(-1) !== shape) seen.push(shape); });
+    new MutationObserver(record).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-shape'] });
+  });
+  await on(page, f => f.captureMenu('early').then(() => f.menuRepeat()));
+  await expect.poll(() => chosen(page, 'early')).toEqual([{ captureId: 'early', actionId: 'correct' }]);
+  await settled(page, 'pill');
+  expect(await page.evaluate(() => (window as unknown as { shapesSeen: string[] }).shapesSeen)).toEqual(['pill']);
+  expect(await calls(page, 'focus_overlay')).toHaveLength(focusBefore);
+});
+
+test('Îlot: Escape goes back from the grid first, then closes without choosing or pasting', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('escape'));
+  const ilot = page.locator('[data-ilot]');
+  await expect(ilot).toHaveAttribute('data-keyboard', 'focused');
+  await page.keyboard.press('Tab');
+  await expect(ilot).toHaveAttribute('data-mode', 'grid');
+  await page.keyboard.press('Escape');
+  await expect(ilot).toHaveAttribute('data-mode', 'compact');
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
   await page.keyboard.press('Escape');
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
-  expect((await calls(page, 'choose_action')).filter(args => args.captureId === 'closing')).toHaveLength(0);
+  await expect.poll(() => calls(page, 'complete_overlay_dismiss')).toEqual([{ captureId: 'escape' }]);
+  await expect(ilot).toHaveCount(0);
+  expect(await chosen(page, 'escape')).toHaveLength(0);
+  expect(await translations(page, 'escape')).toHaveLength(0);
+});
+
+test('Îlot: a refused choice gives the menu back, and the next choice goes through', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => { f.refuseChoice(); return f.captureMenu('refused', 'translate'); });
+  await settled(page);
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert')).toHaveText('L’action n’existe plus.');
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'menu');
+  expect(await translations(page, 'refused')).toHaveLength(0);
+  await page.keyboard.press('Enter');
+  await expect.poll(() => translations(page, 'refused')).toEqual([expect.objectContaining({ actionId: 'translate' })]);
+  expect(await chosen(page, 'refused')).toHaveLength(2);
+});
+
+test('Îlot window: reserved once below the selection, the region follows each shape and nothing resizes while it springs', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('regions', 'correct'));
+  await settled(page);
+  const reserve = ilotReserve('anchored');
+  const stage = page.locator('.ilot-stage');
+  await expect(stage).toHaveAttribute('data-side', 'below');
+  // The Îlot hangs from the strip Rust anchors, its entrance origin on the selection's side.
+  const compact = await box(page);
+  expect(compact.x + compact.width).toBeCloseTo(reserve.frame.x + reserve.frame.width, 0);
+  expect(compact.y).toBeCloseTo(reserve.frame.y, 0);
+  await expect(page.locator('[data-ilot]')).toHaveCSS('transform-origin', `${compact.width}px 0px`);
+  expect((await geometries(page, 'regions')).at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', compact)]);
+
+  // Grid, field, compact again, then the pill: each change publishes the region holding both shapes
+  // at its start and the new shape at its end; the window, its frame and presentation never change.
+  const published: Geometry[] = [];
+  for (const key of ['Tab', 'Space', 'Escape', 'Enter']) {
+    const before = (await geometries(page, 'regions')).length;
+    const from = await box(page);
+    const frames = await follow(page, 'regions', () => page.keyboard.press(key));
+    await settled(page, (await page.locator('[data-ilot]').getAttribute('data-shape')) as 'menu' | 'pill');
+    const to = await box(page);
+    const added = (await geometries(page, 'regions')).slice(before);
+    published.push(...added);
+    expect(added[0].regions).toEqual([ilotRegion('anchored', 'below', from, to)]);
+    expect(added.at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', to)]);
+    expect(added.length).toBeLessThanOrEqual(2);
+    // Every painted frame of the spring lies inside the region Rust holds at that frame.
+    expect(frames.length).toBeGreaterThan(10);
+    for (const frame of frames) expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  }
+  await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
+  const all = await geometries(page, 'regions');
+  for (const geometry of all) {
+    expect(geometry).toMatchObject({ width: reserve.width, height: reserve.height, presentation: 'anchored', frame: reserve.frame });
+    expect(geometry.regions).toHaveLength(1);
+  }
+  expect(published.at(-1)?.regions).toEqual([{ x: 271, y: 104, width: 44, height: 28, radius: 14 }]);
+});
+
+test('Îlot window: above the selection it grows up from the strip; without an anchor it rests at the bottom', async ({ page }) => {
+  await openIlot(page);
+  // Rust put the strip 8 px over the selection (anchor 300 high, strip 32, 104 above in the window).
+  await on(page, f => { f.windowAt(205, 300 - 8 - 32 - 104); return f.captureMenu('above', 'correct'); });
+  await settled(page);
+  await expect(page.locator('.ilot-stage')).toHaveAttribute('data-side', 'above');
+  const reserve = ilotReserve('anchored');
+  const compact = await box(page);
+  expect(compact.y + compact.height).toBeCloseTo(reserve.frame.y + reserve.frame.height, 0);
+  await expect(page.locator('[data-ilot]')).toHaveCSS('transform-origin', `${compact.width}px ${compact.height}px`);
+  await page.keyboard.press('Tab');
+  await settled(page);
+  const grid = await box(page);
+  expect(grid).toEqual({ x: 97, y: 20, width: 218, height: 116 });
+  expect((await geometries(page, 'above')).at(-1)?.regions).toEqual([{ x: 97, y: 20, width: 218, height: 116, radius: 16 }]);
+
+  await on(page, f => f.unanchoredMenu('clipboard'));
+  await settled(page);
+  const bottom = ilotReserve('bottom');
+  await expect(page.locator('.ilot-stage')).toHaveAttribute('data-presentation', 'bottom');
+  const low = await box(page);
+  expect(low.y + low.height).toBeCloseTo(bottom.frame.y + bottom.frame.height, 0);
+  expect(low.x + low.width / 2).toBeCloseTo(bottom.width / 2, 0);
+  for (const geometry of await geometries(page, 'clipboard')) expect(geometry).toMatchObject({ width: 347, height: 152, presentation: 'bottom', frame: bottom.frame });
+  expect((await geometries(page, 'clipboard')).at(-1)?.regions).toEqual([ilotRegion('bottom', 'above', low)]);
+  // The window position is only read for an anchored capture.
+  expect((await calls(page, 'plugin:window|inner_position')).length).toBe(1);
+});
+
+test('Îlot: under v4 nothing changes, the menu capture shows no Îlot and a direct capture keeps its spinner pill', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.settings({ uiVersion: 'v4' }));
+  await on(page, f => f.capture('direct'));
+  await expect(page.locator('.wait-pill')).toBeVisible();
+  await on(page, f => f.captureMenu('v4-menu'));
+  await expect(page.locator('[data-capture-id="v4-menu"]')).toBeVisible();
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  expect(await calls(page, 'focus_overlay')).toHaveLength(0);
+  // Under the Îlot, a direct capture keeps the standalone working pill of lot 8.
+  await on(page, f => f.settings({ uiVersion: 'ilot' }));
+  await on(page, f => f.capture('direct-ilot'));
+  await expect(page.locator('.working-pill')).toBeVisible();
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
 });

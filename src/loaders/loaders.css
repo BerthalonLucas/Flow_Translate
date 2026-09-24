@@ -51,11 +51,12 @@
    indicator (src/loaders/pill.ts); the content sits on the centred layer of glass.css
    (.shape-clip, .shape-layer), so a later morph of the pill never moves or scales it. */
 .working-pill { position: relative; display: block; flex: none; color: var(--text); }
-.working-pill .working-layer { display: flex; align-items: center; justify-content: center; }
+.working-pill .working-layer, .working-content { display: flex; align-items: center; justify-content: center; }
 .working-slot { display: flex; align-items: center; justify-content: center; flex: none; }
 /* The orb arrives with a short fade (plan, lot 8; the lab shows it at once). Backwards only: once
    faded in, nothing holds an opacity that would group the orb's blend modes differently. */
 .working-orb { display: flex; animation: working-orb-in 150ms cubic-bezier(.23,1,.32,1) backwards; }
 @keyframes working-orb-in { from { opacity: 0; } to { opacity: 1; } }
 /* A hidden page (document.hidden) spends nothing on the loops. */
-.working-pill[data-paused] .ldr, .working-pill[data-paused] .ldr *, .working-pill[data-paused] .ldr::before, .working-pill[data-paused] .ldr::after { animation-play-state: paused; }
+.working-pill[data-paused] .ldr, .working-pill[data-paused] .ldr *, .working-pill[data-paused] .ldr::before, .working-pill[data-paused] .ldr::after,
+.working-content[data-paused] .ldr, .working-content[data-paused] .ldr *, .working-content[data-paused] .ldr::before, .working-content[data-paused] .ldr::after { animation-play-state: paused; }

@@ -296,8 +296,11 @@ test('reduced motion: fades only, the shape changes at once and nothing moves', 
   const entrance = await page.evaluate(() => (window as unknown as { __entrance: string[] }).__entrance);
   expect(entrance.length).toBeGreaterThan(5);
   expect(entrance.every(transform => transform === 'none')).toBe(true);
+  // The compact width follows the fonts (109 with Segoe UI, 117 on the Linux runner): only the two
+  // resting shapes may appear, never a size in between.
+  const compact = await shape(page);
   const frames = await framesDuring(page, () => page.keyboard.press('Tab'), 400);
-  expect(frames.filter(frame => frame.w > 115 && frame.w < 218)).toEqual([]);
+  expect(frames.filter(frame => !(frame.w === compact.width && frame.h === compact.height) && !(frame.w === 218 && frame.h === 116))).toEqual([]);
   expect(frames.at(-1)).toMatchObject({ w: 218, h: 116 });
 });
 
@@ -343,7 +346,7 @@ test('menu semantics, key hints and a focus ring once the keyboard moves', async
   await page.keyboard.press('ArrowRight');
   await expect(page.locator('[data-tile="pro"]')).toBeFocused();
   expect(await page.locator('[data-tile="pro"]').evaluate(el => getComputedStyle(el).outlineStyle)).toBe('solid');
-  await expect(page.locator('[data-tile="pro"]')).toHaveAttribute('title', 'Make professional');
+  await expect(page.locator('[data-tile="pro"]')).toHaveAttribute('aria-description', 'Make professional');
 });
 
 test('fewer than six actions end with Ask, more than six drop it; letters still reach them', async ({ page }) => {

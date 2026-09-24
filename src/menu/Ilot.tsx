@@ -21,6 +21,8 @@ import './ilot.css';
  *   actions        the menu's actions, in the user's order. The first six are the tiles (with a
  *                  final « Ask » tile while there are fewer than six); every action's letter
  *                  answers, and the compact state may show the last action even past the six.
+ *   knownActions   every saved action, for a last action outside the menu's actions: the compact
+ *                  state shows it and Enter relaunches it (no tile, no letter).
  *   lastActionId   the action Enter relaunches and the grid's highlight starts on (else the
  *                  first). Only the highlight follows it: the order never changes by itself.
  *   onChoose(id)   an action was chosen (letter, digit, tile, Enter, click).
@@ -47,6 +49,7 @@ export type IlotShape = 'menu' | 'pill';
 export type IlotHandle = { press: (key: string, modifiers?: Pick<KeyInput, 'shiftKey'>) => boolean };
 export type IlotProps = {
   actions: readonly IlotAction[];
+  knownActions?: readonly IlotAction[];
   lastActionId?: string;
   onChoose: (actionId: string) => void;
   onInstruction: (text: string) => void;
@@ -81,10 +84,10 @@ function ActionIcon({ action, size }: { action: IlotAction; size: 14 | 16 }) {
   return name ? <Icon name={name} size={size} /> : null;
 }
 
-export function Ilot({ actions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', initialMode = 'compact', shape = 'menu', pill, pillSize = ilotMetrics.pill, onShapeChange, ref }: IlotProps) {
+export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', initialMode = 'compact', shape = 'menu', pill, pillSize = ilotMetrics.pill, onShapeChange, ref }: IlotProps) {
   const t = useT();
   const promptAvailable = keyboard !== 'injected';
-  const context = useMemo(() => ilotKeyContext(actions, lastActionId, promptAvailable), [actions, lastActionId, promptAvailable]);
+  const context = useMemo(() => ilotKeyContext(actions, lastActionId, promptAvailable, knownActions), [actions, lastActionId, promptAvailable, knownActions]);
   const [storedMode, setMode] = useState<IlotMode>(initialMode);
   const [hot, setHot] = useState(context.lastTile);
   const [compactHot, setCompactHot] = useState<CompactItem>('last');
@@ -184,11 +187,11 @@ export function Ilot({ actions, lastActionId, onChoose, onInstruction, onClose, 
         ref: (element: HTMLButtonElement | null) => { tileItems.current[index] = element; },
         onMouseEnter: () => setHot(index), onClick: () => pick(tile),
       };
-      if (tile.kind === 'ask') return <button key="ask" {...common} data-tile="ask" aria-keyshortcuts={`${digit} Space /`} aria-disabled={promptAvailable ? undefined : true} title={unavailable ?? t('ilot.askName')}>
+      if (tile.kind === 'ask') return <button key="ask" {...common} data-tile="ask" aria-keyshortcuts={`${digit} Space /`} aria-disabled={promptAvailable ? undefined : true} aria-description={unavailable ?? t('ilot.askName')}>
         <Icon name="custom" size={16} /><span className="ilot-tile-label">{t('ilot.ask')}</span>
       </button>;
       const letter = letterOf(tile.action, context.letters);
-      return <button key={tile.action.id} {...common} data-tile={tile.action.id} aria-keyshortcuts={letter ? `${letter} ${digit}` : digit} title={tile.action.name}>
+      return <button key={tile.action.id} {...common} data-tile={tile.action.id} aria-keyshortcuts={letter ? `${letter} ${digit}` : digit} aria-description={tile.action.name}>
         <ActionIcon action={tile.action} size={16} /><span className="ilot-tile-label">{shortLabel(tile.action)}</span>
       </button>;
     })}
@@ -200,13 +203,13 @@ export function Ilot({ actions, lastActionId, onChoose, onInstruction, onClose, 
       onMouseEnter={() => { stopHover(); hover.current = window.setTimeout(() => setMode(current => current === 'compact' ? 'grid' : current), ilotMetrics.hoverMs); }}
       onMouseLeave={stopHover}>
       {last && <button role="menuitem" type="button" tabIndex={focusable === 'last' ? 0 : -1} className="ilot-btn is-default" data-item="last"
-        ref={element => { compactItems.current.last = element; }} aria-keyshortcuts={['Enter', letterOf(last, context.letters)].filter(Boolean).join(' ')} title={last.name}
+        ref={element => { compactItems.current.last = element; }} aria-keyshortcuts={['Enter', letterOf(last, context.letters)].filter(Boolean).join(' ')} aria-description={last.name}
         onClick={() => onChoose(last.id)}>
         <ActionIcon action={last} size={14} /><span className="ilot-label">{shortLabel(last)}</span><span className="ilot-hint" aria-hidden="true">↵</span>
       </button>}
       {last && <span className="ilot-sep" aria-hidden="true" />}
       <button role="menuitem" type="button" tabIndex={focusable === 'ask' ? 0 : -1} className="ilot-btn ilot-ask" data-item="ask"
-        ref={element => { compactItems.current.ask = element; }} aria-label={describe} aria-keyshortcuts="Space /" aria-disabled={promptAvailable ? undefined : true} title={unavailable}
+        ref={element => { compactItems.current.ask = element; }} aria-label={describe} aria-keyshortcuts="Space /" aria-disabled={promptAvailable ? undefined : true} aria-description={unavailable}
         onClick={() => { if (promptAvailable) apply({ type: 'prompt', seed: '' }); }}>
         <span className="ilot-dot" />
       </button>

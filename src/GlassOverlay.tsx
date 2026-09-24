@@ -10,6 +10,7 @@ import { useContentPresence, useMotionPreset, useReducedMotionSetting, useSurfac
 import { curveTransition, emilOut, exitScale, reducedFade } from './motion/tokens';
 import { WorkingPill } from './loaders/WorkingPill';
 import { indicatorOf } from './loaders/pill';
+import { IlotStage } from './menu/IlotStage';
 import type { Form, HitRegion, Presentation, Screen, TextSize } from './types';
 import type { TranslationController } from './useTranslation';
 
@@ -234,6 +235,9 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   // indicator (lot 8); the 0.4 journey keeps its spinner pill.
   const ilot = settings?.uiVersion === 'ilot';
   const indicator = indicatorOf(settings?.indicator);
+  // A menu capture under the Îlot waits for its choice in the Îlot, which then becomes the working
+  // pill (src/menu/IlotStage.tsx, own window reserve); a fallback or an error opens the glass here.
+  const ilotStage = ilot && Boolean(state.capture?.menu) && form === 'pending';
 
   // Decide the form on the real text, once per result (a relaunch may change it).
   useLayoutEffect(() => {
@@ -426,7 +430,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     // A hidden WebView may suspend rAF; the first geometry must unlock native show.
     publish();
     return () => { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [captureId, form, placement, moving, menuOpen, feedback, screen, preset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [captureId, form, placement, moving, menuOpen, feedback, screen, preset, ilotStage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -438,6 +442,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   }, [cancelAndDismiss, captureId, menuOpen]);
 
   if (!captureId) return null;
+  if (ilotStage && state.capture) return <IlotStage controller={controller} capture={state.capture} />;
   const act = (run: () => void) => () => { refresh(); run(); };
   const invokeResult = async (action: 'copy' | 'replace') => {
     if (!ready || !state.requestId) return;

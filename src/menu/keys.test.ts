@@ -44,6 +44,18 @@ describe('Îlot tiles', () => {
     expect(ilotKeyContext(actions, undefined, true).lastTile).toBe(0);
     expect(ilotKeyContext([], undefined, true).last).toBeUndefined();
   });
+
+  it('relaunches a last action outside the grid when it is known, without giving it a tile or a letter', () => {
+    const outside: IlotAction = { id: 'summary', name: 'Summarise', key: 'U' };
+    const context = ilotKeyContext(actions, 'summary', true, [...actions, outside]);
+    expect(context.last?.id).toBe('summary');
+    expect(context.lastTile).toBe(0);
+    expect(context.tiles.some(tile => tile.kind === 'action' && tile.action.id === 'summary')).toBe(false);
+    expect(context.letters.has('u')).toBe(false);
+    expect(resolveIlotKey({ key: 'Enter' }, { mode: 'compact', hot: 0, compactHot: 'last' }, context)).toEqual({ type: 'choose', actionId: 'summary' });
+    // Unknown everywhere: the first action, as before.
+    expect(ilotKeyContext(actions, 'gone', true, [...actions, outside]).last?.id).toBe('fix');
+  });
 });
 
 describe('letter table', () => {
