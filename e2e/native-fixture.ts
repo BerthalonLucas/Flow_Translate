@@ -24,6 +24,11 @@ let windowsMotion: { reduced: boolean } | null = null;
 // Îlot (lots 3–4): whether the overlay gets the foreground, and the menu capture's choice.
 let overlayFocus = true;
 const chosen = new Set<string>();
+// Where Rust put the overlay window (physical pixels), for the Îlot's side: by default below the
+// fixture's anchor, the Îlot's strip 8 px under the selection (src/layout.ts, ilotReserve).
+let overlayPosition = { x: 400 + 120 - 315, y: 300 + 18 + 8 - 104 };
+// The next `choose_action` is refused, as when the chosen action was deleted meanwhile.
+let refuseChoice = false;
 mockIPC((command, args) => {
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
@@ -34,9 +39,11 @@ mockIPC((command, args) => {
   if (command === 'frontend_ready') return currentCapture;
   if (command === 'translate') request = args?.request as TranslationRequest;
   if (command === 'focus_overlay') return overlayFocus;
+  if (command === 'plugin:window|inner_position') return overlayPosition;
   if (command === 'choose_action') {
     const { captureId, actionId, instruction } = args as { captureId: string; actionId: string; instruction?: string };
     if (captureId !== currentCapture.id || !currentCapture.menu) return Promise.reject('Cette capture n’attend pas de choix.');
+    if (refuseChoice) { refuseChoice = false; return Promise.reject('L’action n’existe plus.'); }
     if (chosen.has(captureId)) return Promise.reject('Une action a déjà été choisie pour cette sélection.');
     const action = settings.actions.find(item => item.id === actionId);
     if (instruction !== undefined ? actionId !== instructionActionId || instructionError(instruction) : !action) return Promise.reject('L’action n’existe plus.');
@@ -82,6 +89,11 @@ Object.assign(window, { nativeFixture: {
   // A `menu` capture under the Îlot: no execution until choose_action.
   captureMenu: (id: string, lastActionId: string | null = null, text?: string) => { currentCapture = { ...capture(id, text), canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
   refuseFocus: () => { overlayFocus = false; },
+  refuseChoice: () => { refuseChoice = true; },
+  // A menu capture without an anchor (clipboard): the Îlot opens at the bottom of the screen.
+  unanchoredMenu: (id: string, lastActionId: string | null = null) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null, canReplace: true, menu: { lastActionId } }; return emit('capture', currentCapture); },
+  // Rust placed the window elsewhere (above the selection, another screen): physical pixels.
+  windowAt: (x: number, y: number) => { overlayPosition = { x, y }; },
   menuKey: (key: string, shiftKey = false, captureId = currentCapture.id) => emit('menu-key', { captureId, key, shiftKey }),
   // Lot 4: the menu shortcut pressed twice within 400 ms while its menu waits.
   menuRepeat: (captureId = currentCapture.id) => emit('menu-repeat', { captureId }),

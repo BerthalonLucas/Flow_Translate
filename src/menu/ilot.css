@@ -43,3 +43,15 @@
 .ilot-input, .ilot-input:focus-visible { outline: none; }
 .ilot-input::placeholder { color: rgb(var(--ink-rgb) / .42); }
 .ilot-keycap { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 5px; font-size: 10.5px; font-weight: 600; background: rgb(var(--ink-rgb) / .08); box-shadow: inset 0 -1px 0 rgb(var(--ink-rgb) / .12); color: rgb(var(--ink-rgb) / .8); }
+
+/* The Îlot's window (src/menu/IlotStage.tsx): the reserve of src/layout.ts (ilotReserve), click-
+   through except for the Îlot itself. The corner that holds the Îlot is placed inline on the
+   strip Rust anchors: its right edge and the side facing the selection stay put while the shape
+   springs, the rest grows away from the selection. */
+.ilot-stage { position: fixed; left: 0; top: 0; pointer-events: none; }
+.ilot-corner { position: absolute; display: flex; justify-content: center; }
+.ilot-corner > .ilot { pointer-events: auto; }
+/* The browser preview has no window to reserve (its demos never open the menu): the stage sits
+   where the glass would. */
+.standalone-demo > .ilot-stage { position: absolute; left: calc(50% - 173px); top: calc(50% - 132px); }
+.demo-desktop > .ilot-stage { position: absolute; z-index: 10; top: calc(42.5% - 74px); left: calc(142px + 48% - 16px); }

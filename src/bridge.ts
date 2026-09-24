@@ -136,6 +136,14 @@ export const bridge = {
   focusOverlay: () => command<boolean>('focus_overlay'),
   // Once per menu capture: a saved action, or `instructionActionId` with the free instruction.
   chooseAction: (captureId: string, actionId: string, instruction?: string) => command<ExecutionInfo>('choose_action', { captureId, actionId, ...(instruction === undefined ? {} : { instruction }) }),
+  // Where Rust put the overlay (physical pixels of the virtual screen, like a capture's anchor),
+  // so the Îlot knows on which side of the selection it opened; null outside the native app.
+  windowPosition: async (): Promise<{ x: number; y: number } | null> => {
+    if (!native) return null;
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const position = await getCurrentWindow().innerPosition();
+    return { x: position.x, y: position.y };
+  },
   // Lot 4, for the shortcut recorder (wired in lot 13): is this chord AltGr + a key here?
   shortcutConflict: (shortcut: string) => command<ShortcutConflict>('shortcut_conflict', { shortcut }),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
