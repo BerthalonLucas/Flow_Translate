@@ -45,6 +45,11 @@ pub enum ErrorKind {
     ProtectedField,
     /// The shortcut keys were still held when the paste or the undo had to type.
     KeysHeld,
+    /// A shortcut pressed while the Settings window is in front: nothing of another
+    /// application is selected (a capture notice).
+    SettingsOpen,
+    /// The tray's « Revoir la dernière traduction » with no result of the last ten minutes.
+    NothingRecent,
     /// Anything unexpected on our side.
     Internal,
 }
@@ -126,6 +131,7 @@ mod tests {
             (ErrorKind::TargetChanged, "target_changed"), (ErrorKind::NotEditable, "not_editable"), (ErrorKind::TooLong, "too_long"),
             (ErrorKind::Cancelled, "cancelled"), (ErrorKind::ServerError, "server_error"), (ErrorKind::NoSelection, "no_selection"),
             (ErrorKind::ProtectedField, "protected_field"), (ErrorKind::KeysHeld, "keys_held"), (ErrorKind::Internal, "internal"),
+            (ErrorKind::SettingsOpen, "settings_open"), (ErrorKind::NothingRecent, "nothing_recent"),
         ];
         for (kind, name) in codes {
             assert_eq!(serde_json::to_value(kind).unwrap(), serde_json::json!(name));

@@ -629,7 +629,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
             .or_else(|| i.last_result.clone().filter(|(_, at)| at.elapsed() <= REPLAY_WINDOW).map(|(r, _)| r))
     };
     let Some(result) = last else {
-        show_notice(app, "Aucune traduction récente.", Some(ErrorKind::NoSelection));
+        show_notice(app, "Aucune traduction récente.", Some(ErrorKind::NothingRecent));
         return Ok(());
     };
     let public = Capture {
@@ -685,7 +685,7 @@ fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32,
         // The hidden settings window can hold the foreground for an instant at startup
         // (the demo capture of the probe met it): only the shown one refuses a capture.
         // Nothing of another application is selected then: nothing to act on.
-        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err(AppError::new(ErrorKind::NoSelection, "Fermez les réglages avant d’utiliser un raccourci.")); }
+        if window.is_visible().unwrap_or(false) && host::belongs_to(&window, host::foreground()) { return Err(AppError::new(ErrorKind::SettingsOpen, "Fermez les réglages avant d’utiliser un raccourci.")); }
     }
     let opening = {
         let mut i = state.inner.lock().map_err(|_| AppError::internal(lock_error()))?;
