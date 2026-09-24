@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Icon, IconButton, type IconName } from '../ui';
+import { Icon, IconButton, iconFromLucide } from '../ui';
 import { useT } from '../i18n';
 import type { ActionDefinition, Settings } from '../types';
 import { addToGrid, gridLimit, letterProblem, moveInGrid, nextLetter, removeFromGrid, withoutKey, type LetterProblem } from './grid';
 
-// The Lucide name an action carries (actions.rs) → the app's thin icon; a custom action
-// shows the free-instruction wand, as its tile does.
-const glyphs: Record<string, IconName> = { SpellCheck: 'fix', Languages: 'translate', BriefcaseBusiness: 'professional', FoldVertical: 'shorten', Mail: 'email' };
-const glyphOf = (action: ActionDefinition): IconName => glyphs[action.icon ?? ''] ?? 'custom';
+// Each action with the icon its Îlot tile draws (the Lucide name it carries, actions.rs, resolved
+// as src/menu/Ilot.tsx ActionIcon does): none when the app's registry lacks it (a custom action,
+// an action migrated from 0.4), its slot left empty so the list stays aligned. The wand belongs
+// to the free instruction alone (review of bc57857, finding 7).
 
 type Props = { settings: Settings; persist: (settings: Settings, immediate: boolean) => void };
 // « In the menu »: the Îlot's tiles in their order (6 at most, decision 6), each with its
@@ -43,9 +43,10 @@ export function MenuGrid({ settings, persist }: Props) {
     {grid.length ? <ol className="grid-list" aria-label={t('grid.list')}>{grid.map((action, index) => {
       const draft = drafts[action.id];
       const letterId = `grid-letter-${action.id}`;
+      const glyph = iconFromLucide(action.icon);
       return <li key={action.id} className="grid-item" data-invalid={draft ? true : undefined}>
         <span className="grid-index" aria-hidden="true">{index + 1}</span>
-        <span className="grid-glyph"><Icon name={glyphOf(action)} size={15} /></span>
+        <span className="grid-glyph" data-icon={glyph}>{glyph && <Icon name={glyph} size={15} />}</span>
         <span className="grid-name">{action.name || t('actions.untitled')}</span>
         <input id={letterId} className="grid-letter" aria-label={t('grid.letter', { name: action.name })} aria-invalid={draft ? true : undefined} aria-describedby={draft ? `${letterId}-problem` : undefined} value={draft?.letter ?? action.key ?? ''} autoComplete="off" spellCheck={false} onFocus={event => event.currentTarget.select()} onChange={event => setLetter(action, event.target.value)} />
         <span className="grid-moves">
