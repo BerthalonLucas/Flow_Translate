@@ -4,12 +4,13 @@ import { useT } from '../i18n';
 import { IndicatorView } from '../loaders/indicators';
 import { indicatorBox, ORB_DELAY_MS, workingPillShape } from '../loaders/pill';
 import { usePageHidden } from '../loaders/WorkingPill';
+import { ilotMetrics } from '../menu/metrics';
 import { MorphSurface, type ShapeChange, type SurfaceOrigin, type SurfaceSize } from '../menu/MorphSurface';
 import { useReducedMotionSetting } from '../motion/MotionPreferences';
-import type { AfterReplace, Indicator, Mode } from '../types';
+import type { AfterReplace, ErrorCode, Indicator, Mode } from '../types';
 import { Icon, iconStroke } from '../ui';
 import { Countdown, resultTiming, type PauseReason } from './countdown';
-import { describeError, errorFamily, type ErrorAction, type ErrorKind } from './errors';
+import { describeError, errorFamily, type ErrorAction, type ErrorSource } from './errors';
 import '../menu/ilot.css';
 import './result.css';
 
@@ -23,9 +24,9 @@ import './result.css';
  *            focus, resumed after); at the end, onExpire: the surface leaves (and the halo's
  *            marks with it). Without Undo the check stays 1.1 s; without both, nothing shows;
  *   undone   « Undone » for 0.9 s, then onExpire;
- *   error    a compact pill 30 high: TriangleAlert, a text of six words at most, one button
- *            (configuration: the exact Settings field; transient: Try again; paste: Copy result,
- *            nothing replaced), ✕. No shake.
+ *   error    a compact pill 30 high, 400 wide at most: TriangleAlert, a text of six words at
+ *            most, one button (configuration: the exact Settings field; transient: Try again;
+ *            paste: Copy result, nothing replaced), ✕. No shake.
  *
  * Each change of content is the surface's own (src/menu/MorphSurface.tsx): the old content
  * fades out, the new one fades in, and the box springs (morph spring) from the old size to the
@@ -44,11 +45,10 @@ import './result.css';
  *       The same content for another MorphSurface (the Îlot's, turned into the pill): `key` is
  *       its contentKey, `size` its fixed size (undefined: the content's natural size). null: no
  *       pill (done with neither check nor Undo, or a silent error such as cancelled).
- *       The Îlot (src/menu/Ilot.tsx) keys its pill content 'pill' and gives it a fixed size
- *       (pillSize, 44 × 28 by default): to carry these stages it needs to take this key and to
- *       leave the size to the content when `size` is undefined.
+ *       The Îlot (src/menu/Ilot.tsx) takes it as is for its pill shape (src/menu/IlotStage.tsx).
  *   Stages: { stage: 'working', indicator, delayMs? } | { stage: 'done', afterReplace }
- *           | { stage: 'undone' } | { stage: 'error', error, mode?, model? }
+ *           | { stage: 'undone' } | { stage: 'error', error, mode?, model?, source? }
+ *           source 'capture': a capture Rust refused (`capture-notice`), no button at all.
  *   onUndo()        Undo was clicked (the native side sends Ctrl+Z or pastes the original back,
  *                   after revalidation).
  *   onExpire()      the done or undone stage is over: let the surface leave.
@@ -56,7 +56,8 @@ import './result.css';
  *                   { type: 'retry' }; { type: 'copy' } → copy the result. For 'copy', anything
  *                   but `false` (or a promise of it) shows « Copied » in place, then onDismiss
  *                   after 0.9 s (Simulator.jsx:290).
- *   onDismiss()     ✕, or the end of « Copied ».
+ *   onDismiss()     ✕, or the end of « Copied ». Without it the error pill has no ✕ (a notice
+ *                   Rust shows alone, never clickable).
  *   Other components: WorkingContent, DoneContent, UndoneContent, ErrorContent (contents only,
  *   without a surface).
  */
@@ -65,7 +66,7 @@ export type ResultStage =
   | { stage: 'working'; indicator: Indicator; delayMs?: number }
   | { stage: 'done'; afterReplace: AfterReplace }
   | { stage: 'undone' }
-  | { stage: 'error'; error: ErrorKind; mode?: Mode; model?: string };
+  | { stage: 'error'; error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource };
 export type ActionAnswer = void | boolean | Promise<void | boolean>;
 export type ResultHandlers = {
   onUndo?: () => void;
@@ -177,9 +178,9 @@ export function UndoneContent({ onExpire }: { onExpire?: () => void }) {
 }
 
 // The compact error pill (Simulator.jsx:286-296, app.css:169-171).
-export function ErrorContent({ error, mode, model, onAction, onDismiss }: { error: ErrorKind; mode?: Mode; model?: string } & Pick<ResultHandlers, 'onAction' | 'onDismiss'>) {
+export function ErrorContent({ error, mode, model, source, onAction, onDismiss }: { error: ErrorCode; mode?: Mode; model?: string; source?: ErrorSource } & Pick<ResultHandlers, 'onAction' | 'onDismiss'>) {
   const t = useT();
-  const description = describeError(error, { mode, model });
+  const description = describeError(error, { mode, model, source });
   const [copied, setCopied] = useState(false);
   const alive = useRef(true);
   const timer = useRef(0);
@@ -199,7 +200,7 @@ export function ErrorContent({ error, mode, model, onAction, onDismiss }: { erro
     setCopied(true);
     timer.current = window.setTimeout(() => latest.current?.(), copiedMs);
   };
-  return <div className="result-error" data-result-content="error" data-error={error} data-family={description.family}>
+  return <div className="result-error" style={{ maxWidth: ilotMetrics.error.maxWidth }} data-result-content="error" data-error={error} data-family={description.family}>
     <span className="result-error-icon"><Icon name="error" size={14} /></span>
     <span className="result-error-text" role="alert">{t(description.message, description.params)}</span>
     {/* Both labels share one cell: « Copied » takes the place of « Copy result » without resizing the pill. */}
@@ -209,7 +210,7 @@ export function ErrorContent({ error, mode, model, onAction, onDismiss }: { erro
         <span aria-hidden={!copied || undefined}>{t('result.copied')}</span>
       </span>
     </button>}
-    <button type="button" className="result-btn result-close" aria-label={t('common.close')} onClick={() => onDismiss?.()}><X size={12} strokeWidth={iconStroke} aria-hidden="true" /></button>
+    {onDismiss && <button type="button" className="result-btn result-close" aria-label={t('common.close')} onClick={() => onDismiss()}><X size={12} strokeWidth={iconStroke} aria-hidden="true" /></button>}
   </div>;
 }
 
@@ -228,7 +229,7 @@ export function resultContent(stage: ResultStage, handlers: ResultHandlers = {})
       return { key: 'undone', node: <UndoneContent onExpire={handlers.onExpire} /> };
     case 'error':
       if (errorFamily(stage.error) === 'silent') return null;
-      return { key: `error-${stage.error}`, node: <ErrorContent error={stage.error} mode={stage.mode} model={stage.model} onAction={handlers.onAction} onDismiss={handlers.onDismiss} /> };
+      return { key: `error-${stage.error}`, node: <ErrorContent error={stage.error} mode={stage.mode} model={stage.model} source={stage.source} onAction={handlers.onAction} onDismiss={handlers.onDismiss} /> };
   }
 }
 

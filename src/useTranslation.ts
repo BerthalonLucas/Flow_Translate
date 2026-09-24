@@ -3,13 +3,15 @@ import { bridge } from './bridge';
 import { initialTranslationState, translationReducer } from './reducer';
 import { t } from './i18n';
 import { defaultActionId } from './actionDefaults';
-import type { Capture, CaptureNotice, CaptureTarget, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
+import { ilotJourney } from './menu/outcome';
+import type { Capture, CaptureNotice, CaptureTarget, ErrorCode, MenuKey, MenuRepeat, Mode, Screen, Settings, StreamEvent, ResultDelivery } from './types';
 
 // A notice (nothing to translate, protected field…) shows four seconds, like Rust keeps its window.
 const NOTICE_MS = 4000;
 // A « replace » capture whose paste never reports back opens its glass after this.
 const DELIVERY_MS = 3000;
-export type Notice = { id: number; message: string };
+// code (lot 10): why Rust refused the capture; the Îlot says it in its own words (GlassOverlay).
+export type Notice = { id: number; message: string; code?: ErrorCode };
 // Why the overlay cannot work at all; the window shows it in its own language.
 export type InitError = 'connection' | 'close';
 
@@ -54,9 +56,9 @@ export function useTranslation(readyOnMount = false) {
     settingsReadyRef.current = bridge.getSettings().then(next => { settingsRef.current = next; setSettings(next); return true; }).catch(() => false);
     return () => { discardPending(); window.clearTimeout(noticeTimer.current); };
   }, [discardPending]);
-  const showNotice = useCallback((message: string) => {
+  const showNotice = useCallback((message: string, code?: ErrorCode) => {
     window.clearTimeout(noticeTimer.current);
-    setNotice({ id: Date.now(), message });
+    setNotice({ id: Date.now(), message, ...(code ? { code } : {}) });
     noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
 
@@ -143,12 +145,13 @@ export function useTranslation(readyOnMount = false) {
         if (invalidation.captureId === captureRef.current?.id) dispatch({ type: 'INVALIDATE', message: invalidation.message });
       }),
       bridge.on<CaptureTarget>('capture-target', target => dispatch({ type: 'TARGET', ...target })),
-      bridge.on<CaptureNotice>('capture-notice', ({ message }) => showNotice(message)),
+      bridge.on<CaptureNotice>('capture-notice', ({ message, code }) => showNotice(message, code)),
       bridge.on<ResultDelivery>('result-delivery', event => {
         if (event.requestId !== requestRef.current || closingRef.current) return;
         dispatch({ type: 'DELIVERY', event });
-        // Pasted: the pill's check is the whole feedback; only a fallback needs its reason.
-        if (event.status === 'fallback') showNotice(event.message);
+        // Pasted: the pill's check is the whole feedback; only a fallback needs its reason, in
+        // the glass. The Îlot says it in its error pill, from the code.
+        if (event.status === 'fallback' && !ilotJourney(settingsRef.current, captureRef.current)) showNotice(event.message);
       }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
       // Lot 4: the menu shortcut pressed twice within 400 ms runs, without the menu, the
@@ -188,7 +191,7 @@ export function useTranslation(readyOnMount = false) {
     const timer = window.setTimeout(() => {
       const message = t('error.deliveryTimeout');
       dispatch({ type: 'DELIVERY', event: { requestId, status: 'fallback', confirmed: false, message } });
-      showNotice(message);
+      if (!ilotJourney(settingsRef.current, captureRef.current)) showNotice(message);
     }, DELIVERY_MS);
     return () => window.clearTimeout(timer);
   }, [state.phase, state.delivery, state.requestId, showNotice]);

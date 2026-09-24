@@ -168,5 +168,9 @@ export const bridge = {
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
   // Lot 10: the state of every binding (a chord another application holds is 'taken').
   shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
+  // Lot 9 (native side, not in the contract yet): undo a pasted result, after revalidation. null
+  // while Rust offers nothing: the Îlot then shows the check alone. When the command lands, this
+  // is the one line to change, e.g. `(requestId: string) => command<void>('undo_result', { requestId })`.
+  undoResult: null as ((requestId: string) => Promise<void>) | null,
 };
 

@@ -10,7 +10,8 @@ import { useContentPresence, useMotionPreset, useReducedMotionSetting, useSurfac
 import { curveTransition, emilOut, exitScale, reducedFade } from './motion/tokens';
 import { WorkingPill } from './loaders/WorkingPill';
 import { indicatorOf } from './loaders/pill';
-import { IlotStage } from './menu/IlotStage';
+import { IlotNotice, IlotStage } from './menu/IlotStage';
+import { ilotJourney } from './menu/outcome';
 import type { Form, HitRegion, Presentation, Screen, TextSize } from './types';
 import type { TranslationController } from './useTranslation';
 
@@ -141,9 +142,16 @@ function ReadingSurface({ children, streaming, onEnter }: {
   </ScrollArea.Root>;
 }
 
+// A menu capture under the Îlot lives on the Îlot's surface from the menu to its check or its
+// error pill (src/menu/IlotStage.tsx); everything else is the glass.
 export function GlassOverlay({ controller }: { controller: TranslationController }) {
-  if (controller.state.capture) return <GlassSession key={controller.state.capture.id} controller={controller} />;
-  return controller.notice ? <NoticePill key={controller.notice.id} message={controller.notice.message} /> : null;
+  const { state, settings, notice } = controller;
+  if (state.capture) return ilotJourney(settings, state.capture)
+    ? <IlotStage key={state.capture.id} controller={controller} capture={state.capture} />
+    : <GlassSession key={state.capture.id} controller={controller} />;
+  if (!notice) return null;
+  // Under the Îlot a refused capture reads as its error pill, in the interface language.
+  return settings?.uiVersion === 'ilot' && notice.code ? <IlotNotice key={notice.id} code={notice.code} /> : <NoticePill key={notice.id} message={notice.message} />;
 }
 
 // Nothing to translate: one pill, never clickable, in place of the old MessageBox. Rust
@@ -232,12 +240,10 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   const ready = state.phase === 'complete' && !closingCaptureId && !moving && !replacing;
   const isReader = form === 'reader';
   // The Îlot art direction (hidden switch, lot 0): the wait is the working pill with the chosen
-  // indicator (lot 8); the 0.4 journey keeps its spinner pill.
+  // indicator (lot 8); the 0.4 journey keeps its spinner pill. A menu capture under the Îlot never
+  // reaches this glass (GlassOverlay renders IlotStage for it).
   const ilot = settings?.uiVersion === 'ilot';
   const indicator = indicatorOf(settings?.indicator);
-  // A menu capture under the Îlot waits for its choice in the Îlot, which then becomes the working
-  // pill (src/menu/IlotStage.tsx, own window reserve); a fallback or an error opens the glass here.
-  const ilotStage = ilot && Boolean(state.capture?.menu) && form === 'pending';
 
   // Decide the form on the real text, once per result (a relaunch may change it).
   useLayoutEffect(() => {
@@ -430,7 +436,7 @@ function GlassSession({ controller }: { controller: TranslationController }) {
     // A hidden WebView may suspend rAF; the first geometry must unlock native show.
     publish();
     return () => { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [captureId, form, placement, moving, menuOpen, feedback, screen, preset, ilotStage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [captureId, form, placement, moving, menuOpen, feedback, screen, preset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -442,7 +448,6 @@ function GlassSession({ controller }: { controller: TranslationController }) {
   }, [cancelAndDismiss, captureId, menuOpen]);
 
   if (!captureId) return null;
-  if (ilotStage && state.capture) return <IlotStage controller={controller} capture={state.capture} />;
   const act = (run: () => void) => () => { refresh(); run(); };
   const invokeResult = async (action: 'copy' | 'replace') => {
     if (!ready || !state.requestId) return;

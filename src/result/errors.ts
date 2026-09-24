@@ -1,10 +1,10 @@
 import type { MessageKey } from '../i18n';
-import type { Mode, ProfileField, SettingsField } from '../types';
+import { errorCodes, type ErrorCode, type Mode, type ProfileField, type SettingsField } from '../types';
 
 /*
- * The errors of lot 10 on the front (docs/DA-PLAN.md lot 10, UI-DECISIONS 23/09): a code, its
- * family, its one button and the Settings field it opens. Rust does not send these codes yet
- * (lot 10, native side); until it does, nothing produces them outside the lab.
+ * The errors of lot 10 on the front (docs/DA-PLAN.md lot 10, UI-DECISIONS 23/09): for each code
+ * Rust sends (`ErrorCode`, the one list in src/types.ts), its family, its one button and the
+ * Settings field it opens.
  *
  * Families (the lab's `kind`, design-lab/src/data.js:63-73):
  *   config     the user can fix it: the button opens the exact field of the Settings
@@ -19,24 +19,18 @@ import type { Mode, ProfileField, SettingsField } from '../types';
  * they never carry the server's answer, a key or any text of the user.
  *
  * API
- *   errorKinds, ErrorKind       the codes Rust will send.
- *   errorKindOf(value)          a code from the bridge; anything unknown is 'internal'.
- *   describeError(kind, { mode, model })  → { family, message, params, action, actionLabel }:
+ *   errorCodeOf(value)          a code from the bridge; anything unknown is 'internal'.
+ *   describeError(code, { mode, model, source })  → { family, message, params, action, actionLabel }:
  *                               the i18n keys to show and the one action of its button.
+ *                               source 'capture': a capture Rust refused (`capture-notice`):
+ *                               nothing was read, no result exists, so no button at all.
  *   ErrorAction                 { type: 'settings', field } | { type: 'retry' } | { type: 'copy' }.
  */
 
-export const errorKinds = [
-  // Server and model (lot 10 list).
-  'unreachable', 'timeout', 'unauthorized', 'model_not_found', 'bad_endpoint', 'busy', 'length', 'stream_broken',
-  // Paste and capture (lot 10 list).
-  'paste_blocked', 'target_changed', 'not_editable', 'too_long', 'cancelled',
-  // Found by the audit of the plan: sources no code above covers.
-  'server_error', 'no_selection', 'protected_field', 'keys_held', 'internal',
-] as const;
-export type ErrorKind = typeof errorKinds[number];
 export type ErrorFamily = 'config' | 'transient' | 'paste' | 'content' | 'silent';
 export type ErrorAction = { type: 'settings'; field: SettingsField } | { type: 'retry' } | { type: 'copy' };
+// Where it failed: a request (translation, paste) or the capture itself.
+export type ErrorSource = 'request' | 'capture';
 
 type Entry = { family: ErrorFamily; field?: ProfileField };
 // Why each code sits in its family:
@@ -51,7 +45,7 @@ type Entry = { family: ErrorFamily; field?: ProfileField };
 //   paste_blocked, target_changed, not_editable, keys_held: the paste did not happen: paste.
 //   too_long, no_selection, protected_field: nothing was read or sent: content, ✕ only.
 //   cancelled        the user's own Escape: silent.
-const table: Record<ErrorKind, Entry> = {
+const table: Record<ErrorCode, Entry> = {
   unreachable: { family: 'config', field: 'endpoint' },
   bad_endpoint: { family: 'config', field: 'endpoint' },
   unauthorized: { family: 'config', field: 'apiKey' },
@@ -72,16 +66,16 @@ const table: Record<ErrorKind, Entry> = {
   cancelled: { family: 'silent' },
 };
 
-export function errorKindOf(value: unknown): ErrorKind {
-  return (errorKinds as readonly unknown[]).includes(value) ? value as ErrorKind : 'internal';
+export function errorCodeOf(value: unknown): ErrorCode {
+  return (errorCodes as readonly unknown[]).includes(value) ? value as ErrorCode : 'internal';
 }
-export const errorFamily = (kind: ErrorKind): ErrorFamily => table[kind].family;
+export const errorFamily = (code: ErrorCode): ErrorFamily => table[code].family;
 
 // The button's label per action (the lab's OUTCOMES action, data.js:66-71).
 const fieldLabel: Record<ProfileField, MessageKey> = { endpoint: 'result.action.endpoint', apiKey: 'result.action.apiKey', model: 'result.action.model' };
 
 export type ErrorDescription = {
-  kind: ErrorKind;
+  code: ErrorCode;
   family: ErrorFamily;
   message: MessageKey;
   params?: Record<string, string>;
@@ -92,13 +86,15 @@ export type ErrorDescription = {
 // mode: the profile the failed request used (its field then opens, else the default
 // profile's). model: the model's name from the settings, for « Model not found: … » (the lab's
 // wording); never anything from the server's answer.
-export function describeError(kind: ErrorKind, { mode, model }: { mode?: Mode; model?: string } = {}): ErrorDescription {
-  const { family, field } = table[kind];
-  const named = kind === 'model_not_found' && model?.trim();
-  const message = (named ? 'result.error.model_not_found_named' : `result.error.${kind}`) as MessageKey;
+export function describeError(code: ErrorCode, { mode, model, source = 'request' }: { mode?: Mode; model?: string; source?: ErrorSource } = {}): ErrorDescription {
+  const { family, field } = table[code];
+  const named = code === 'model_not_found' && model?.trim();
+  const message = (named ? 'result.error.model_not_found_named' : `result.error.${code}`) as MessageKey;
   const params = named ? { model: model!.trim() } : undefined;
-  if (family === 'config' && field) return { kind, family, message, params, action: { type: 'settings', field: mode ? `${mode}.${field}` : field }, actionLabel: fieldLabel[field] };
-  if (family === 'transient') return { kind, family, message, params, action: { type: 'retry' }, actionLabel: 'common.retry' };
-  if (family === 'paste') return { kind, family, message, params, action: { type: 'copy' }, actionLabel: 'result.action.copy' };
-  return { kind, family, message, params, action: null, actionLabel: null };
+  const none = { code, family, message, params, action: null, actionLabel: null };
+  if (source === 'capture') return none;
+  if (family === 'config' && field) return { ...none, action: { type: 'settings', field: mode ? `${mode}.${field}` : field }, actionLabel: fieldLabel[field] };
+  if (family === 'transient') return { ...none, action: { type: 'retry' }, actionLabel: 'common.retry' };
+  if (family === 'paste') return { ...none, action: { type: 'copy' }, actionLabel: 'result.action.copy' };
+  return none;
 }

@@ -162,9 +162,21 @@ describe('ErrorContent', () => {
     await mount(<ErrorContent error="busy" onAction={onAction} />);
     await act(async () => host!.querySelector<HTMLButtonElement>('.result-action')!.click());
     expect(onAction).toHaveBeenCalledWith({ type: 'retry' });
-    await act(async () => root!.render(<ErrorContent error="too_long" />));
+    await act(async () => root!.render(<ErrorContent error="too_long" onDismiss={() => undefined} />));
     expect(host!.querySelector('.result-action')).toBeNull();
     expect(host!.querySelectorAll('button').length).toBe(1);
+  });
+
+  it('says a refused capture without any button: nothing to retry or copy, and no ✕ without onDismiss', async () => {
+    const onAction = vi.fn();
+    await mount(<ErrorContent error="target_changed" source="capture" onAction={onAction} />);
+    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Text changed — not replaced');
+    expect(host!.querySelectorAll('button').length).toBe(0);
+    await act(async () => root!.render(<ErrorContent error="no_selection" source="capture" />));
+    expect(host!.querySelector('[role="alert"]')!.textContent).toBe('Select some text first');
+    expect(host!.querySelectorAll('button').length).toBe(0);
+    // The pill is capped: the Îlot's window holds its widest.
+    expect(host!.querySelector<HTMLElement>('.result-error')!.style.maxWidth).toBe('400px');
   });
 });
 

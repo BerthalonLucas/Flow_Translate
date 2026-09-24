@@ -2,7 +2,7 @@ import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds,
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
-import type { Capture, ExecutionInfo, HaloEvent, Settings, TranslationRequest } from '../src/types';
+import type { BindingState, Capture, ErrorCode, ExecutionInfo, HaloEvent, Settings, ShortcutStatus, TranslationRequest } from '../src/types';
 
 let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
@@ -25,10 +25,15 @@ let windowsMotion: { reduced: boolean } | null = null;
 let overlayFocus = true;
 const chosen = new Set<string>();
 // Where Rust put the overlay window (physical pixels), for the Îlot's side: by default below the
-// fixture's anchor, the Îlot's strip 8 px under the selection (src/layout.ts, ilotReserve).
-let overlayPosition = { x: 400 + 120 - 315, y: 300 + 18 + 8 - 104 };
+// fixture's anchor, the Îlot's strip 8 px under the selection, its right edge (32 + 400 in the
+// window) on the selection's end (src/layout.ts, ilotReserve).
+let overlayPosition = { x: 400 + 120 - 432, y: 300 + 18 + 8 - 104 };
 // The next `choose_action` is refused, as when the chosen action was deleted meanwhile.
 let refuseChoice = false;
+// Lot 10: what Windows answered for each binding (`shortcut_status`); by default every enabled
+// chord is registered. A test sets a binding's state (another application holds the chord: 'taken').
+let shortcutStates: Record<string, BindingState> = {};
+const shortcutStatus = (): ShortcutStatus[] => settings.shortcutBindings.map(b => ({ bindingId: b.id, shortcut: b.shortcut, state: shortcutStates[b.id] ?? (b.enabled ? 'registered' : 'disabled') }));
 mockIPC((command, args) => {
   calls.push({ command, args });
   if (command === 'get_settings') { if (failSettings) { return Promise.reject('Synthetic settings failure'); } return settings; }
@@ -50,6 +55,7 @@ mockIPC((command, args) => {
     chosen.add(captureId);
     return { actionId, actionName: action?.name ?? instructionActionName, outputMode: 'replace', mode: settings.mode } satisfies ExecutionInfo;
   }
+  if (command === 'shortcut_status') return shortcutStatus();
   if (command === 'shortcut_conflict') return (args as { shortcut: string }).shortcut === 'Ctrl+Alt+E' ? { altGr: true, character: '€' } : { altGr: false };
   // Lot 10's `open_settings({ field })` on an open Settings window: the event it will send.
   if (command === 'open_settings' && args?.field) return emit('settings-focus-field', { field: args.field });
@@ -66,11 +72,12 @@ Object.assign(window, { nativeFixture: {
   connect: () => { connected = true; },
   refuseShortcut: () => { refuseShortcut = true; },
   refuseReplace: () => { refuseReplace = true; },
-  error: () => emit('translation', { requestId: request.id, kind: 'error', message: 'Serveur indisponible.' }),
+  // A failed request; lot 10 sends its code beside the French message (none: a 0.4 error).
+  error: (code?: ErrorCode, message = 'Serveur indisponible.') => emit('translation', { requestId: request.id, kind: 'error', message, ...(code ? { code } : {}) }),
   capture: (id: string, text?: string) => { currentCapture = capture(id, text); return emit('capture', currentCapture); },
   // A « replace » capture: Rust will paste the first complete result and report `result-delivery`.
   captureReplace: (id: string, text?: string) => { currentCapture = { ...capture(id, text, replaceExecution), canReplace: true }; return emit('capture', currentCapture); },
-  deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.') => { await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message }); },
+  deliver: async (status: 'applied' | 'fallback', confirmed = status === 'applied', message = status === 'applied' ? 'Sélection remplacée.' : 'Le collage a été bloqué; utilisez Copier.', code?: ErrorCode) => { await emit('capture-target', { captureId: currentCapture.id, canReplace: false }); await emit('result-delivery', { requestId: request.id, status, confirmed, message, ...(code ? { code } : {}) }); },
   delta: (text: string, requestId = request.id) => emit('translation', { requestId, kind: 'delta', text }),
   done: (text?: string) => emit('translation', { requestId: request.id, kind: 'done', ...(text === undefined ? {} : { text }) }),
   dismissEvent: (captureId: string) => emit('overlay-dismiss-requested', { captureId }),
@@ -79,7 +86,11 @@ Object.assign(window, { nativeFixture: {
   releaseCopy: () => { resolveCopy?.(); heldCopy = false; },
   near: (near: boolean) => emit('glass-near', { near }),
   target: (captureId: string, canReplace: boolean) => emit('capture-target', { captureId, canReplace }),
-  notice: (message: string) => emit('capture-notice', { message }),
+  notice: (message: string, code?: ErrorCode) => emit('capture-notice', { message, ...(code ? { code } : {}) }),
+  // The watcher dropped the selection (lot 10: code target_changed).
+  invalidate: (anchorLost = false, captureId = currentCapture.id) => emit('target-invalidated', { captureId, anchorLost, message: 'La sélection a changé.', code: 'target_changed' }),
+  // Lot 10: what Windows answered for each binding; sent as `shortcut-status` when `emitNow`.
+  shortcutStates: (states: Record<string, BindingState>, emitNow = true) => { shortcutStates = states; return emitNow ? emit('shortcut-status', shortcutStatus()) : undefined; },
   workArea: (width: number, height: number, scale = 1) => emit('work-area', { width, height, scale }),
   systemMotion: (reduced: boolean) => { windowsMotion = { reduced }; return emit('system-motion', windowsMotion); },
   settings: (next: Partial<Settings>) => { settings = { ...settings, ...next }; return emit('settings-changed', settings); },

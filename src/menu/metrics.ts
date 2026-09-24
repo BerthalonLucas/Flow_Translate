@@ -14,6 +14,11 @@ export const ilotMetrics = {
   prompt: { width: 283, height: 34, input: 230 },
   // The work pill the surface turns into (plan lot 8): 44 × 28, fully round (radius 14).
   pill: { width: 44, height: 28 },
+  // The error pill (lot 10; app.css:169, .err-row): 30 high. Its widest text with its button, in
+  // English or French, measures 389 px (« Texte non modifiable, rien remplacé » + « Copier le
+  // résultat », Chromium, 2026-09-24): capped at 400, a longer text (a model's name) ends in an
+  // ellipsis. The widest shape of the Îlot: the window's reserve holds it (src/layout.ts).
+  error: { height: 30, maxWidth: 400 },
   // Corner radius above 44 px of height; below, the shape is fully round (Surface.jsx:70).
   radius: 16,
   // A pointer resting on the compact state unfolds the grid after this long (menus.jsx:81).

@@ -103,11 +103,17 @@ describe('Ilot', () => {
   it('becomes the pill on the same surface, ignores the menu keys there, and starts over compact', async () => {
     const { press, mode, render } = await mount({ initialMode: 'grid' });
     const surface = host!.querySelector('[data-ilot-shape]');
-    await render({ shape: 'pill', pill: <span data-testid="orb" /> });
+    await render({ shape: 'pill', pill: { key: 'working', size: { width: 44, height: 28 }, node: <span data-testid="orb" /> } });
     expect(host!.querySelector('[data-ilot]')!.getAttribute('data-shape')).toBe('pill');
     expect(host!.querySelector('.shape-layer:not(.is-leaving) [data-testid="orb"]')).not.toBeNull();
     expect(host!.querySelector('[data-ilot-shape]')).toBe(surface);
     expect(await press('f')).toBe(false);
+    // Another pill content (the error pill, of its natural size): a new layer on the same surface,
+    // the previous one leaving.
+    await render({ shape: 'pill', pill: { key: 'error-busy', node: <span data-testid="error" /> } });
+    expect(host!.querySelector('.shape-layer:not(.is-leaving) [data-testid="error"]')).not.toBeNull();
+    expect(host!.querySelector('.shape-layer:not(.is-leaving) [data-testid="orb"]')).toBeNull();
+    expect(host!.querySelector('[data-ilot-shape]')).toBe(surface);
     await render({ shape: 'menu' });
     expect(mode()).toBe('compact');
     expect(host!.querySelector('[data-ilot-shape]')).toBe(surface);

@@ -72,19 +72,20 @@ export function bottomReserve(screen: Pick<Screen, 'width' | 'height'>, preset: 
 }
 
 // The Îlot (lot 7) has its own window, reserved once per capture for its largest shape: the
-// field's width by the grid's height (283 × 116, src/menu/metrics.ts), plus the halo. Its shapes
-// then only change the hit-test regions, never the window (plan §4.3).
-//   anchored  `frame` is the compact strip (283 × 32) that Rust places beside the selection like
+// widest (the error pill of lot 10, 400, wider than the field's 283) by the tallest (the grid,
+// 116), src/menu/metrics.ts, plus the halo. Its shapes then only change the hit-test regions,
+// never the window (plan §4.3: the reserve holds « the Îlot's grid or the error card »).
+//   anchored  `frame` is the compact strip (400 × 32) that Rust places beside the selection like
 //             the glass (8 px under it, or 8 px over it when the room below is short; its right
-//             edge on the selection's end, clamped into the work area). The Îlot hangs from the
-//             strip's right edge and grows away from the selection, by at most 84 px: the
-//             reserve keeps that room on both sides, since the side is only known once Rust
-//             placed the window (ilotSide). 347 × 264.
+//             edge on the selection's end, clamped into the work area, so every shape stays on
+//             the screen). The Îlot hangs from the strip's right edge and grows away from the
+//             selection, by at most 84 px: the reserve keeps that room on both sides, since the
+//             side is only known once Rust placed the window (ilotSide). 464 × 264.
 //   bottom    no anchor (clipboard): the box rests on the window's bottom edge, centred, and
-//             grows up; Rust docks the window bottom-centre. 347 × 152.
+//             grows up; Rust docks the window bottom-centre. 464 × 152.
 export type IlotSide = 'below' | 'above';
 type ShapeSize = { width: number; height: number };
-export const ilotBox = { width: ilotMetrics.prompt.width, height: ilotMetrics.grid.height };
+export const ilotBox = { width: Math.max(ilotMetrics.prompt.width, ilotMetrics.grid.width, ilotMetrics.error.maxWidth), height: ilotMetrics.grid.height };
 const ilotGrowth = ilotBox.height - ilotMetrics.compactHeight;
 export function ilotReserve(presentation: Presentation): { width: number; height: number; frame: HitRegion } {
   const width = ilotBox.width + 2 * halo.x;
