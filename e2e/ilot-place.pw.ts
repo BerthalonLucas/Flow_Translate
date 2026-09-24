@@ -26,6 +26,9 @@ type Fixture = {
   pillAnswer: (answer: Record<string, unknown> | 'refuse') => void;
   refuseMove: () => void;
   windowPosition: () => { x: number; y: number };
+  windowAt: (x: number, y: number) => void;
+  workAreaAt: (x: number, y: number, width: number, height: number) => void;
+  undoWith: (outcome: Record<string, unknown>) => void;
   requestId: () => string;
 };
 const fixture = (page: Page) => ({
@@ -39,6 +42,7 @@ const stage = (page: Page) => page.locator('.ilot-stage');
 const box = (page: Page) => page.locator('[data-ilot-shape]').evaluate(element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
 const sameSurface = (page: Page) => page.locator('[data-ilot-shape]').evaluate(element => (element as HTMLElement & { tag?: string }).tag === 'surface');
 const opacity = (page: Page) => page.locator('.ilot-corner').evaluate(element => getComputedStyle(element).opacity);
+const undoButton = (page: Page) => page.locator('.shape-layer:not(.is-leaving) .result-undo');
 const inside = (shape: Box, region: Region) => shape.x >= region.x - 1 && shape.y >= region.y - 1 && shape.x + shape.width <= region.x + region.width + 1 && shape.y + shape.height <= region.y + region.height + 1;
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
@@ -220,6 +224,91 @@ test('in the margin the pill keeps its left edge beside the text: a narrower sha
     expect(Math.abs(frame.shape.x - pill.x), JSON.stringify(frame)).toBeLessThan(1);
     expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
   }
+});
+
+// The pasted lines in the window's coordinates at a frame's time: the window moved at `moved.at`
+// by (dx, dy), if it moved.
+const linesAt = (lines: Box[], window: { x: number; y: number }, frame: Frame, moved?: Move) =>
+  lines.map(line => ({ ...line, x: line.x - window.x - (moved && frame.t >= moved.at ? moved.dx : 0), y: line.y - window.y - (moved && frame.t >= moved.at ? moved.dy : 0) }));
+
+test('the Îlot above the selection, the place under the new text: the pill never sweeps over the text; out of sight it takes its place at once', async ({ page }) => {
+  // A selection near the bottom of the work area: Rust opened the Îlot above it (the strip 8 px
+  // over the selection, the window at (88, 156)); under the new text there is still room.
+  await openIlot(page);
+  await fixture(page).run(f => { f.workAreaAt(0, 0, 1920, 500); f.windowAt(88, 156); });
+  await working(page, 'over');
+  await expect(stage(page)).toHaveAttribute('data-side', 'above');
+  const window = { x: 88, y: 156 };
+  const lines = [{ x: 300, y: 300, width: 420, height: 18 }, { x: 300, y: 318, width: 260, height: 18 }];
+  const frames = await follow(page, 'over', () => paste(page, lines), 1400);
+  await expect(stage(page)).toHaveAttribute('data-stage', 'done');
+  await settled(page);
+  await expect.poll(() => opacity(page)).toBe('1');
+  const pill = await box(page);
+  // Under the new text: right edge on the last line's end (560), top 8 px under it (344).
+  expect(pill.x + pill.width).toBeCloseTo(560 - window.x, 0);
+  expect(pill.y).toBeCloseTo(344 - window.y, 0);
+  // No visible frame over a line of the new text; the pill was out of sight between its places,
+  // never at a position between them; every frame in the region Rust holds.
+  for (const frame of frames) {
+    if (frame.opacity > 0.05) for (const line of linesAt(lines, window, frame)) expect(overlaps(frame.shape, line), JSON.stringify(frame)).toBe(false);
+    const right = frame.shape.x + frame.shape.width;
+    expect(Math.abs(right - cornerX) < 0.5 || Math.abs(right - (560 - window.x)) < 0.5, JSON.stringify(frame)).toBe(true);
+    expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  }
+  expect(frames.some(frame => frame.opacity < 0.05)).toBe(true);
+  expect(frames.at(-1)?.opacity).toBe(1);
+  expect(await calls(page, 'move_overlay')).toEqual([]);
+  expect(await sameSurface(page)).toBe(true);
+});
+
+test('a place outside the window: the pill fades out as soon as Rust answers, not once its shape rests, and is never seen over the new text after that', async ({ page }) => {
+  await openIlot(page);
+  await working(page, 'fade');
+  // Twelve lines: the new text runs over the pill's first place (that much comes before any answer).
+  const lines = Array.from({ length: 12 }, (_, index) => ({ x: 100, y: 300 + 18 * index, width: 600, height: 18 }));
+  const frames = await follow(page, 'fade', () => paste(page, lines), 1800);
+  await expect.poll(() => calls(page, 'result_pill')).toHaveLength(2);
+  await expect.poll(() => opacity(page)).toBe('1');
+  const answered = (await fixture(page).run(f => f.calls.filter(call => call.command === 'result_pill').map(call => call.at)))[0];
+  const [move] = await moves(page);
+  // From Rust's answer, the exit fade (170 ms) and a frame: never visible over a line again.
+  const late = frames.filter(frame => frame.t > answered + 170 + 50);
+  expect(late.length).toBeGreaterThan(20);
+  for (const frame of late) {
+    if (frame.opacity <= 0.05) continue;
+    for (const line of linesAt(lines, origin, frame, move)) expect(overlaps(frame.shape, line), JSON.stringify(frame)).toBe(false);
+  }
+  // It faded out while its shape still sprang: out of sight before the surface rested.
+  const final = frames.at(-1)!.shape;
+  expect(frames.some(frame => frame.opacity < 0.05 && Math.abs(frame.shape.width - final.width) > 1)).toBe(true);
+  // The window still moved at rest only, the pill invisible.
+  expect(move.opacity).toBe('0');
+  expect(move.shape).toEqual({ width: final.width, height: final.height });
+});
+
+test('Undo withdrawn on the pill’s way to the margin: it never sweeps over the text, the check alone lands at the margin’s left edge, every frame in the region', async ({ page }) => {
+  await openIlot(page, { pillPlacement: 'margin' });
+  await working(page, 'hop');
+  // Two lines ending at x = 529, the last one right above the strip (300 to 318): the margin's
+  // left edge at 537, up and to the right of the pill; a straight way there crosses the text.
+  const lines = [{ x: 300, y: 282, width: 229, height: 18 }, { x: 300, y: 300, width: 229, height: 18 }];
+  const frames = await follow(page, 'hop', async () => { await paste(page, lines); await fixture(page).run(f => f.undoState('typed')); }, 1000);
+  await expect(undoButton(page)).toHaveCount(0);
+  const last = frames.at(-1)!;
+  expect(Math.abs(frames.at(-4)!.shape.width - last.shape.width)).toBeLessThan(0.5);
+  expect(last.opacity).toBe(1);
+  // Where the window stands now (the check and Undo, wider, did not fit in it with its shadow:
+  // it moved), the check alone's left edge on the margin's.
+  const window = await fixture(page).run(f => f.windowPosition());
+  expect(last.shape.x + window.x).toBeCloseTo(537, 0);
+  const [move] = await moves(page);
+  for (const frame of frames) {
+    if (frame.opacity > 0.05) for (const line of linesAt(lines, origin, frame, move)) expect(overlaps(frame.shape, line), JSON.stringify(frame)).toBe(false);
+    expect(inside(frame.shape, frame.geometry.regions[0]), JSON.stringify(frame)).toBe(true);
+  }
+  // Its region at rest: the check alone at its place.
+  expect((await geometries(page, 'hop')).at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', { width: last.shape.width, height: last.shape.height, shift: Math.round(last.shape.x + last.shape.width - cornerX), dy: Math.round(last.shape.y - reserve.frame.y) })]);
 });
 
 test('the pill stays where it is when Rust refuses its place or the window’s move; a retried paste and a bottom Îlot never ask', async ({ page }) => {
