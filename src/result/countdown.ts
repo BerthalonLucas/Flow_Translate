@@ -59,6 +59,14 @@ export class Countdown {
     return total ? Math.ceil(this.remaining(now) / 1000) / total : 0;
   }
 
+  // At most `ms` left from now (never more than there was): Undo withdrawn by a key or the caret,
+  // the check alone leaves within the lab's 1.1 s. The pauses still hold.
+  limit(ms: number, now: number): void {
+    if (this.remaining(now) <= ms) return;
+    this.spent = this.durationMs - Math.max(0, ms);
+    if (this.since !== null) this.since = now;
+    this.notify();
+  }
   // Pausing for a reason already held, or resuming one not held, changes nothing.
   pause(reason: PauseReason, now: number): void {
     if (this.reasons.has(reason)) return;

@@ -164,10 +164,11 @@ export function useTranslation(readyOnMount = false) {
         if (event.status === 'fallback' && !ilotJourney(settingsRef.current, captureRef.current)) showNotice(event.message);
       }),
       bridge.on<Screen>('work-area', next => setScreen(next)),
-      // Lot 9: Undo is no longer safe (a key in the source, the user's own Ctrl+Z, the caret
-      // moved): the Îlot removes it, the pill stays until its time ends.
+      // Lot 9: Undo is no longer safe; the reason decides what the Îlot says (src/menu/outcome.ts):
+      // the user's own Ctrl+Z undid the paste (« Undone »), a key or the caret moved (the pill
+      // leaves soon).
       bridge.on<UndoState>('undo-state', event => {
-        if (event.requestId === requestRef.current && !closingRef.current && event.available === false) dispatch({ type: 'UNDO_LOST', requestId: event.requestId });
+        if (event.requestId === requestRef.current && !closingRef.current && event.available === false) dispatch({ type: 'UNDO_LOST', requestId: event.requestId, reason: event.reason });
       }),
       // Lot 4: the menu shortcut pressed twice within 400 ms runs, without the menu, the
       // last action of that application (else the default action). Handled here, not in

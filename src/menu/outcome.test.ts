@@ -33,6 +33,17 @@ describe('ilotOutcome', () => {
     expect(outcome(applied, null, false, { status: 'undone' })).toEqual({ stage: 'undone' });
   });
 
+  it('reads the user’s own Ctrl+Z in the source as Undone, a key or the caret as the check alone', () => {
+    const applied = { phase: 'complete', delivery: 'applied' } as const;
+    expect(outcome({ ...applied, undoLost: 'undo_key' })).toEqual({ stage: 'undone' });
+    expect(outcome({ ...applied, undoLost: 'typed' })).toEqual({ stage: 'done' });
+    expect(outcome({ ...applied, undoLost: 'caret_moved' })).toEqual({ stage: 'done' });
+    // Undo asked from the pill decides: its answer, not the key Rust saw pass.
+    expect(outcome({ ...applied, undoLost: 'undo_key' }, null, false, { status: 'refused', code: 'target_changed' })).toEqual({ stage: 'error', code: 'target_changed', source: 'undo' });
+    // Not pasted yet: nothing to read as undone.
+    expect(outcome({ phase: 'complete', delivery: 'pending', undoLost: 'undo_key' })).toEqual({ stage: 'working' });
+  });
+
   it('says why an Undo could not be done, in its own words, and never as a paste to retry or copy', () => {
     const applied = { phase: 'complete', delivery: 'applied' } as const;
     // Refused: nothing was sent (the text changed, keys held, the application blocked it).

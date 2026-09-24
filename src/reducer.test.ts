@@ -94,8 +94,8 @@ describe('translationReducer', () => {
     expect(translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'fallback', confirmed: false, message: '', undoable: true } }).undoable).toBe(false);
     const pasted = translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '', undoable: true, pastedRects: [{ x: 0, y: 0, width: 10, height: 10 }] } });
     expect(pasted.undoable).toBe(true);
-    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'stale' })).toBe(pasted);
-    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'r1' }).undoable).toBe(false);
+    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'stale', reason: 'typed' })).toBe(pasted);
+    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'r1', reason: 'typed' })).toMatchObject({ undoable: false, undoLost: 'typed' });
     // A retry starts without Undo.
     expect(translationReducer(pasted, { type: 'START', requestId: 'r2', mode: 'quality' }).undoable).toBe(false);
   });

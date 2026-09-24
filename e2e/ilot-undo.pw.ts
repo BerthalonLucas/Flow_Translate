@@ -176,8 +176,9 @@ test('undo-state withdraws Undo: the button leaves while the pill keeps its corn
   await expect(undoButton(page)).toHaveCount(0);
   await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="done"]')).toHaveClass(/is-check-only/);
   await expect(page.locator('.shape-layer:not(.is-leaving) .result-check')).toHaveClass(/is-drawn/);
-  await settled(page);
-  const after = await box(page);
+  // The check alone leaves 1.1 s after a key (the lab): its shape at rest is the frames' last.
+  const after = seen.at(-1)!;
+  expect(Math.abs(seen.at(-4)!.width - after.width)).toBeLessThan(0.5);
   // Narrower, never moved: the corner facing the selection stays put, frame after frame.
   expect(after.width).toBeLessThan(before.width);
   for (const frame of seen) {
@@ -189,20 +190,55 @@ test('undo-state withdraws Undo: the button leaves while the pill keeps its corn
   expect(await calls(page, 'undo_result')).toHaveLength(0);
 });
 
-test('undo-state keeps the pill until its time ends, and the marks are Rust’s to fade: no clear_highlight', async ({ page }) => {
+test('undo-state for a key or the caret: the check alone leaves within the lab’s 1.1 s, and the marks are Rust’s to fade: no clear_highlight', async ({ page }) => {
   await page.clock.install();
   await openIlot(page);
-  await pasteThrough(page, 'typed-time', {}, async () => { await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50)); });
+  // The caret moved 3 s into Undo's 8 s: 1.1 s more, not 5.
+  await pasteThrough(page, 'caret-time', {}, async () => { await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50)); });
   await expect.poll(() => calls(page, 'highlight_changes')).toHaveLength(1);
   await page.clock.runFor(3000);
   await on(page, f => f.undoState('caret_moved'));
   await expect(undoButton(page)).toHaveCount(0);
-  await page.clock.runFor(4900);
+  await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="done"]')).toHaveClass(/is-check-only/);
+  await page.clock.runFor(1000);
   expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
   await page.clock.runFor(200);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   await page.clock.resume();
+  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+
+  // A key typed in the source at once: the same 1.1 s, whatever Undo had left.
+  await page.clock.install();
+  await pasteThrough(page, 'typed-time', {}, async () => { await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50)); });
+  await page.clock.runFor(200);
+  await on(page, f => f.undoState('typed'));
+  await expect(undoButton(page)).toHaveCount(0);
+  await page.clock.runFor(1000);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await page.clock.runFor(200);
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(2);
+  await page.clock.resume();
   expect(await calls(page, 'clear_highlight')).toHaveLength(0);
+  expect(await calls(page, 'undo_result')).toHaveLength(0);
+});
+
+test('the user’s own Ctrl+Z in the source (undo-state undo_key): « Undone » 0.9 s, then the Îlot leaves; nothing asked of Rust', async ({ page }) => {
+  await page.clock.install();
+  await openIlot(page);
+  await pasteThrough(page, 'ctrl-z', {}, async () => { await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50)); });
+  await expect(undoButton(page)).toBeVisible();
+  await page.clock.runFor(2000);
+  await on(page, f => f.undoState('undo_key'));
+  await expect(stage(page)).toHaveAttribute('data-stage', 'undone');
+  await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="undone"]')).toHaveText('Undone');
+  expect(await sameSurface(page)).toBe(true);
+  await page.clock.runFor(800);
+  expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
+  await page.clock.runFor(200);
+  await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
+  await page.clock.resume();
+  // Rust fades its own marks, and nothing was asked of it: no undo_result, no clear_highlight.
+  for (const command of ['undo_result', 'clear_highlight', 'replace_result']) expect(await calls(page, command), command).toHaveLength(0);
 });
 
 test('After replacing: changed words off, Undo off, the check off, a shorter Undo, and a block for Translate', async ({ page }) => {

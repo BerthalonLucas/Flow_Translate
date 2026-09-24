@@ -7,7 +7,7 @@ import { ilotFits, ilotPlace, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilot
 import { indicatorOf } from '../loaders/pill';
 import { useMotionPreset, useReducedMotionSetting } from '../motion/MotionPreferences';
 import { animateCorner, fadeCorner, type CornerMove, type CornerOffset } from '../motion/surface';
-import { Countdown, resultTiming } from '../result/countdown';
+import { checkOnlyMs, Countdown, resultTiming } from '../result/countdown';
 import { errorCodeOf, refusalCode, type ErrorAction } from '../result/errors';
 import { changedRanges } from '../result/highlight';
 import { resultContent, type ActionAnswer, type ResultStage } from '../result/ResultPill';
@@ -51,12 +51,15 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *             code}`, src/result/errors.ts refusalCode); paste → Copy result (copy_result), nothing
  *             replaced; content → ✕ only; cancelled → the Îlot leaves. ✕ and Escape close.
  *   Undo      lot 9: after Rust's own paste (`result-delivery` applied), the check, then Undo and
- *             its ring while Rust offers it (`undoable`; `undo-state` withdraws it: the check alone
- *             takes its place on the same clock, the surface's corner fixed). One click asks
- *             `undo_result` once: `undone` → « Undone », then the Îlot leaves; refused or failed →
- *             the error pill in Undo's words, ✕ only; nothing else is ever pasted. The time stands
- *             still under the pointer, on the focus and while Undo is on its way; at its end the
- *             Îlot leaves. A retried result the Îlot pasted itself has no Undo (Rust's own only).
+ *             its ring while Rust offers it (`undoable`). One click asks `undo_result` once:
+ *             `undone` → « Undone », then the Îlot leaves; refused or failed → the error pill in
+ *             Undo's words, ✕ only; nothing else is ever pasted. `undo-state` withdraws it: the
+ *             user's own Ctrl+Z (`undo_key`) undid the paste → « Undone » 0.9 s, then the Îlot
+ *             leaves, as the lab's Ctrl+Z; a key or the caret (`typed`, `caret_moved`) → the check
+ *             alone takes its place on the same clock (the surface's corner fixed), 1.1 s at most,
+ *             then the Îlot leaves. The time stands still under the pointer, on the focus and while
+ *             Undo is on its way; at its end the Îlot leaves. A retried result the Îlot pasted
+ *             itself has no Undo (Rust's own only).
  *   marks     lot 9: the changed words (src/result/highlight.ts, afterReplace.changedWords) asked
  *             once per replacement with `highlight_changes` while Undo is offered, cleared once
  *             with `clear_highlight` at the countdown's end (Rust clears them itself on Undo, a
@@ -391,6 +394,11 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     doneClock.current = timing.durationMs ? { requestId, clock: new Countdown(timing.durationMs, performance.now()), withUndo: timing.undo } : null;
   }
   const clock = doneClock.current?.requestId === requestId ? doneClock.current : null;
+  // Undo withdrawn by a key or the caret (`typed`, `caret_moved`): the check alone leaves within
+  // the lab's 1.1 s from then (Simulator.jsx:155), the pauses still holding. The user's own Ctrl+Z
+  // (`undo_key`) reads as « Undone » (outcome.ts).
+  const cut = state.undoLost === 'typed' || state.undoLost === 'caret_moved';
+  useEffect(() => { if (cut && clock) clock.clock.limit(checkOnlyMs, performance.now()); }, [cut, clock]);
 
   // The changed words, marked by the halo while Undo is offered: asked once per replacement,
   // never any text in the request (ranges of the result only), cleared once at the countdown's end.

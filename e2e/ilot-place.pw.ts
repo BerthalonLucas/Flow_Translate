@@ -132,10 +132,11 @@ test('a longer text: the pill glides in the DOM to 8 px under the new text’s l
   for (const geometry of await geometries(page, 'glide')) expect(geometry).toMatchObject({ width: reserve.width, height: reserve.height, frame: reserve.frame });
   expect(await sameSurface(page)).toBe(true);
 
-  // Undo withdrawn there: the check alone keeps that place's corner, frame after frame.
+  // Undo withdrawn there: the check alone keeps that place's corner, frame after frame (it leaves
+  // 1.1 s after the key: its shape at rest is the frames' last).
   const withdrawn = await follow(page, 'glide', () => fixture(page).run(f => f.undoState('typed')), 900);
-  await settled(page);
-  const check = await box(page);
+  const check = withdrawn.at(-1)!.shape;
+  expect(Math.abs(withdrawn.at(-4)!.shape.width - check.width)).toBeLessThan(0.5);
   expect(check.width).toBeLessThan(pill.width);
   for (const frame of withdrawn) {
     expect(Math.abs(frame.shape.x + frame.shape.width - (pill.x + pill.width)), JSON.stringify(frame)).toBeLessThan(0.5);
@@ -216,8 +217,8 @@ test('in the margin the pill keeps its left edge beside the text: a narrower sha
   for (const line of lines) expect(overlaps(pill, inWindow(line)), JSON.stringify(line)).toBe(false);
   expect(await calls(page, 'move_overlay')).toEqual([]);
   const withdrawn = await follow(page, 'margin', () => fixture(page).run(f => f.undoState('typed')), 900);
-  await settled(page);
-  const check = await box(page);
+  const check = withdrawn.at(-1)!.shape;
+  expect(Math.abs(withdrawn.at(-4)!.shape.width - check.width)).toBeLessThan(0.5);
   expect(check.width).toBeLessThan(pill.width);
   expect(check.x).toBeCloseTo(pill.x, 0);
   for (const frame of withdrawn) {

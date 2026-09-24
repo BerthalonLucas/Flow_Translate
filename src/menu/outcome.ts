@@ -11,7 +11,8 @@ import type { AfterReplace, Capture, ErrorCode, Settings, UndoStatus } from '../
  *            of a retried result is on its way.
  *   done     pasted: the check, and Undo while Rust offers it (`undoable`, until `undo-state`),
  *            also while an Undo is on its way.
- *   undone   Undo went through (`undo_result` answered `undone`).
+ *   undone   Undo went through (`undo_result` answered `undone`), or the user's own Ctrl+Z in the
+ *            source undid the paste (`undo-state` with `undo_key`, as the lab's Ctrl+Z).
  *   error    a failure with its code: a stream error, a delivery fallback (always a paste code:
  *            the result exists and was not pasted), the refusal of the frontend's own paste, or
  *            an Undo refused (source 'undo': nothing was sent) or sent and not read back
@@ -49,7 +50,7 @@ export type IlotOutcome =
 // of another family there (or none) would offer to translate again, which could paste twice.
 export const pasteCode = (code: ErrorCode | null | undefined): ErrorCode => code && errorFamily(code) === 'paste' ? code : 'paste_blocked';
 
-type State = Pick<TranslationState, 'phase' | 'delivery' | 'code' | 'requestId' | 'invalidated'> & { capture: Pick<Capture, 'canReplace' | 'execution'> | null };
+type State = Pick<TranslationState, 'phase' | 'delivery' | 'code' | 'requestId' | 'invalidated'> & Partial<Pick<TranslationState, 'undoLost'>> & { capture: Pick<Capture, 'canReplace' | 'execution'> | null };
 
 // Why the frontend's own paste cannot even be tried: the watcher dropped the selection, or the
 // capture never had one that could be written. null: try it (Rust revalidates anyway).
@@ -61,9 +62,11 @@ export function ownPasteRefusal(state: State): ErrorCode | null {
 
 export function ilotOutcome(state: State, { chosen, paste, undo = null }: { chosen: boolean; paste: OwnPaste | null; undo?: UndoProgress | null }): IlotOutcome {
   if (!chosen && !state.capture?.execution) return { stage: 'menu' };
-  const pasted: IlotOutcome = !undo || undo.status === 'pending' ? { stage: 'done' }
-    : undo.status === 'undone' ? { stage: 'undone' }
-    : { stage: 'error', code: errorCodeOf(undo.code), source: undo.status === 'failed' ? 'undo-sent' : 'undo' };
+  // An Undo asked from the pill decides; else the user's own Ctrl+Z (Rust saw it pass to the
+  // source, which undid the paste itself) reads as Undone.
+  const pasted: IlotOutcome = undo && undo.status !== 'pending'
+    ? undo.status === 'undone' ? { stage: 'undone' } : { stage: 'error', code: errorCodeOf(undo.code), source: undo.status === 'failed' ? 'undo-sent' : 'undo' }
+    : !undo && state.undoLost === 'undo_key' ? { stage: 'undone' } : { stage: 'done' };
   switch (state.phase) {
     case 'error': {
       const code = errorCodeOf(state.code);
