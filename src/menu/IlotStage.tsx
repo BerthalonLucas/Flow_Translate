@@ -58,8 +58,9 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *             « Undone » 0.9 s, then the Îlot leaves, as the lab's Ctrl+Z; a key or the caret
  *             (`typed`, `caret_moved`) → the check alone takes its place on the same clock (the
  *             surface's corner fixed), 1.1 s at most, then the Îlot leaves. The time stands still
- *             under the pointer, on the focus and while Undo is on its way; at its end the Îlot
- *             leaves. A retried result the Îlot pasted itself has no Undo (Rust's own only).
+ *             under the pointer, on the focus, while Undo is on its way and while the pill is out
+ *             of sight (place, below); at its end the Îlot leaves. A retried result the Îlot
+ *             pasted itself has no Undo (Rust's own only).
  *   marks     lot 9: the changed words (src/result/highlight.ts, afterReplace.changedWords) asked
  *             once per replacement with `highlight_changes` while Undo is offered, cleared once
  *             with `clear_highlight` at the countdown's end (Rust clears them itself on Undo, a
@@ -461,11 +462,12 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   const hopTo = useRef<{ place: IlotPlace | null; side: PillSide | null } | null>(null);
   const windowMove = useRef<{ requestId: string; place: IlotPlace; side: PillSide } | null>(null);
   const moveInFlight = useRef(false);
-  // The corner fades out.
+  // The corner fades out; the time stands still while the pill cannot be read (countdown.ts).
   const hide = () => {
     if (veil.current.hidden) return;
     const run = veil.current.run + 1;
     veil.current = { run, hidden: true, faded: false };
+    doneClock.current?.clock.pause('place', performance.now());
     const faded = () => {
       if (veil.current.run !== run || !alive.current) return;
       veil.current.faded = true;
@@ -491,6 +493,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     if (!veil.current.hidden) return;
     snapHome();
     veil.current = { run: veil.current.run + 1, hidden: false, faded: false };
+    doneClock.current?.clock.resume('place', performance.now());
     const element = cornerRef.current;
     if (element && !closingRef.current) void fadeCorner(element, true, motionNow.current.tokens, motionNow.current.reduced);
   };

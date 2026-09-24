@@ -389,6 +389,23 @@ test('« Undone » goes back to the strip’s corner, against the original text;
   expect(await calls(page, 'undo_result')).toHaveLength(2);
 });
 
+test('the time stands still while the pill is out of sight: a 2 s Undo still has its 2 s once the pill is back', async ({ page }) => {
+  await openIlot(page, { afterReplace: { check: true, undo: true, undoSeconds: 2, changedWords: true } });
+  await page.mouse.move(2, 2);
+  await working(page, 'time');
+  await paste(page, Array.from({ length: 12 }, (_, index) => ({ x: 100, y: 300 + 18 * index, width: 600, height: 18 })));
+  // Out of sight, the ring stands still.
+  await expect(page.locator('.shape-layer:not(.is-leaving) .result-row')).toHaveAttribute('data-paused', 'true');
+  await expect.poll(() => moves(page)).toHaveLength(1);
+  await expect.poll(() => opacity(page)).toBe('1');
+  const back = await page.evaluate(() => performance.now());
+  await expect(page.locator('.shape-layer:not(.is-leaving) .result-row')).not.toHaveAttribute('data-paused', 'true');
+  await expect.poll(() => calls(page, 'dismiss_overlay'), { timeout: 5000 }).toHaveLength(1);
+  const [left] = await fixture(page).run(f => f.calls.filter(call => call.command === 'dismiss_overlay').map(call => call.at));
+  // Back in sight, it stays its 2 s (less the fade in, 200 ms), not what the move left of them.
+  expect(left - back).toBeGreaterThan(1600);
+});
+
 test('Undo withdrawn on the pill’s way to the margin: it never sweeps over the text, the check alone lands at the margin’s left edge, every frame in the region', async ({ page }) => {
   await openIlot(page, { pillPlacement: 'margin' });
   await working(page, 'hop');
