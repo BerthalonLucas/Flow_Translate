@@ -28,3 +28,14 @@ export function animateSurface(element: HTMLElement, shape: SurfaceShape, tokens
   Object.assign(element.style, target);
   return controls;
 }
+
+// The Îlot's corner slides right, on the same spring as the shape it holds, when a shape wider
+// than the room left of the selection's end would leave the work area (lot 10's error pill near
+// the screen's left edge; src/layout.ts ilotShift). A translation only; `instant` (the first
+// shape) and reduced motion set it at once.
+export function animateSlide(element: HTMLElement, x: number, tokens: MotionTokens, reduced: boolean, instant = false) {
+  if (!reduced && !instant) return animate(element, { x }, toMotionSpring(tokens.morph));
+  const controls = animate(element, { x }, { duration: 0 });
+  element.style.transform = x ? `translateX(${x}px)` : 'none';
+  return controls;
+}

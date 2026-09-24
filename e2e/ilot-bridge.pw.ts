@@ -21,7 +21,7 @@ type Fixture = {
   menuKey: (key: string, shiftKey?: boolean, captureId?: string) => Promise<void>;
   menuRepeat: (captureId?: string) => Promise<void>;
   done: (text?: string) => Promise<void>;
-  deliver: (status: 'applied' | 'fallback') => Promise<void>;
+  deliver: (status: 'applied' | 'fallback', confirmed?: boolean, message?: string, code?: string) => Promise<void>;
 };
 // Runs `run` in the page against the fixture (the function travels as source: no outer variables).
 const on = <T>(page: Page, run: (fixture: Fixture) => T | Promise<T>) => page.evaluate(`(${run.toString()})(window.nativeFixture)`) as Promise<T>;
@@ -97,10 +97,12 @@ test('Îlot: a menu capture opens the Îlot by its selection, takes the keyboard
   await page.keyboard.press('Enter');
   expect(await calls(page, 'choose_action')).toHaveLength(1);
 
-  // Rust pastes the complete result: the check, then the Îlot leaves by itself.
+  // Rust pastes the complete result: the check drawn on the same surface (lot 9), then the Îlot
+  // leaves by itself.
   await on(page, f => f.done('Synthetic result'));
   await on(page, f => f.deliver('applied'));
-  await expect(page.getByRole('img', { name: 'Selection replaced' })).toHaveAttribute('data-done', 'true');
+  await expect(page.getByRole('group', { name: 'Selection replaced' }).locator('.result-check')).toBeVisible();
+  expect(await page.locator('[data-ilot-shape]').evaluate((element, before) => element === before, surface)).toBe(true);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   await expect.poll(() => calls(page, 'complete_overlay_dismiss')).toEqual([{ captureId: 'keys' }]);
   await expect(ilot).toHaveCount(0);
@@ -119,11 +121,14 @@ test('Îlot: the pointer unfolds the grid and picks a tile once, even clicked tw
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-shape', 'pill');
   await page.waitForTimeout(300);
   expect(await chosen(page, 'mouse')).toHaveLength(1);
-  // A fallback (the paste was blocked) opens the glass with its result, as a direct capture does.
+  // A fallback (the paste was blocked) turns the same surface into the error pill of lot 10; the
+  // glass never opens in the Îlot's journey (e2e/ilot-result.pw.ts goes through each family).
   await on(page, f => f.done('Synthetic result'));
-  await on(page, f => f.deliver('fallback'));
-  await expect(page.locator('.translation-bubble')).toBeVisible();
-  await expect(page.locator('[data-ilot]')).toHaveCount(0);
+  await on(page, f => f.deliver('fallback', false, 'Le collage a été bloqué; utilisez Copier.', 'paste_blocked'));
+  await expect(page.locator('.ilot-stage')).toHaveAttribute('data-error', 'paste_blocked');
+  await expect(page.getByRole('button', { name: 'Copy result' })).toBeVisible();
+  await expect(page.locator('.translation-bubble')).toHaveCount(0);
+  await expect(page.locator('.glass-overlay')).toHaveCount(0);
 });
 
 test('Îlot: a free instruction goes to choose_action only; translate runs the reserved id', async ({ page }) => {
@@ -237,6 +242,12 @@ test('Îlot window: reserved once below the selection, the region follows each s
   const reserve = ilotReserve('anchored');
   const stage = page.locator('.ilot-stage');
   await expect(stage).toHaveAttribute('data-side', 'below');
+  // Rust clamps the strip into the work area: the menu's widest shape (the field, 283), never the
+  // error pill's 400, so the Îlot stays on the selection's end unless it is within 283 px of the
+  // left edge. The first geometry, before the Îlot rendered, holds that strip alone.
+  const [first] = await geometries(page, 'regions');
+  expect(first.frame).toEqual({ x: 149, y: 104, width: 283, height: 32, radius: 0 });
+  expect(first.regions).toEqual([{ x: 149, y: 104, width: 283, height: 32, radius: 16 }]);
   // The Îlot hangs from the strip Rust anchors, its entrance origin on the selection's side.
   const compact = await box(page);
   expect(compact.x + compact.width).toBeCloseTo(reserve.frame.x + reserve.frame.width, 0);
@@ -268,7 +279,8 @@ test('Îlot window: reserved once below the selection, the region follows each s
     expect(geometry).toMatchObject({ width: reserve.width, height: reserve.height, presentation: 'anchored', frame: reserve.frame });
     expect(geometry.regions).toHaveLength(1);
   }
-  expect(published.at(-1)?.regions).toEqual([{ x: 271, y: 104, width: 44, height: 28, radius: 14 }]);
+  // The pill in the strip's right corner.
+  expect(published.at(-1)?.regions).toEqual([{ x: reserve.frame.x + reserve.frame.width - 44, y: reserve.frame.y, width: 44, height: 28, radius: 14 }]);
 });
 
 test('Îlot window: above the selection it grows up from the strip; without an anchor it rests at the bottom', async ({ page }) => {
@@ -284,8 +296,9 @@ test('Îlot window: above the selection it grows up from the strip; without an a
   await page.keyboard.press('Tab');
   await settled(page);
   const grid = await box(page);
-  expect(grid).toEqual({ x: 97, y: 20, width: 218, height: 116 });
-  expect((await geometries(page, 'above')).at(-1)?.regions).toEqual([{ x: 97, y: 20, width: 218, height: 116, radius: 16 }]);
+  const left = reserve.frame.x + reserve.frame.width - 218;
+  expect(grid).toEqual({ x: left, y: 20, width: 218, height: 116 });
+  expect((await geometries(page, 'above')).at(-1)?.regions).toEqual([{ x: left, y: 20, width: 218, height: 116, radius: 16 }]);
 
   await on(page, f => f.unanchoredMenu('clipboard'));
   await settled(page);
@@ -294,10 +307,12 @@ test('Îlot window: above the selection it grows up from the strip; without an a
   const low = await box(page);
   expect(low.y + low.height).toBeCloseTo(bottom.frame.y + bottom.frame.height, 0);
   expect(low.x + low.width / 2).toBeCloseTo(bottom.width / 2, 0);
-  for (const geometry of await geometries(page, 'clipboard')) expect(geometry).toMatchObject({ width: 347, height: 152, presentation: 'bottom', frame: bottom.frame });
+  for (const geometry of await geometries(page, 'clipboard')) expect(geometry).toMatchObject({ width: bottom.width, height: bottom.height, presentation: 'bottom', frame: bottom.frame });
   expect((await geometries(page, 'clipboard')).at(-1)?.regions).toEqual([ilotRegion('bottom', 'above', low)]);
-  // The window position is only read for an anchored capture.
+  // The window position and the work area are only read for an anchored capture, at the anchor's
+  // centre (the screen Rust placed it on).
   expect((await calls(page, 'plugin:window|inner_position')).length).toBe(1);
+  expect(await calls(page, 'plugin:window|monitor_from_point')).toEqual([{ x: 460, y: 309 }]);
 });
 
 test('Îlot: under v4 nothing changes, the menu capture shows no Îlot and a direct capture keeps its spinner pill', async ({ page }) => {

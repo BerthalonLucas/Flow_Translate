@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bottomReserve, countWords, decideForm, decidePlacement, ilotRegion, ilotReserve, ilotSide, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
+import { bottomReserve, countWords, decideForm, decidePlacement, ilotBox, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
+import { ilotMetrics } from './menu/metrics';
 
 describe('reading forms (2026-09-14)', () => {
   it('reads up to eight short lines beside the selection, more in the reader', () => {
@@ -66,27 +67,72 @@ it('decides the placement at the capture on the source: a long selection waits a
 
 describe('Îlot window (lot 7)', () => {
   it('reserves the largest shape and its growth on both sides of the strip Rust anchors', () => {
-    // 283 wide (the field) + 2 × 32 of halo; 20 + 84 + 32 + 84 + 44 high.
-    expect(ilotReserve('anchored')).toEqual({ width: 347, height: 264, frame: { x: 32, y: 104, width: 283, height: 32, radius: 0 } });
-    // No anchor: the 283 × 116 box on the bottom halo of the band (16).
-    expect(ilotReserve('bottom')).toEqual({ width: 347, height: 152, frame: { x: 32, y: 20, width: 283, height: 116, radius: 0 } });
+    // The strip Rust clamps into the work area stays the menu's widest shape, the field (283): the
+    // Îlot leaves the selection's end only within 283 px of the work area's left edge. The error
+    // pill of lot 10 (400) overhangs it by 117 px, kept on both sides of the strip, then 32 of
+    // halo: 32 + 117 + 283 + 117 + 32 wide; 20 + 84 + 32 + 84 + 44 high.
+    expect(ilotStrip).toBe(283);
+    expect(ilotReserve('anchored')).toEqual({ width: 581, height: 264, frame: { x: 149, y: 104, width: 283, height: 32, radius: 0 } });
+    // No anchor: the 400 × 116 box on the bottom halo of the band (16).
+    expect(ilotReserve('bottom')).toEqual({ width: 464, height: 152, frame: { x: 32, y: 20, width: 400, height: 116, radius: 0 } });
+    // Every shape fits the box: the field, the grid, the error pill at its widest.
+    expect(ilotBox.width).toBeGreaterThanOrEqual(Math.max(ilotMetrics.prompt.width, ilotMetrics.grid.width, ilotMetrics.error.maxWidth));
+    expect(ilotBox.height).toBeGreaterThanOrEqual(Math.max(ilotMetrics.grid.height, ilotMetrics.prompt.height, ilotMetrics.error.height));
   });
   it('hangs each shape from the strip’s right edge, on the side Rust chose', () => {
-    expect(ilotRegion('anchored', 'below', { width: 120, height: 32 })).toEqual({ x: 195, y: 104, width: 120, height: 32, radius: 16 });
-    expect(ilotRegion('anchored', 'below', { width: 218, height: 116 })).toEqual({ x: 97, y: 104, width: 218, height: 116, radius: 16 });
-    expect(ilotRegion('anchored', 'above', { width: 218, height: 116 })).toEqual({ x: 97, y: 20, width: 218, height: 116, radius: 16 });
-    expect(ilotRegion('anchored', 'above', { width: 283, height: 34 })).toEqual({ x: 32, y: 102, width: 283, height: 34, radius: 17 });
+    expect(ilotRegion('anchored', 'below', { width: 120, height: 32 })).toEqual({ x: 312, y: 104, width: 120, height: 32, radius: 16 });
+    expect(ilotRegion('anchored', 'below', { width: 218, height: 116 })).toEqual({ x: 214, y: 104, width: 218, height: 116, radius: 16 });
+    expect(ilotRegion('anchored', 'above', { width: 218, height: 116 })).toEqual({ x: 214, y: 20, width: 218, height: 116, radius: 16 });
+    expect(ilotRegion('anchored', 'above', { width: 283, height: 34 })).toEqual({ x: 149, y: 102, width: 283, height: 34, radius: 17 });
     // The pill of lot 8 is fully round.
-    expect(ilotRegion('anchored', 'below', { width: 44, height: 28 })).toEqual({ x: 271, y: 104, width: 44, height: 28, radius: 14 });
+    expect(ilotRegion('anchored', 'below', { width: 44, height: 28 })).toEqual({ x: 388, y: 104, width: 44, height: 28, radius: 14 });
+    // The error pill of lot 10 at its widest fills the strip, fully round.
+    expect(ilotRegion('anchored', 'below', { width: 400, height: 30 })).toEqual({ x: 32, y: 104, width: 400, height: 30, radius: 15 });
+    expect(ilotRegion('anchored', 'above', { width: 400, height: 30 })).toEqual({ x: 32, y: 106, width: 400, height: 30, radius: 15 });
   });
   it('covers both shapes while one turns into the other, with the smaller radius', () => {
-    expect(ilotRegion('anchored', 'below', { width: 218, height: 116 }, { width: 283, height: 34 })).toEqual({ x: 32, y: 104, width: 283, height: 116, radius: 16 });
-    expect(ilotRegion('anchored', 'below', { width: 120, height: 32 }, { width: 52, height: 28 })).toEqual({ x: 195, y: 104, width: 120, height: 32, radius: 14 });
+    expect(ilotRegion('anchored', 'below', { width: 218, height: 116 }, { width: 283, height: 34 })).toEqual({ x: 149, y: 104, width: 283, height: 116, radius: 16 });
+    expect(ilotRegion('anchored', 'below', { width: 120, height: 32 }, { width: 52, height: 28 })).toEqual({ x: 312, y: 104, width: 120, height: 32, radius: 14 });
+    // The work pill turning into the error pill.
+    expect(ilotRegion('anchored', 'below', { width: 44, height: 28 }, { width: 300, height: 30 })).toEqual({ x: 132, y: 104, width: 300, height: 30, radius: 14 });
   });
   it('centres the shape on the bottom edge without an anchor', () => {
-    expect(ilotRegion('bottom', 'above', { width: 120, height: 32 })).toEqual({ x: 113, y: 104, width: 121, height: 32, radius: 16 });
-    expect(ilotRegion('bottom', 'above', { width: 44, height: 28 })).toEqual({ x: 151, y: 108, width: 45, height: 28, radius: 14 });
-    expect(ilotRegion('bottom', 'above', { width: 283, height: 116 })).toEqual({ x: 32, y: 20, width: 283, height: 116, radius: 16 });
+    expect(ilotRegion('bottom', 'above', { width: 120, height: 32 })).toEqual({ x: 172, y: 104, width: 120, height: 32, radius: 16 });
+    expect(ilotRegion('bottom', 'above', { width: 44, height: 28 })).toEqual({ x: 210, y: 108, width: 44, height: 28, radius: 14 });
+    expect(ilotRegion('bottom', 'above', { width: 283, height: 116 })).toEqual({ x: 90, y: 20, width: 284, height: 116, radius: 16 });
+    expect(ilotRegion('bottom', 'above', { width: 400, height: 30 })).toEqual({ x: 32, y: 106, width: 400, height: 30, radius: 15 });
+  });
+  it('slides a shape right only when the work area’s left edge is closer than its width', () => {
+    // The strip's corner (its right edge, 432 in the window) on the selection's end at x = 520,
+    // on a work area from 0 to 1920: plenty of room, nothing slides.
+    const wide = ilotRoom(520 - 432, 1, { x: 0, width: 1920 });
+    expect(wide).toEqual({ left: 520, right: 1400 });
+    expect(ilotShift(400, wide)).toBe(0);
+    // Rust clamped the strip against the left edge (a selection ending at x = 70): the corner at
+    // 283. The menu's shapes still fit; the error pill slides by what it overhangs.
+    const clamped = ilotRoom(-149, 1, { x: 0, width: 1920 });
+    expect(clamped).toEqual({ left: 283, right: 1637 });
+    for (const width of [44, 110, 218, 283]) expect(ilotShift(width, clamped)).toBe(0);
+    expect(ilotShift(300, clamped)).toBe(17);
+    expect(ilotShift(389.4, clamped)).toBe(107);
+    expect(ilotShift(400, clamped)).toBe(117);
+    // At 150 %, a work area starting at x = -1920 (a screen on the left): logical pixels.
+    expect(ilotRoom(-1920 - 149 * 1.5 + 30, 1.5, { x: -1920, width: 1920 })).toEqual({ left: 303, right: 977 });
+    expect(ilotShift(350, ilotRoom(-1920 - 149 * 1.5 + 30, 1.5, { x: -1920, width: 1920 }))).toBe(47);
+    // Never past the reserve's spare nor the work area's right edge; unknown room: no slide.
+    expect(ilotShift(500, clamped)).toBe(117);
+    expect(ilotShift(400, { left: 283, right: 50.5 })).toBe(50);
+    expect(ilotShift(400, null)).toBe(0);
+  });
+  it('covers a slid shape, and both positions while it slides', () => {
+    // The error pill at 117 px right of the corner: from 149 to 549 in the 581 px window.
+    expect(ilotRegion('anchored', 'below', { width: 400, height: 30, shift: 117 })).toEqual({ x: 149, y: 104, width: 400, height: 30, radius: 15 });
+    // The work pill at the corner turning into that pill: the box that holds both.
+    expect(ilotRegion('anchored', 'below', { width: 44, height: 28, shift: 0 }, { width: 350, height: 30, shift: 67 })).toEqual({ x: 149, y: 104, width: 350, height: 30, radius: 14 });
+    // Back to work (Try again): the same box the other way.
+    expect(ilotRegion('anchored', 'below', { width: 350, height: 30, shift: 67 }, { width: 44, height: 28, shift: 0 })).toEqual({ x: 149, y: 104, width: 350, height: 30, radius: 14 });
+    // Without an anchor the box is centred: a shift means nothing there.
+    expect(ilotRegion('bottom', 'above', { width: 400, height: 30, shift: 117 })).toEqual(ilotRegion('bottom', 'above', { width: 400, height: 30 }));
   });
   it('reads the side Rust chose from the window’s position', () => {
     const anchor = { x: 400, y: 300, width: 120, height: 18 };

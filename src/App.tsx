@@ -18,6 +18,7 @@ import { MenuSettings } from './settings/MenuSettings';
 import { AfterReplaceSettings } from './settings/AfterReplace';
 import { describeRefusal } from './settings/messages';
 import { fieldFromLocation, isProfileField, resolveField, revealField } from './settings/fields';
+import { useRegistrations } from './settings/registrations';
 import type { AutoClose, Capture, HistoryEntry, Indicator, Language, Mode, MotionPreset, Settings, SettingsFocus, ShortcutBinding, TextSize, Theme } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
@@ -42,6 +43,8 @@ export function SettingsWindow() {
   const [saveError, setSaveError] = useState<SaveProblem | null>(null);
   const [recording, setRecording] = useState(false);
   const [connections, setConnections] = useState<Record<Mode, Connection>>({ fast: { state: 'unknown' }, quality: { state: 'unknown' } });
+  // Lot 10: whether Windows registered each binding's chord (another application may hold it).
+  const registrations = useRegistrations();
   // A direct link to a field (lot 10): asked by the URL at opening, or by an event later.
   const [fieldRequest, setFieldRequest] = useState<{ field: string } | null>(() => { const field = fieldFromLocation(location.search); return field ? { field } : null; });
   const clearHighlight = useRef<(() => void) | null>(null);
@@ -196,8 +199,8 @@ export function SettingsWindow() {
       {/* The sections of lot 13: Menu, Actions, After replacing, Appearance, then the result
           bubble, Connection and this device. What only the Îlot uses (grid, After replacing,
           indicator) shows under uiVersion « ilot » only; uiVersion and glassMaterial never show. */}
-      <MenuSettings settings={settings} persist={persist} record={recordShortcut} busy={recording} />
-      <ActionSettings settings={settings} persist={persist} record={recordShortcut} busy={recording} />
+      <MenuSettings settings={settings} persist={persist} record={recordShortcut} busy={recording} registrations={registrations} />
+      <ActionSettings settings={settings} persist={persist} record={recordShortcut} busy={recording} registrations={registrations} />
       {settings.uiVersion === 'ilot' && <AfterReplaceSettings settings={settings} persist={persist} />}
       <section className="appearance-settings">
         <h2>{t('settings.appearance')}</h2>

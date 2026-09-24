@@ -38,14 +38,20 @@ import './ilot.css';
  *   ref            IlotHandle: press(key, { shiftKey }) → whether the menu used the key.
  *   initialMode    'compact' by default (the lab scenarios open on 'grid' or 'prompt').
  *   shape          'menu' (default) or 'pill': the same surface, never unmounted, springs to the
- *                  work pill (pillSize, 44 × 28, radius 14) around the `pill` content. Coming
- *                  back to 'menu' starts again from the compact state.
+ *                  shape of the `pill` content. Coming back to 'menu' starts again from the
+ *                  compact state.
+ *   pill           { key, size?, node }: what the pill shape holds, as src/result/ResultPill.tsx
+ *                  resultContent gives it (the work pill 44 × 28, the check, the error pill…).
+ *                  Each new key fades its content in while the surface springs to the new shape:
+ *                  `size` fixes it, else it follows the content's natural size.
  *   onShapeChange  each change of shape, at its start and at its end (hit-test regions, §4.3).
  * Wrap it in <AnimatePresence> for its exit. Measure it on [data-ilot-shape].
  */
 
 export type IlotKeyboard = 'focused' | 'injected';
 export type IlotShape = 'menu' | 'pill';
+// The content of the pill shape (the same as src/result/ResultPill.tsx ResultContent).
+export type PillContent = { key: string; size?: SurfaceSize; node: ReactNode };
 export type IlotHandle = { press: (key: string, modifiers?: Pick<KeyInput, 'shiftKey'>) => boolean };
 export type IlotProps = {
   actions: readonly IlotAction[];
@@ -59,8 +65,7 @@ export type IlotProps = {
   keyboard?: IlotKeyboard;
   initialMode?: IlotMode;
   shape?: IlotShape;
-  pill?: ReactNode;
-  pillSize?: SurfaceSize;
+  pill?: PillContent | null;
   onShapeChange?: (change: ShapeChange) => void;
   ref?: Ref<IlotHandle>;
 };
@@ -84,7 +89,7 @@ function ActionIcon({ action, size }: { action: IlotAction; size: 14 | 16 }) {
   return name ? <Icon name={name} size={size} /> : null;
 }
 
-export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', initialMode = 'compact', shape = 'menu', pill, pillSize = ilotMetrics.pill, onShapeChange, ref }: IlotProps) {
+export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruction, onClose, origin = 'top', originX, keyboard = 'focused', initialMode = 'compact', shape = 'menu', pill, onShapeChange, ref }: IlotProps) {
   const t = useT();
   const promptAvailable = keyboard !== 'injected';
   const context = useMemo(() => ilotKeyContext(actions, lastActionId, promptAvailable, knownActions), [actions, lastActionId, promptAvailable, knownActions]);
@@ -176,7 +181,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
   const unavailable = promptAvailable ? undefined : t('ilot.unavailable');
 
   let content: ReactNode;
-  if (shape === 'pill') content = pill;
+  if (shape === 'pill') content = pill?.node;
   else if (mode === 'prompt') content = <PromptField seed={seed.text} label={describe} onSubmit={onInstruction} onCancel={() => apply({ type: 'compact' })} />;
   else if (mode === 'grid') content = <div role="menu" aria-label={t('ilot.menu')} className="ilot-grid" style={{ gridTemplateColumns: `repeat(${context.columns}, ${ilotMetrics.tile.width}px)` }}>
     {context.tiles.map((tile, index) => {
@@ -216,8 +221,8 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
     </div>;
   }
 
-  const contentKey = shape === 'pill' ? 'pill' : mode === 'prompt' ? `prompt-${seed.entry}` : mode;
-  return <MorphSurface contentKey={contentKey} size={shape === 'pill' ? pillSize : undefined} origin={origin} originX={originX} onShapeChange={onShapeChange}
+  const contentKey = shape === 'pill' ? `pill-${pill?.key ?? ''}` : mode === 'prompt' ? `prompt-${seed.entry}` : mode;
+  return <MorphSurface contentKey={contentKey} size={shape === 'pill' ? pill?.size : undefined} origin={origin} originX={originX} onShapeChange={onShapeChange}
     data-ilot="" data-mode={shape === 'pill' ? undefined : mode} data-shape={shape} data-keyboard={keyboard} data-ring={ring ? '' : undefined}>
     {content}
   </MorphSurface>;

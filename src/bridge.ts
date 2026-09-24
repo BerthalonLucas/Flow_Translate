@@ -1,7 +1,7 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Rect, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
 
 type Unlisten = () => void;
 type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'settings-focus-field' | 'halo' | 'shortcut-status' | 'undo-state';
@@ -150,6 +150,17 @@ export const bridge = {
     const position = await getCurrentWindow().innerPosition();
     return { x: position.x, y: position.y };
   },
+  // The work area (physical pixels) of the screen holding a point: Rust places a capture on the
+  // screen of its anchor's centre (host::monitor_at, rcWork), the Îlot keeps its widest shape on
+  // it (src/layout.ts ilotShift). null outside the native app, or off every screen.
+  workAreaAt: async (x: number, y: number): Promise<Rect | null> => {
+    if (!native) return null;
+    const { monitorFromPoint } = await import('@tauri-apps/api/window');
+    const monitor = await monitorFromPoint(x, y);
+    if (!monitor) return null;
+    const { position, size } = monitor.workArea;
+    return { x: position.x, y: position.y, width: size.width, height: size.height };
+  },
   // Lot 4, for the shortcut recorder (wired in lot 13): is this chord AltGr + a key here?
   shortcutConflict: (shortcut: string) => command<ShortcutConflict>('shortcut_conflict', { shortcut }),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
@@ -174,11 +185,14 @@ export const bridge = {
   shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
   // Lot 9, after a paste under the Îlot (docs/BRIDGE.md « the result »): where the pill goes for a
   // pill of this size; moving the window by (dx, dy) logical pixels at a moment nothing animates;
-  // the changed words marked in the halo until clearHighlight; Undo, once.
+  // the changed words marked in the halo until clearHighlight.
   resultPill: (requestId: string, width: number, height: number) => command<PillTarget>('result_pill', { requestId, width, height }),
   moveOverlay: (captureId: string, dx: number, dy: number) => command<void>('move_overlay', { captureId, dx, dy }),
   highlightChanges: (requestId: string, ranges: TextRange[]) => command<HighlightResult>('highlight_changes', { requestId, ranges }),
   clearHighlight: (requestId: string) => command<void>('clear_highlight', { requestId }),
-  undoResult: (requestId: string) => command<UndoOutcome>('undo_result', { requestId }),
+  // Lot 9: undo a pasted result, after revalidation. The native command exists (`undo_result` →
+  // UndoOutcome: `undone`, `refused` or `failed`, with a code); null keeps the Îlot's check alone
+  // until the front handles those outcomes. Then: `(requestId: string) => command<UndoOutcome>('undo_result', { requestId })`.
+  undoResult: null as ((requestId: string) => Promise<UndoOutcome>) | null,
 };
 

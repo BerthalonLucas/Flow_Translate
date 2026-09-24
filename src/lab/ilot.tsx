@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { Ilot, type IlotHandle, type IlotShape } from '../menu/Ilot';
 import type { IlotAction, IlotMode } from '../menu/keys';
+import { ilotMetrics } from '../menu/metrics';
 import type { ShapeChange } from '../menu/MorphSurface';
 import type { IlotScenario } from './scenarios';
 import './ilot.css';
@@ -95,7 +96,7 @@ export function IlotFixture({ scenario, params }: { scenario: IlotScenario; para
       <div className="ilot-demo-anchor">
         <AnimatePresence>
           {open && <Ilot ref={handle} actions={actions} lastActionId={last} keyboard={keyboard} initialMode={initialMode} origin={origin} shape={shape}
-            pill={<span className="ilot-demo-orb" role="status" aria-label="Working" />}
+            pill={{ key: 'working', size: ilotMetrics.pill, node: <span className="ilot-demo-orb" role="status" aria-label="Working" /> }}
             onShapeChange={change => { (window.__ilotShapes ??= []).push(change); }}
             onChoose={id => { record({ type: 'choose', actionId: id }); setLast(id); work(); }}
             onInstruction={text => { record({ type: 'instruction', length: [...text].length }); work(); }}

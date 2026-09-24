@@ -71,44 +71,75 @@ export function bottomReserve(screen: Pick<Screen, 'width' | 'height'>, preset: 
   return { width: reader.width + 2 * halo.x, height: halo.top + menu.reserve + 6 + glass.overlap + reader.maxHeight + halo.bottomForm };
 }
 
-// The Îlot (lot 7) has its own window, reserved once per capture for its largest shape: the
-// field's width by the grid's height (283 × 116, src/menu/metrics.ts), plus the halo. Its shapes
-// then only change the hit-test regions, never the window (plan §4.3).
-//   anchored  `frame` is the compact strip (283 × 32) that Rust places beside the selection like
-//             the glass (8 px under it, or 8 px over it when the room below is short; its right
-//             edge on the selection's end, clamped into the work area). The Îlot hangs from the
-//             strip's right edge and grows away from the selection, by at most 84 px: the
-//             reserve keeps that room on both sides, since the side is only known once Rust
-//             placed the window (ilotSide). 347 × 264.
+// The Îlot (lot 7) has its own window, reserved once per capture for its largest shapes: the
+// widest (the error pill of lot 10, 400, wider than the field's 283) by the tallest (the grid,
+// 116), src/menu/metrics.ts, plus the halo. Its shapes then only change the hit-test regions,
+// never the window (plan §4.3: the reserve holds « the Îlot's grid or the error card »).
+//   anchored  `frame` is the compact strip that Rust places beside the selection like the glass
+//             (8 px under it, or 8 px over it when the room below is short; its right edge on the
+//             selection's end, clamped into the work area): 283 × 32, the widest shape of the
+//             menu (the field), so the Îlot only leaves the selection's end when that end is less
+//             than 283 px from the work area's left edge, as before lot 10. The Îlot hangs from
+//             the strip's right edge and grows away from the selection, by at most 84 px: the
+//             reserve keeps that room on both sides, since the side is only known once Rust placed
+//             the window (ilotSide). The error pill, up to 117 px wider than the strip, grows left
+//             like every shape; the reserve keeps those 117 px on the strip's left, and as many on
+//             its right, where the pill slides when the work area's left edge is closer than its
+//             width (ilotShift). Rust clamps the strip only: the transparent reserve around it may
+//             leave the work area. 581 × 264.
 //   bottom    no anchor (clipboard): the box rests on the window's bottom edge, centred, and
-//             grows up; Rust docks the window bottom-centre. 347 × 152.
+//             grows up; Rust docks the window bottom-centre. 464 × 152.
 export type IlotSide = 'below' | 'above';
-type ShapeSize = { width: number; height: number };
-export const ilotBox = { width: ilotMetrics.prompt.width, height: ilotMetrics.grid.height };
+// shift: how far the shape slides right of the strip's corner (ilotShift), anchored only.
+export type IlotShapeBox = { width: number; height: number; shift?: number };
+// The strip Rust clamps: the menu's widest shape.
+export const ilotStrip = Math.max(ilotMetrics.prompt.width, ilotMetrics.grid.width);
+export const ilotBox = { width: Math.max(ilotStrip, ilotMetrics.error.maxWidth), height: ilotMetrics.grid.height };
+// What the widest shape overhangs the strip by: the reserve's room on each side of the strip.
+const ilotSpare = ilotBox.width - ilotStrip;
 const ilotGrowth = ilotBox.height - ilotMetrics.compactHeight;
 export function ilotReserve(presentation: Presentation): { width: number; height: number; frame: HitRegion } {
-  const width = ilotBox.width + 2 * halo.x;
-  if (presentation === 'bottom') return { width, height: halo.top + ilotBox.height + halo.bottomForm, frame: { x: halo.x, y: halo.top, width: ilotBox.width, height: ilotBox.height, radius: 0 } };
+  if (presentation === 'bottom') return { width: ilotBox.width + 2 * halo.x, height: halo.top + ilotBox.height + halo.bottomForm, frame: { x: halo.x, y: halo.top, width: ilotBox.width, height: ilotBox.height, radius: 0 } };
   const y = halo.top + ilotGrowth;
-  return { width, height: y + ilotMetrics.compactHeight + ilotGrowth + halo.bottom, frame: { x: halo.x, y, width: ilotBox.width, height: ilotMetrics.compactHeight, radius: 0 } };
+  return { width: ilotStrip + 2 * (ilotSpare + halo.x), height: y + ilotMetrics.compactHeight + ilotGrowth + halo.bottom, frame: { x: halo.x + ilotSpare, y, width: ilotStrip, height: ilotMetrics.compactHeight, radius: 0 } };
+}
+// The room around the strip's right edge (the corner facing the selection's end) inside the work
+// area, logical pixels: `left` to its left edge, `right` to its right edge. From where Rust put the
+// window and the work area of the anchor's screen, both physical (the anchor's own units).
+export type IlotRoom = { left: number; right: number };
+export function ilotRoom(windowX: number, scale: number, work: Pick<Rect, 'x' | 'width'>): IlotRoom {
+  const corner = windowX + (ilotReserve('anchored').frame.x + ilotStrip) * scale;
+  return { left: (corner - work.x) / scale, right: (work.x + work.width - corner) / scale };
+}
+// How far a shape slides right so it stays in the work area: nothing while it fits left of the
+// corner (always, up to the strip's width: Rust clamped the strip), else what it overhangs, whole
+// pixels, at most the reserve's spare and never past the work area's right edge. Unknown room:
+// nothing (the browser preview, a screen the point is not on).
+export function ilotShift(width: number, room: IlotRoom | null): number {
+  if (!room) return 0;
+  const overhang = Math.ceil(width - room.left);
+  return overhang > 0 ? Math.max(0, Math.min(overhang, ilotSpare, Math.floor(room.right))) : 0;
 }
 // The hit-test region of a shape in that window. Given two shapes (the start of a change), the
-// box that holds both: they share the corner, or the bottom edge, that faces the selection, and
-// the smaller radius keeps both corners inside. Whole pixels, inside the window.
-export function ilotRegion(presentation: Presentation, side: IlotSide, ...shapes: ShapeSize[]): HitRegion {
+// box that holds both: they share the corner, or the bottom edge, that faces the selection (each
+// slid by its own shift), and the smaller radius keeps both corners inside. Whole pixels, inside
+// the window.
+export function ilotRegion(presentation: Presentation, side: IlotSide, ...shapes: IlotShapeBox[]): HitRegion {
   const reserve = ilotReserve(presentation);
   const { frame } = reserve;
-  const width = Math.min(reserve.width, Math.ceil(Math.max(...shapes.map(shape => shape.width))));
   const height = Math.min(reserve.height, Math.ceil(Math.max(...shapes.map(shape => shape.height))));
-  const radius = Math.min(...shapes.map(shape => surfaceRadius(shape.height)), width / 2, height / 2);
   const bottomEdge = frame.y + frame.height;
+  const round = (width: number) => Math.min(...shapes.map(shape => surfaceRadius(shape.height)), width / 2, height / 2);
   if (presentation === 'bottom') {
+    const width = Math.min(reserve.width, Math.ceil(Math.max(...shapes.map(shape => shape.width))));
     const x = Math.max(0, Math.floor((reserve.width - width) / 2));
-    return { x, y: Math.max(0, bottomEdge - height), width: Math.min(reserve.width - x, Math.ceil((reserve.width + width) / 2) - x), height, radius };
+    return { x, y: Math.max(0, bottomEdge - height), width: Math.min(reserve.width - x, Math.ceil((reserve.width + width) / 2) - x), height, radius: round(width) };
   }
-  const x = Math.max(0, frame.x + frame.width - width);
+  const corner = frame.x + frame.width;
+  const x = Math.max(0, Math.floor(Math.min(...shapes.map(shape => corner + (shape.shift ?? 0) - shape.width))));
+  const width = Math.min(reserve.width, Math.ceil(Math.max(...shapes.map(shape => corner + (shape.shift ?? 0))))) - x;
   const y = side === 'below' ? frame.y : Math.max(0, bottomEdge - height);
-  return { x, y, width: Math.min(reserve.width - x, width), height: Math.min(reserve.height - y, height), radius };
+  return { x, y, width, height: Math.min(reserve.height - y, height), radius: round(width) };
 }
 // Which side Rust chose, read back from where it put the window (physical pixels, like the
 // anchor): the strip below the middle of the selection means below.
