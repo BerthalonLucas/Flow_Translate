@@ -1,0 +1,61 @@
+/* Lot 8 (docs/DA-PLAN.md §9 « Indicateurs »): Perle, Nébuleuse and Ruban, copied as they are
+   from design-lab/src/loaders.css with their default parameters (lines 3-5, 50-67, 170-183 and
+   the reduced-motion rule of 188-190). Two adaptations only: the ink is the app's --ink-rgb
+   (src/theme.css) instead of the lab surface's, and the lab's `.surface.is-dark` is the app's
+   dark theme, `:root[data-theme="dark"]` (src/theme.ts). --speed is the lab's slow-motion
+   switch; it stays at 1 here. `@property --a` is not used by these three. */
+.ldr { --speed: 1; display: inline-flex; align-items: center; justify-content: center; flex: none; position: relative; color: rgb(var(--ink-rgb)); }
+.ldr, .ldr *, .ldr::before, .ldr::after { animation-fill-mode: both; }
+@keyframes ldr-spin { to { transform: rotate(1turn); } }
+
+/* 5 Perle (gradient orb) */
+.perle { --size: 14px; --rot: 3s; --blur: 2.5px; --breathe: .9; --glow: .45; width: var(--size); height: var(--size); border-radius: 50%; overflow: hidden; isolation: isolate;
+  box-shadow: 0 0 0 .5px rgb(var(--ink-rgb) / .12), 0 1px 6px rgb(188 130 243 / var(--glow)); animation: perle-b calc(2.4s / var(--speed)) cubic-bezier(.45,0,.55,1) infinite; }
+.perle::before { content: ""; position: absolute; inset: -30%; background: conic-gradient(from 0deg, #BC82F3, #F5B9EA, #8D9FFF, #AA6EEE, #FF6778, #FFBA71, #C686FF, #BC82F3); filter: blur(var(--blur)); animation: ldr-spin calc(var(--rot) / var(--speed)) linear infinite; }
+.perle::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 34% 28%, rgb(255 255 255 / .9) 0, rgb(255 255 255 / 0) 42%), radial-gradient(circle at 70% 80%, rgb(255 255 255 / 0) 50%, rgb(255 255 255 / .35) 100%); }
+@keyframes perle-b { 0%, 100% { transform: scale(var(--breathe)); } 50% { transform: scale(1); } }
+
+/* 6 Nébuleuse (Siri-like blob orb) */
+.neb { --size: 16px; --amp: 3px; --blur: 2px; width: var(--size); height: var(--size); border-radius: 50%; overflow: hidden; isolation: isolate; background: rgb(255 255 255 / .55); box-shadow: inset 0 0 0 .5px rgb(var(--ink-rgb) / .12); }
+.neb i { position: absolute; left: 15%; top: 15%; width: 70%; height: 70%; border-radius: 50%; filter: blur(var(--blur)); mix-blend-mode: multiply; }
+.neb i:nth-child(1) { background: #8D9FFF; animation: neb1 calc(3.1s / var(--speed)) ease-in-out infinite alternate; }
+.neb i:nth-child(2) { background: #FF6778; animation: neb2 calc(3.7s / var(--speed)) ease-in-out infinite alternate; }
+.neb i:nth-child(3) { background: #FFBA71; animation: neb3 calc(4.3s / var(--speed)) ease-in-out infinite alternate; }
+@keyframes neb1 { 0% { transform: translate(calc(var(--amp) * -1), calc(var(--amp) * -.66)) scale(.9); } 50% { transform: translate(calc(var(--amp) * .66), calc(var(--amp) * -1)) scale(1.1); } 100% { transform: translate(var(--amp), calc(var(--amp) * .66)) scale(.95); } }
+@keyframes neb2 { 0% { transform: translate(var(--amp), calc(var(--amp) * .33)) scale(1); } 50% { transform: translate(calc(var(--amp) * -.66), var(--amp)) scale(.85); } 100% { transform: translate(calc(var(--amp) * -1), calc(var(--amp) * -.66)) scale(1.1); } }
+@keyframes neb3 { 0% { transform: translate(0, var(--amp)) scale(.85); } 50% { transform: translate(var(--amp), calc(var(--amp) * -.33)) scale(1.05); } 100% { transform: translate(calc(var(--amp) * -.66), calc(var(--amp) * -1)) scale(.9); } }
+:root[data-theme="dark"] .neb { background: rgb(255 255 255 / .12); }
+:root[data-theme="dark"] .neb i { mix-blend-mode: screen; }
+
+/* 20 Sinus, and its multicolour ribbon: the Ruban (three waves, blue, coral, amber). */
+.sinus { --floor: .35; --dur: 1.2s; overflow: visible; }
+.sinus path { fill: none; stroke: rgb(var(--ink-rgb)); stroke-width: 1.5; stroke-linecap: round; opacity: .85; }
+.sinus .s1 { animation: sin-move calc(var(--dur) / var(--speed)) linear infinite; }
+.sinus .amp { transform-box: view-box; transform-origin: 14px 6px; animation: sin-amp calc(var(--dur) * 2 / var(--speed)) cubic-bezier(.45,0,.55,1) infinite alternate; }
+.sinus.ruban path { opacity: .9; mix-blend-mode: multiply; }
+:root[data-theme="dark"] .sinus.ruban path { mix-blend-mode: screen; }
+.sinus.ruban .s1 { stroke: #8D9FFF; }
+.sinus.ruban .s2 { stroke: #FF6778; animation: sin-move2 calc(var(--dur) * 1.4 / var(--speed)) linear infinite reverse; }
+.sinus.ruban .s3 { stroke: #FFBA71; animation: sin-move3 calc(var(--dur) * 1.9 / var(--speed)) linear infinite; }
+@keyframes sin-move { to { transform: translateX(12px); } }
+@keyframes sin-move2 { to { transform: translateX(16px); } }
+@keyframes sin-move3 { to { transform: translateX(20px); } }
+@keyframes sin-amp { from { transform: scaleY(var(--floor)); } to { transform: scaleY(1); } }
+
+/* Reduced motion (« Animations : réduites », or « suivre Windows » while Windows reduces them):
+   the loops rest, the orb stands still (lab loaders.css:189). glass.css:118 also shortens every
+   animation to .01 ms under the same attribute. */
+:root[data-motion="reduced"] .ldr, :root[data-motion="reduced"] .ldr *, :root[data-motion="reduced"] .ldr::before, :root[data-motion="reduced"] .ldr::after { animation-play-state: paused !important; }
+
+/* The working pill (src/loaders/WorkingPill.tsx): its size is set by the component from the
+   indicator (src/loaders/pill.ts); the content sits on the centred layer of glass.css
+   (.shape-clip, .shape-layer), so a later morph of the pill never moves or scales it. */
+.working-pill { position: relative; display: block; flex: none; color: var(--text); }
+.working-pill .working-layer { display: flex; align-items: center; justify-content: center; }
+.working-slot { display: flex; align-items: center; justify-content: center; flex: none; }
+/* The orb arrives with a short fade (plan, lot 8; the lab shows it at once). Backwards only: once
+   faded in, nothing holds an opacity that would group the orb's blend modes differently. */
+.working-orb { display: flex; animation: working-orb-in 150ms cubic-bezier(.23,1,.32,1) backwards; }
+@keyframes working-orb-in { from { opacity: 0; } to { opacity: 1; } }
+/* A hidden page (document.hidden) spends nothing on the loops. */
+.working-pill[data-paused] .ldr, .working-pill[data-paused] .ldr *, .working-pill[data-paused] .ldr::before, .working-pill[data-paused] .ldr::after { animation-play-state: paused; }
