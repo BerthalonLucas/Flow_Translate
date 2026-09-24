@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 // Single-file page: title, fonts, inline CSS, React from cdnjs, inline app bundle.
 const css = ['src/app.css', 'src/loaders.css'].map(f => readFileSync(f, 'utf8')).join('\n');
 const js = readFileSync('dist/app.js', 'utf8').replace(/<\/script/gi, '<\\/script');
@@ -16,6 +16,6 @@ ${css}
 ${js}
 </script>
 `;
-mkdirSync('dist', { recursive: true });
-writeFileSync('dist/labo-flowtranslate.html', html);
-console.log('dist/labo-flowtranslate.html', (html.length / 1024).toFixed(1), 'KB');
+// The page lives next to its source (the reference) and in docs/design (linked from the docs).
+for (const out of ['labo-flowtranslate.html', '../docs/design/labo-flowtranslate.html']) writeFileSync(out, html);
+console.log('labo-flowtranslate.html', (html.length / 1024).toFixed(1), 'KB (+ copie dans docs/design)');

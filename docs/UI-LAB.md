@@ -1,7 +1,8 @@
 # Labo d’interface (23 septembre 2026)
 
-Page unique de test, tout en données simulées : `docs/design/labo-flowtranslate.html`, source dans `design-lab/`.
-Reconstruire : `cd design-lab && npm install && npm run build` (esbuild, React 18 chargé depuis cdnjs).
+Page unique de test, tout en données simulées : `design-lab/labo-flowtranslate.html` (copie dans
+`docs/design/`), source et mode d’emploi dans `design-lab/` (`README.md`).
+Reconstruire : `cd design-lab && npm install && npm run build` ; vérifier : `npm run verify`.
 
 Vérifié dans Chromium (Playwright, navigateur seulement) : parcours au clavier des 10 menus, erreurs et
 renvoi vers le champ fautif des Réglages, effets sur le texte, annulation par Ctrl+Z, galeries, largeur

@@ -13,9 +13,11 @@ Le plan GitLab rédigé au travail est remplacé par ce document (décision de L
 
 1. Lire dans cet ordre : `AGENTS.md`, ce plan, `docs/UI-DECISIONS.md` (sections du 23 et
    24 septembre), `docs/UI-LAB.md`, `docs/BRIDGE.md`.
-2. Ouvrir le labo `docs/design/labo-flowtranslate.html` dans Edge ou Chrome : c’est la
-   référence visuelle et de mouvement. Ses réglages par défaut sont les choix de Lucas.
-   Sa source (`design-lab/src/`) contient le CSS et les calculs à reprendre tels quels (voir §9).
+2. Lire `design-lab/README.md` puis ouvrir le labo `design-lab/labo-flowtranslate.html` dans Edge
+   ou Chrome : c’est **la référence** visuelle et de mouvement, à garder dans le dépôt. Ses réglages
+   par défaut sont les choix de Lucas. Sa source (`design-lab/src/`) contient le CSS et les calculs
+   à reprendre tels quels (voir §9), et `design-lab/verify.mjs` les mesures qui l’ont validé
+   (centrage, non-recouvrement, sélection au caractère…), à reprendre comme modèle de tests.
 3. Travailler lot par lot (§5), dans l’ordre, une branche par lot ou un commit par lot. Chaque lot
    a ses critères de fin. Ne pas démarrer le lot suivant tant que les tests du lot ne passent pas.
 4. Règles du dépôt qui s’appliquent sans exception : pas de journalisation de texte source,
