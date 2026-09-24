@@ -4,7 +4,7 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 import type { Capture, ExecutionInfo, Settings, TranslationRequest } from '../src/types';
 
-let settings: Settings = { mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal',
+let settings: Settings = { mode: 'quality', defaultActionId: 'translate-fr', actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
 // canReplace is false here; a test raises it with `target` (Rust knows it at the capture since 0.4.0).
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.

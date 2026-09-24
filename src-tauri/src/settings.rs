@@ -41,6 +41,28 @@ struct PersistedSettings {
     text_size: crate::types::TextSize,
     #[serde(default)]
     auto_close: crate::types::AutoClose,
+    #[serde(default)]
+    ui_version: crate::types::UiVersion,
+    #[serde(default)]
+    language: crate::types::Language,
+    #[serde(default)]
+    theme: crate::types::Theme,
+    #[serde(default)]
+    motion: crate::types::MotionPreference,
+    #[serde(default)]
+    motion_preset: crate::types::MotionPreset,
+    #[serde(default)]
+    indicator: crate::types::Indicator,
+    #[serde(default)]
+    after_replace: crate::types::AfterReplace,
+    #[serde(default)]
+    undo_strategy: crate::types::UndoStrategy,
+    #[serde(default)]
+    pill_placement: crate::types::PillPlacement,
+    #[serde(default)]
+    glass_material: crate::types::GlassMaterial,
+    #[serde(default)]
+    menu_action_ids: Vec<String>,
     profiles: HashMap<String, PersistedProfile>,
 }
 
@@ -115,6 +137,17 @@ impl SettingsStore {
             connection_expanded: raw.connection_expanded,
             text_size: raw.text_size,
             auto_close: raw.auto_close,
+            ui_version: raw.ui_version,
+            language: raw.language,
+            theme: raw.theme,
+            motion: raw.motion,
+            motion_preset: raw.motion_preset,
+            indicator: raw.indicator,
+            after_replace: raw.after_replace,
+            undo_strategy: raw.undo_strategy,
+            pill_placement: raw.pill_placement,
+            glass_material: raw.glass_material,
+            menu_action_ids: raw.menu_action_ids,
             profiles,
         };
         validate(&settings)?;
@@ -155,6 +188,17 @@ impl SettingsStore {
             connection_expanded: settings.connection_expanded,
             text_size: settings.text_size,
             auto_close: settings.auto_close,
+            ui_version: settings.ui_version,
+            language: settings.language,
+            theme: settings.theme,
+            motion: settings.motion,
+            motion_preset: settings.motion_preset,
+            indicator: settings.indicator,
+            after_replace: settings.after_replace,
+            undo_strategy: settings.undo_strategy,
+            pill_placement: settings.pill_placement,
+            glass_material: settings.glass_material,
+            menu_action_ids: settings.menu_action_ids.clone(),
             profiles,
         };
         let bytes = serde_json::to_vec_pretty(&raw)
@@ -207,6 +251,9 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
 
 pub fn validate(settings: &Settings) -> Result<(), String> {
     actions::validate(settings)?;
+    if !(2..=20).contains(&settings.after_replace.undo_seconds) {
+        return Err("La durée d’annulation doit être comprise entre 2 et 20 secondes.".into());
+    }
     for required in ["fast", "quality"] {
         let profile = settings
             .profiles
@@ -356,10 +403,24 @@ mod tests {
         value.mode = crate::types::Mode::Fast;
         value.text_size = crate::types::TextSize::Large;
         value.auto_close = crate::types::AutoClose::Never;
+        value.ui_version = crate::types::UiVersion::Ilot;
         store.save(&value).unwrap();
         let loaded = store.load().unwrap();
         assert_eq!(loaded.mode, crate::types::Mode::Fast);
         assert_eq!((loaded.text_size, loaded.auto_close), (crate::types::TextSize::Large, crate::types::AutoClose::Never));
+        assert_eq!(loaded.ui_version, crate::types::UiVersion::Ilot);
+        let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn a_0_4_settings_file_without_the_ui_switch_keeps_the_0_4_journey() {
+        let root = std::env::temp_dir().join(format!("flowtranslate-settings-test-{}", uuid::Uuid::new_v4()));
+        let store = SettingsStore::new(&root);
+        store.save(&Settings::default()).unwrap();
+        let path = root.join("settings.json");
+        let mut raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        raw.as_object_mut().unwrap().remove("uiVersion");
+        std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+        assert_eq!(store.load().unwrap().ui_version, crate::types::UiVersion::V4);
         let _ = std::fs::remove_dir_all(root);
     }
 }

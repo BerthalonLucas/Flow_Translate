@@ -7,6 +7,8 @@ import { Icon, Segmented, SettingSwitch, useFade } from './ui';
 import { bridge } from './bridge';
 import { GlassOverlay, dragSurface } from './GlassOverlay';
 import { useTranslation } from './useTranslation';
+import { useSettings } from './useSettings';
+import { useDocumentPreferences } from './preferences';
 import type { AutoClose, Capture, HistoryEntry, Mode, Settings, TextSize } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
@@ -217,6 +219,7 @@ export function App() {
   const params = useMemo(() => new URLSearchParams(location.search), []);
   const windowName = params.get('window') ?? (bridge.native ? 'overlay' : 'demo');
   const standaloneDemo = params.get('demo') === '1';
+  useDocumentPreferences(useSettings());
   useEffect(() => { document.body.className = `flowtranslate-window flowtranslate-${windowName}`; return () => { document.body.className = ''; }; }, [windowName]);
   if (windowName === 'settings') return <SettingsWindow />;
   if (windowName === 'capsule') return <Capsule />;

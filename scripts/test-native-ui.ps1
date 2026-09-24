@@ -1,7 +1,12 @@
 param(
     [string]$Executable = "$env:USERPROFILE\Apps\FlowTranslate\FlowTranslate.exe",
     [int]$Port = 9227,
-    [string]$OutputDirectory = ''
+    [string]$OutputDirectory = '',
+    # A fresh data folder per run: the build-target executable would otherwise read and
+    # rewrite the installed app's settings.json and history (%APPDATA%\com.flowtranslate.desktop).
+    [string]$DataDirectory = '',
+    # Optional settings.json copied into that folder before launch (e.g. uiVersion « ilot »).
+    [string]$SettingsFile = ''
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -16,11 +21,16 @@ if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyCon
 $previousArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $previousData = $env:WEBVIEW2_USER_DATA_FOLDER
 $previousEndpoint = $env:FLOWTRANSLATE_CDP_URL
+$previousDataDir = $env:FLOWTRANSLATE_DATA_DIR
+if (-not $DataDirectory) { $DataDirectory = Join-Path $projectRoot "release\native-data\$([guid]::NewGuid())" }
+New-Item -ItemType Directory -Force -Path $DataDirectory | Out-Null
+if ($SettingsFile) { Copy-Item -LiteralPath $SettingsFile -Destination (Join-Path $DataDirectory 'settings.json') -Force }
 $testProcess = $null
 try {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
     $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $projectRoot "release\native-profiles\$([guid]::NewGuid())"
     $env:FLOWTRANSLATE_CDP_URL = "http://127.0.0.1:$Port"
+    $env:FLOWTRANSLATE_DATA_DIR = $DataDirectory
     $testProcess = Start-Process -FilePath $resolvedExe -ArgumentList '--demo-selection' -WindowStyle Hidden -PassThru
     # The probe inspects the HWNDs of this process only (scripts/inspect-native-windows.ps1).
     $env:FLOWTRANSLATE_TEST_PID = "$($testProcess.Id)"
@@ -37,4 +47,6 @@ try {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousArgs
     $env:WEBVIEW2_USER_DATA_FOLDER = $previousData
     $env:FLOWTRANSLATE_CDP_URL = $previousEndpoint
+    $env:FLOWTRANSLATE_DATA_DIR = $previousDataDir
+    Remove-Item Env:FLOWTRANSLATE_TEST_PID -ErrorAction SilentlyContinue
 }

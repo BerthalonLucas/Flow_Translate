@@ -11,6 +11,23 @@ pub struct ActionDefinition {
     pub id: String,
     pub name: String,
     pub prompt_template: String,
+    /// The letter that runs the action from the Îlot (one letter, unique).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// The label of its tile and of the compact menu (« Fix », « Pro »…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_name: Option<String>,
+    /// A Lucide icon name for its tile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+/// What a shortcut opens: one action at once (0.4), or the Îlot menu beside the selection.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BindingKind {
+    #[default]
+    Action,
+    Menu,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -19,6 +36,8 @@ pub enum OutputMode { Display, Replace }
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutBinding {
     pub id: String,
+    #[serde(default)]
+    pub kind: BindingKind,
     pub shortcut: String,
     pub action_id: String,
     pub output_mode: OutputMode,
@@ -77,10 +96,10 @@ pub fn defaults() -> Vec<ActionDefinition> {
         ("translate-en", "Traduire en anglais", "You are a professional translator. Translate the text into English. Detect the source language yourself; if the text is already in English, return it unchanged. Keep names, numbers, formatting and tone."),
         ("correct", "Corriger", "You are a careful proofreader. Fix spelling, grammar, punctuation and accents in the text. Keep its language, meaning, tone and length; do not rephrase what is already correct. If nothing needs fixing, return the text unchanged."),
         ("professionalize", "Professionnaliser", "You are an editor. Rewrite the text in a clear, courteous, professional tone, in the same language, with the same meaning and a similar length. Keep names, numbers and facts."),
-    ].into_iter().map(|(id, name, prompt)| ActionDefinition { id: id.into(), name: name.into(), prompt_template: format!("{prompt}\n\n{OUTPUT_RULES}") }).collect()
+    ].into_iter().map(|(id, name, prompt)| ActionDefinition { id: id.into(), name: name.into(), prompt_template: format!("{prompt}\n\n{OUTPUT_RULES}"), key: None, short_name: None, icon: None }).collect()
 }
 pub fn default_bindings(shortcut: String) -> Vec<ShortcutBinding> {
-    vec![ShortcutBinding { id: "primary".into(), shortcut, action_id: "translate-fr".into(), output_mode: OutputMode::Display, enabled: true }]
+    vec![ShortcutBinding { id: "primary".into(), kind: BindingKind::Action, shortcut, action_id: "translate-fr".into(), output_mode: OutputMode::Display, enabled: true }]
 }
 pub fn validate_template(template: &str) -> Result<(), String> {
     if template.trim().is_empty() || template.chars().count() > 8000 || template.contains('\0') { return Err("La consigne doit contenir de 1 à 8 000 caractères, sans caractère nul.".into()); }
@@ -122,6 +141,23 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
         if action.id.is_empty() || action.id.len() > 80 || !ids.insert(&action.id) { return Err("Identifiant d’action invalide ou dupliqué.".into()); }
         if action.name.trim().is_empty() || action.name.chars().count() > 60 || action.name.chars().any(char::is_control) { return Err("Le nom d’une action doit contenir de 1 à 60 caractères.".into()); }
         validate_template(&action.prompt_template)?;
+        if let Some(short) = &action.short_name {
+            if short.trim().is_empty() || short.chars().count() > 16 || short.chars().any(char::is_control) { return Err("Le nom court d’une action doit contenir de 1 à 16 caractères.".into()); }
+        }
+        if let Some(icon) = &action.icon {
+            if icon.is_empty() || icon.len() > 40 || !icon.chars().all(|c| c.is_ascii_alphanumeric()) { return Err("Icône d’action invalide.".into()); }
+        }
+    }
+    let mut letters = HashSet::new();
+    for key in settings.actions.iter().filter_map(|action| action.key.as_deref()) {
+        let mut chars = key.chars();
+        let (Some(letter), None) = (chars.next(), chars.next()) else { return Err("La touche d’une action est une seule lettre.".into()) };
+        if !letter.is_alphabetic() || !letters.insert(letter.to_lowercase().to_string()) { return Err("La touche d’une action est une lettre, différente pour chaque action.".into()); }
+    }
+    if settings.menu_action_ids.len() > 6 { return Err("La grille du menu contient six actions au plus.".into()); }
+    let mut grid = HashSet::new();
+    for id in &settings.menu_action_ids {
+        if !ids.contains(id) || !grid.insert(id) { return Err("La grille du menu utilise une action absente ou répétée.".into()); }
     }
     if !ids.contains(&settings.default_action_id) { return Err("L’action par défaut n’existe pas.".into()); }
     if settings.shortcut_bindings.is_empty() || settings.shortcut_bindings.len() > 12 { return Err("Configurez entre 1 et 12 raccourcis.".into()); }
@@ -161,6 +197,36 @@ mod tests {
         assert!(validate(&settings).is_err());
         settings.shortcut_bindings[1].enabled = false;
         assert!(validate(&settings).is_ok());
+    }
+    #[test]
+    fn menu_letters_are_single_and_unique_and_the_grid_holds_six_known_actions() {
+        let mut settings = Settings::default();
+        settings.actions[0].key = Some("T".into());
+        settings.actions[1].key = Some("E".into());
+        assert!(validate(&settings).is_ok());
+        settings.actions[1].key = Some("t".into());
+        assert!(validate(&settings).is_err(), "same letter, other case");
+        settings.actions[1].key = Some("EN".into());
+        assert!(validate(&settings).is_err(), "two letters");
+        settings.actions[1].key = Some("1".into());
+        assert!(validate(&settings).is_err(), "not a letter");
+        settings.actions[1].key = None;
+        settings.menu_action_ids = vec!["correct".into(), "translate-fr".into()];
+        assert!(validate(&settings).is_ok());
+        settings.menu_action_ids.push("correct".into());
+        assert!(validate(&settings).is_err(), "repeated");
+        settings.menu_action_ids = vec!["missing".into()];
+        assert!(validate(&settings).is_err(), "unknown");
+        settings.menu_action_ids = vec!["correct".into(); 7];
+        assert!(validate(&settings).is_err(), "more than six");
+        settings.menu_action_ids.clear();
+        settings.actions[2].short_name = Some(String::new());
+        assert!(validate(&settings).is_err(), "empty short name");
+        settings.actions[2].short_name = Some("Fix".into());
+        settings.actions[2].icon = Some("SpellCheck".into());
+        assert!(validate(&settings).is_ok());
+        settings.actions[2].icon = Some("../x".into());
+        assert!(validate(&settings).is_err(), "icon names are plain identifiers");
     }
     #[test]
     fn delivery_is_once_only_and_never_on_retry() {

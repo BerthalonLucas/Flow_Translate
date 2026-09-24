@@ -1,7 +1,7 @@
 export type Mode = 'fast' | 'quality';
 export type Language = 'fr' | 'en';
 export type Rect = { x: number; y: number; width: number; height: number };
-// Kept for the demo texts only; the product no longer carries a target language.
+// The interface language since the Îlot art direction (English by default).
 // The work area of the screen the capture opens on, logical pixels, with its DPI scale.
 export type Screen = { width: number; height: number; scale: number };
 // replay: a result shown again from the tray; the frontend displays it complete without translating.
@@ -17,8 +17,25 @@ export type Profile = { endpoint: string; model: string; apiKey: string };
 // textSize: reading presets (16/24 · 22/33, 18/27 · 24/36, 20/30 · 26/39); autoClose: reading budget × 0.7, × 1, × 1.5, or never.
 export type TextSize = 'normal' | 'large' | 'xlarge';
 export type AutoClose = 'fast' | 'normal' | 'slow' | 'never';
+// Hidden switch of the « Îlot » art direction (docs/DA-PLAN.md, lot 0): v4 keeps the 0.4
+// journey, ilot the menu beside the selection. Not shown in the settings window.
+export type UiVersion = 'v4' | 'ilot';
+// Réglages of the Îlot art direction (docs/DA-PLAN.md); Rust persists and validates them.
+export type Theme = 'system' | 'light' | 'dark';
+export type MotionPreference = 'system' | 'full' | 'reduced';
+export type MotionPreset = 'smooth' | 'bouncy';
+export type Indicator = 'perle' | 'nebuleuse' | 'ruban';
+// Undo: Ctrl+Z sent to the source (option A) or the original pasted back (option B).
+export type UndoStrategy = 'keystroke' | 'repaste';
+export type PillPlacement = 'below' | 'margin';
+// Hidden trial of lot 12 (phase B): real Windows Acrylic instead of the painted glass.
+export type GlassMaterial = 'painted' | 'acrylic';
+// undoSeconds: 2 to 20.
+export type AfterReplace = { check: boolean; undo: boolean; undoSeconds: number; changedWords: boolean };
 // 0.4.0: no target language any more; each action's instruction names its language.
-export type Settings = { mode: Mode; actions: ActionDefinition[]; shortcutBindings: ShortcutBinding[]; defaultActionId: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; textSize: TextSize; autoClose: AutoClose; profiles: Record<Mode, Profile> };
+export type Settings = { mode: Mode; actions: ActionDefinition[]; shortcutBindings: ShortcutBinding[]; defaultActionId: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; textSize: TextSize; autoClose: AutoClose; uiVersion: UiVersion;
+  language: Language; theme: Theme; motion: MotionPreference; motionPreset: MotionPreset; indicator: Indicator; afterReplace: AfterReplace;
+  undoStrategy: UndoStrategy; pillPlacement: PillPlacement; glassMaterial: GlassMaterial; menuActionIds: string[]; profiles: Record<Mode, Profile> };
 export type StreamEvent = { requestId: string; kind: 'delta' | 'done' | 'error'; text?: string; message?: string };
 export type HistoryEntry = { id: string; sourceText: string; translatedText: string; actionName: string; mode: Mode; createdAt: string };
 export type ConnectionStatus = { connected: boolean; message: string };
@@ -33,8 +50,11 @@ export type OverlayGeometry = { captureId: string; presentation: Presentation; r
 
 
 export type OutputMode = 'display' | 'replace';
-export type ActionDefinition = { id: string; name: string; promptTemplate: string };
-export type ShortcutBinding = { id: string; shortcut: string; actionId: string; outputMode: OutputMode; enabled: boolean };
+// key: the letter that runs it from the Îlot; shortName: its tile label; icon: a Lucide name.
+export type ActionDefinition = { id: string; name: string; promptTemplate: string; key?: string; shortName?: string; icon?: string };
+// kind: one action at once (0.4), or the Îlot menu beside the selection. Absent means 'action'.
+export type BindingKind = 'action' | 'menu';
+export type ShortcutBinding = { id: string; kind?: BindingKind; shortcut: string; actionId: string; outputMode: OutputMode; enabled: boolean };
 export type ExecutionInfo = { actionId: string; actionName: string; outputMode: OutputMode; mode: Mode };
 // applied: the result was pasted over the selection (confirmed when the field read it back); fallback: it stays in the glass.
 export type ResultDelivery = { requestId: string; status: 'applied' | 'fallback'; confirmed: boolean; message: string };

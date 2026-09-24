@@ -9,11 +9,100 @@ pub enum Mode {
     Quality,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+/// The target language of 0.3.0 (read for the migration only) and, since the « Îlot »
+/// art direction, the language of the interface: English by default, French on request.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
     Fr,
+    #[default]
     En,
+}
+
+/// Réglages of the « Îlot » art direction (docs/DA-PLAN.md). The frontend owns their
+/// effect; Rust only persists and validates them. Every field has a default so a 0.4
+/// settings file loads unchanged.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// « Animations : suivre Windows / toujours / réduites ».
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MotionPreference {
+    #[default]
+    System,
+    Full,
+    Reduced,
+}
+
+/// Apple « smooth » (default) or « bouncy » springs.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MotionPreset {
+    #[default]
+    Smooth,
+    Bouncy,
+}
+
+/// The orb of the waiting pill.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Indicator {
+    #[default]
+    Perle,
+    Nebuleuse,
+    Ruban,
+}
+
+/// How Undo reverts a replacement: Ctrl+Z sent to the source (option A, default) or the
+/// original pasted back over the new text (option B). Both revalidate the target first.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UndoStrategy {
+    #[default]
+    Keystroke,
+    Repaste,
+}
+
+/// Where the pill rests after a replacement: under the new text, or in the margin.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PillPlacement {
+    #[default]
+    Below,
+    Margin,
+}
+
+/// Hidden trial (lot 12, phase B): `painted` glass (default) or real Windows Acrylic.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GlassMaterial {
+    #[default]
+    Painted,
+    Acrylic,
+}
+
+/// What follows a replacement: the drawn check, Undo with its countdown, the changed
+/// words highlighted while Undo lasts. Each can be switched off.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AfterReplace {
+    pub check: bool,
+    pub undo: bool,
+    pub undo_seconds: u32,
+    pub changed_words: bool,
+}
+
+impl Default for AfterReplace {
+    fn default() -> Self {
+        Self { check: true, undo: true, undo_seconds: 8, changed_words: true }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -157,6 +246,18 @@ pub enum AutoClose {
     Never,
 }
 
+/// Hidden switch of the « Îlot » art direction (docs/DA-PLAN.md, lot 0): `v4` keeps the
+/// 0.4 journey (a shortcut runs its action at once, the waiting pill, the glass),
+/// `ilot` the new one (the menu beside the selection, the pill, the check and Undo). Not
+/// shown in the settings window; kept while the migration lasts.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UiVersion {
+    #[default]
+    V4,
+    Ilot,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -172,6 +273,30 @@ pub struct Settings {
     pub text_size: TextSize,
     #[serde(default)]
     pub auto_close: AutoClose,
+    #[serde(default)]
+    pub ui_version: UiVersion,
+    #[serde(default)]
+    pub language: Language,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub motion: MotionPreference,
+    #[serde(default)]
+    pub motion_preset: MotionPreset,
+    #[serde(default)]
+    pub indicator: Indicator,
+    #[serde(default)]
+    pub after_replace: AfterReplace,
+    #[serde(default)]
+    pub undo_strategy: UndoStrategy,
+    #[serde(default)]
+    pub pill_placement: PillPlacement,
+    #[serde(default)]
+    pub glass_material: GlassMaterial,
+    /// The actions of the Îlot grid, in the user's order (six at most). Empty: the
+    /// frontend shows the first actions of the list.
+    #[serde(default)]
+    pub menu_action_ids: Vec<String>,
     pub profiles: HashMap<String, Profile>,
 }
 
@@ -204,6 +329,17 @@ impl Default for Settings {
             connection_expanded: false,
             text_size: TextSize::Normal,
             auto_close: AutoClose::Normal,
+            ui_version: UiVersion::default(),
+            language: Language::default(),
+            theme: Theme::default(),
+            motion: MotionPreference::default(),
+            motion_preset: MotionPreset::default(),
+            indicator: Indicator::default(),
+            after_replace: AfterReplace::default(),
+            undo_strategy: UndoStrategy::default(),
+            pill_placement: PillPlacement::default(),
+            glass_material: GlassMaterial::default(),
+            menu_action_ids: Vec::new(),
             profiles,
         }
     }

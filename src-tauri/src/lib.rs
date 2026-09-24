@@ -1287,7 +1287,13 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .setup(|app| {
-            let root = app.path().app_data_dir()?;
+            // FLOWTRANSLATE_DATA_DIR isolates a test run: the executable of the build target
+            // would otherwise share settings.json and the history with the installed app.
+            let root = match std::env::var_os("FLOWTRANSLATE_DATA_DIR").filter(|dir| !dir.is_empty()) {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => app.path().app_data_dir()?,
+            };
+            std::fs::create_dir_all(&root)?;
             let store = SettingsStore::new(&root);
             let settings = store.load()?;
             let history = HistoryStore::new(&root)?;

@@ -6,6 +6,7 @@ const baseURL = `http://127.0.0.1:${port}`;
 export default defineConfig({
   testDir: './e2e',
   testMatch: ['**/*.pw.ts', '**/*.spec.mjs'],
+  globalSetup: './e2e/warmup.ts',
   timeout: 20_000,
   use: { baseURL, headless: true, screenshot: 'only-on-failure',
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
