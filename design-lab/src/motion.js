@@ -70,6 +70,9 @@ export function bezier(x1, y1, x2, y2) {
   };
 }
 
+export const SPRING_FALLBACK = 'cubic-bezier(0.34,1.3,0.64,1)';
+export const LINEAR_OK = typeof CSS !== 'undefined' && CSS.supports?.('transition-timing-function', 'linear(0, 1)');
+
 // ——— Page-wide clock: playback rate (slow motion) and reduced motion ———
 export const clock = { rate: 1, reduced: false };
 const listeners = new Set();
@@ -97,18 +100,22 @@ export function wait(ms, signal) {
 }
 
 // Web Animations with the lab clock applied. `spec` is a motion spec or { easing, duration }.
+// `force` keeps the motion even under reduced motion (the curve comparisons exist to be seen).
 export function animate(node, frames, spec, extra = {}) {
   if (!node) return Promise.resolve(null);
   const { easing, duration } = spec.easing ? spec : resolve(spec);
-  const options = { fill: 'both', easing, duration, ...extra };
-  if (clock.reduced) {
+  const { force, ...rest } = extra;
+  const options = { fill: 'both', easing, duration, ...rest };
+  if (clock.reduced && !force) {
     // Reduced motion keeps fades short and drops movement: only opacity frames survive.
     const opacityOnly = frames.map(f => ('opacity' in f ? { opacity: f.opacity } : {}));
     const hasOpacity = opacityOnly.some(f => 'opacity' in f);
     options.duration = hasOpacity ? 120 : 1; options.easing = 'linear'; options.delay = 0;
     frames = hasOpacity ? opacityOnly : [frames[frames.length - 1], frames[frames.length - 1]];
   }
-  const a = node.animate(frames, options);
+  let a;
+  try { a = node.animate(frames, options); }
+  catch { a = node.animate(frames, { ...options, easing: SPRING_FALLBACK }); } // linear() unsupported
   a.playbackRate = clock.rate;
   return a.finished.then(() => a, () => a);
 }

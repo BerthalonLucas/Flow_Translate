@@ -5,16 +5,20 @@ import { MOTION_PRESETS, MATERIAL_PRESETS, OUTCOMES } from './data.js';
 import { CURVES, progressFn, resolve } from './motion.js';
 import { GlassChip } from './Surface.jsx';
 
+// `real`: can be drawn over another app's selection (UI Automation gives the line boxes),
+// without touching its glyphs. The others only exist inside a browser page.
 export const TEXT_FX = [
-  { id: 'none', name: 'Aucun', note: 'Le texte ne bouge pas.' },
-  { id: 'color', name: 'Scintillement Apple', note: 'Une bande aux couleurs Apple Intelligence traverse le texte.', params: [['--dur', 'Durée', .8, 4, .1, 1.8, 's'], ['--base', 'Opacité du texte', .2, .8, .05, .5, '']] },
-  { id: 'shimmer', name: 'Scintillement encre', note: 'Le texte s’estompe, une lumière sombre le parcourt (ChatGPT, motion-primitives).', params: [['--dur', 'Durée', .8, 4, .1, 1.8, 's'], ['--base', 'Opacité du texte', .2, .8, .05, .45, '']] },
-  { id: 'dim', name: 'Balayage lumineux', note: 'Le texte pâlit, un éclat violet passe de gauche à droite, comme Writing Tools.', params: [['--dur', 'Durée', 1, 4, .1, 2.2, 's'], ['--base', 'Opacité du texte', .15, .7, .05, .35, '']] },
-  { id: 'glow', name: 'Lueur colorée', note: 'Un léger fond irisé glisse derrière la sélection.', params: [['--dur', 'Durée', 1, 6, .1, 3, 's'], ['--alpha', 'Intensité', .08, .4, .01, .22, '']] },
-  { id: 'scan', name: 'Soulignement qui balaie', note: 'Un trait coloré parcourt le bas des lignes (« Proofread » d’Apple).', params: [['--dur', 'Durée', .6, 3, .1, 1.4, 's']] },
-  { id: 'pulse', name: 'Respiration', note: 'Le texte pâlit et revient, doucement.', params: [['--dur', 'Durée', .8, 3, .1, 1.6, 's'], ['--floor', 'Opacité mini', .2, .8, .05, .4, '']] },
-  { id: 'words', name: 'Vague de mots', note: 'Les mots s’estompent l’un après l’autre.', params: [['--dur', 'Durée', .8, 3, .1, 1.6, 's']] },
+  { id: 'none', name: 'Aucun', real: true, note: 'Le texte ne bouge pas.' },
+  { id: 'sweep', name: 'Balayage de lumière', real: true, note: 'Une bande de lumière aux couleurs Apple passe sur la sélection, sans toucher aux lettres.', params: [['--dur', 'Durée', .8, 4, .1, 1.6, 's'], ['--alpha', 'Intensité', .1, .6, .02, .32, '']] },
+  { id: 'glow', name: 'Lueur colorée', real: true, note: 'Un léger fond irisé glisse derrière la sélection.', params: [['--dur', 'Durée', 1, 6, .1, 3, 's'], ['--alpha', 'Intensité', .08, .4, .01, .22, '']] },
+  { id: 'edge', name: 'Contour lumineux', real: true, note: 'Un liseré coloré entoure les lignes sélectionnées et change doucement de teinte.', params: [['--dur', 'Durée', 1, 6, .1, 2.4, 's']] },
+  { id: 'scan', name: 'Soulignement qui balaie', real: true, note: 'Un trait coloré parcourt le bas des lignes (« Proofread » d’Apple).', params: [['--dur', 'Durée', .6, 3, .1, 1.4, 's']] },
+  { id: 'veil', name: 'Voile qui respire', real: true, note: 'Un voile blanc pâlit le texte puis se retire (comme si le texte respirait).', params: [['--dur', 'Durée', .8, 3, .1, 1.6, 's'], ['--floor', 'Opacité mini', .2, .8, .05, .45, '']] },
+  { id: 'color', name: 'Lettres aux couleurs Apple', real: false, note: 'Les lettres elles-mêmes prennent la couleur. Impossible dans une autre application.', params: [['--dur', 'Durée', .8, 4, .1, 1.8, 's'], ['--base', 'Opacité du texte', .2, .8, .05, .5, '']] },
+  { id: 'shimmer', name: 'Lettres qui scintillent', real: false, note: 'Façon ChatGPT. Impossible dans une autre application.', params: [['--dur', 'Durée', .8, 4, .1, 1.8, 's'], ['--base', 'Opacité du texte', .2, .8, .05, .45, '']] },
+  { id: 'words', name: 'Vague de mots', real: false, note: 'Mot par mot. Impossible dans une autre application.', params: [['--dur', 'Durée', .8, 3, .1, 1.6, 's']] },
 ];
+export const Badge = ({ real }) => <span className={`badge ${real ? 'ok' : 'demo'}`}>{real ? 'faisable' : 'démo seulement'}</span>;
 
 export function Seg({ value, options, onChange, label }) {
   return <div className="seg" role="group" aria-label={label}>{options.map(([v, l]) => <button key={String(v)} type="button" aria-pressed={value === v} onClick={() => onChange(v)}>{l}</button>)}</div>;
@@ -123,6 +127,7 @@ export function Panel({ cfg, set, tab, setTab }) {
         </div>
         {(cfg.placement === 'pill' || cfg.placement === 'both') && <div className="group">
           <h3>Indicateur dans la pilule</h3>
+          <Field label="Tes favoris"><div className="chips">{['perle', 'neb', 'ruban'].map(id => <button key={id} className="chip" aria-pressed={cfg.loader === id} onClick={() => set({ loader: id })}>{LOADER_BY_ID[id].name}</button>)}</div></Field>
           <div className="picker">{LOADERS.map(l => <button key={l.id} aria-pressed={cfg.loader === l.id} onClick={() => set({ loader: l.id })}>
             <span className="swatch"><GlassChip material={cfg.material} style={{ height: 26, padding: '0 10px', display: 'grid', placeItems: 'center', minWidth: 44 }} fx={<LoaderFx id={l.id} params={cfg.loaderParams[l.id]} />}><LoaderInner id={l.id} params={cfg.loaderParams[l.id]} /></GlassChip></span>{l.name}</button>)}</div>
           <div className="note"><b>{loader.name}.</b> {loader.note}</div>
@@ -131,8 +136,10 @@ export function Panel({ cfg, set, tab, setTab }) {
         </div>}
         {(cfg.placement === 'text' || cfg.placement === 'both') && <div className="group">
           <h3>Effet sur le texte sélectionné</h3>
-          <div className="chips">{TEXT_FX.map(t => <button key={t.id} className="chip" aria-pressed={cfg.textFx === t.id} onClick={() => set({ textFx: t.id })}>{t.name}</button>)}</div>
-          <div className="note">{tfx.note}</div>
+          <div className="chips">{TEXT_FX.map(t => <button key={t.id} className="chip" aria-pressed={cfg.textFx === t.id} onClick={() => set({ textFx: t.id })}>{t.name}{!t.real && ' ✱'}</button>)}</div>
+          <div className="note"><Badge real={tfx.real} /> {tfx.note}</div>
+          <Check label="Garder aussi le surlignage bleu de la sélection" checked={cfg.keepSelection} onChange={v => set({ keepSelection: v })} />
+          <p className="small muted">✱ Impossible hors du navigateur : FlowTranslate ne peut pas redessiner les lettres d’une autre application. Il peut seulement dessiner par-dessus les lignes sélectionnées.</p>
           {(tfx.params || []).map(([k, l, min, max, step, def, unit]) => <Slider key={k} label={l} value={parseFloat(tp[k] ?? def)} min={min} max={max} step={step} unit={unit} onChange={v => set({ textFxParams: { ...cfg.textFxParams, [cfg.textFx]: { ...tp, [k]: `${v}${unit}` } } })} />)}
         </div>}
       </>}
@@ -140,14 +147,15 @@ export function Panel({ cfg, set, tab, setTab }) {
       {tab === 'resultat' && <>
         <div className="group">
           <Field label="Arrivée du nouveau texte">
-            <Seg value={cfg.replaceFx} options={[['instant', 'Net'], ['fade', 'Fondu'], ['crossblur', 'Flou → net'], ['blur', 'Mot à mot flou'], ['rise', 'Mot à mot qui monte'], ['type', 'Machine à écrire']]} onChange={v => set({ replaceFx: v })} />
+            <Seg value={cfg.replaceFx} options={[['instant', 'Net'], ['fade', 'Fondu'], ['crossblur', 'Flou → net ✱'], ['blur', 'Mot à mot flou ✱'], ['rise', 'Mot à mot qui monte ✱'], ['type', 'Machine à écrire ✱']]} onChange={v => set({ replaceFx: v })} />
+            <span className="desc">✱ Démo seulement : le texte est collé d’un coup dans l’autre application. « Fondu » reste faisable avec un voile qui s’efface par-dessus.</span>
           </Field>
           {['blur', 'rise', 'type'].includes(cfg.replaceFx) && <Slider label="Décalage entre les mots" value={cfg.replaceParams.stagger} min={5} max={80} step={1} unit=" ms" onChange={v => set({ replaceParams: { ...cfg.replaceParams, stagger: v } })} />}
           {['blur', 'crossblur'].includes(cfg.replaceFx) && <Slider label="Flou de départ" value={cfg.replaceParams.blur} min={1} max={14} step={.5} unit=" px" onChange={v => set({ replaceParams: { ...cfg.replaceParams, blur: v } })} />}
           {cfg.replaceFx !== 'instant' && cfg.replaceFx !== 'type' && <Slider label="Durée" value={cfg.replaceParams.dur} min={80} max={900} step={10} unit=" ms" onChange={v => set({ replaceParams: { ...cfg.replaceParams, dur: v } })} />}
         </div>
         <div className="group">
-          <Field label="Mots changés" desc="Traduction, mail et consigne libre changent tout : c’est alors tout le bloc qui est marqué.">
+          <Field label="Mots changés" desc="Traduction, mail et consigne libre changent tout : c’est alors tout le bloc qui est marqué. Faisable par-dessus les mots dans les applications qui exposent leur texte (Word, Outlook, Edge, Chrome…).">
             <Seg value={cfg.diff} options={[['off', 'Rien'], ['fade', 'Surligné puis s’efface'], ['persist', 'Surligné jusqu’au clic'], ['underline', 'Souligné coloré']]} onChange={v => set({ diff: v })} />
           </Field>
           {cfg.diff === 'fade' && <>
@@ -187,14 +195,20 @@ export function Panel({ cfg, set, tab, setTab }) {
 
       {tab === 'matiere' && <>
         <div className="group">
-          <Field label="Préréglage">
-            <div className="chips">{Object.entries(MATERIAL_PRESETS).map(([k, m]) => <button key={k} className="chip" aria-pressed={cfg.materialPreset === k} onClick={() => set({ material: m, materialPreset: k })}>{m.label}</button>)}</div>
+          <Field label="Thème" desc="Comme l’app : suit le thème de l’appareil, ou forcé.">
+            <Seg value={cfg.theme} options={[['system', 'Suivre l’appareil'], ['light', 'Clair'], ['dark', 'Sombre']]} onChange={v => set({ theme: v })} />
+          </Field>
+          <Field label="Matière du thème clair">
+            <div className="chips">{Object.entries(MATERIAL_PRESETS).filter(([, m]) => !m.dark).map(([k, m]) => <button key={k} className="chip" aria-pressed={cfg.materialLightPreset === k} onClick={() => set({ material: m, materialPreset: k })}>{m.label}</button>)}</div>
+          </Field>
+          <Field label="Matière du thème sombre">
+            <div className="chips">{Object.entries(MATERIAL_PRESETS).filter(([, m]) => m.dark).map(([k, m]) => <button key={k} className="chip" aria-pressed={cfg.materialDarkPreset === k} onClick={() => set({ material: m, materialPreset: k })}>{m.label}</button>)}</div>
           </Field>
           {MATERIAL_PRESETS[cfg.materialPreset] && <div className="note">{MATERIAL_PRESETS[cfg.materialPreset].desc}</div>}
           <Field label="Fond d’écran du faux bureau"><Seg value={cfg.wall} options={[['bloom', 'Bleu'], ['pastel', 'Pastel'], ['photo', 'Coucher'], ['white', 'Blanc'], ['dark', 'Sombre']]} onChange={v => set({ wall: v })} /></Field>
         </div>
         <div className="group">
-          <Check label="Version sombre" checked={cfg.material.dark} onChange={v => setMat({ dark: v, tint: v ? 28 : 250 })} />
+          <p className="small muted">Les réglages ci-dessous modifient la matière du thème <b>{cfg.material.dark ? 'sombre' : 'clair'}</b>.</p>
           <Slider label="Opacité du fond" value={cfg.material.bgAlpha} min={0.05} max={1} step={0.01} onChange={v => setMat({ bgAlpha: v })} />
           <Slider label="Flou derrière" value={cfg.material.blur} min={0} max={60} step={1} unit=" px" onChange={v => setMat({ blur: v })} />
           <Slider label="Saturation derrière" value={cfg.material.saturate} min={100} max={220} step={5} unit=" %" onChange={v => setMat({ saturate: v })} />

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Surface, Icon } from './Surface.jsx';
 import { MENU_BY_ID } from './menus.jsx';
 import { LoaderInner, LoaderFx } from './loaders.jsx';
-import { ACTIONS, ACTION_BY_ID, PARAGRAPHS, OUTCOME_BY_ID, UI, label, resolveAction } from './data.js';
+import { ACTIONS, ACTION_BY_ID, PARAGRAPHS, OUTCOME_BY_ID, UI, label, resolveAction, mockRewrite } from './data.js';
 import { wordDiff, tokenize } from './diff.js';
 import { wait, clock } from './motion.js';
 
@@ -15,8 +15,8 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
   const [texts, setTexts] = useState(initialTexts);
-  const [display, setDisplay] = useState({}); // pid → { ops, whole, fx, key, diff }
-  const [sel, setSel] = useState([]);
+  const [display, setDisplay] = useState({}); // pid → { start, end, ops, whole, fx, key, diff }
+  const [sel, setSel] = useState([]); // [{ pid, start, end }] in document order
   const [phase, setPhase] = useState('idle');
   const [pos, setPos] = useState({ left: 40, top: 120 });
   const [grow, setGrow] = useState('down');
@@ -49,8 +49,7 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
   const place = useCallback(() => {
     const d = desk.current;
     if (!d) return;
-    const ids = selRef.current;
-    const els = ids.map(id => d.querySelector(`[data-pid="${id}"]`)).filter(Boolean);
+    const els = [...d.querySelectorAll('[data-range]')];
     if (!els.length) return;
     const dr = d.getBoundingClientRect();
     const lastRects = els[els.length - 1].getClientRects();
@@ -87,10 +86,12 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
     const ctrl = new AbortController();
     abort.current = ctrl;
     const outId = resolveAction(actionId, opts.mods || []);
-    const ids = [...selRef.current];
-    const originals = Object.fromEntries(ids.map(id => [id, textsRef.current[id]]));
-    const results = Object.fromEntries(ids.map(id => [id, PARAGRAPHS.find(p => p.id === id).out[outId]]));
-    const r = { actionId, outId, prompt: opts.prompt, mods: opts.mods, ids, originals, results, preview: !!opts.preview };
+    const ranges = selRef.current.map(x => {
+      const full = textsRef.current[x.pid];
+      return { ...x, full, orig: full.slice(x.start, x.end), res: mockRewrite(x.pid, full, x.start, x.end, outId) };
+    });
+    const ids = ranges.map(x => x.pid);
+    const r = { actionId, outId, prompt: opts.prompt, mods: opts.mods, ids, ranges, preview: !!opts.preview };
     setRun(r);
     if (c.rememberLast && actionId !== 'custom') setLastAction(actionId);
     setPhase('working');
@@ -120,18 +121,23 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
     const c = cfgRef.current;
     const whole = ['translate', 'email', 'custom'].includes(r.outId);
     const next = {};
-    for (const id of r.ids) {
-      const ops = whole ? [{ type: 'ins', text: r.results[id] }] : wordDiff(r.originals[id], r.results[id]).filter(o => o.type !== 'del');
-      next[id] = { ops, whole, fx: mode === 'preview' ? 'fade' : c.replaceFx, diff: mode === 'preview' ? 'underline' : c.diff, key: `${performance.now()}` };
+    const nextTexts = {};
+    for (const x of r.ranges) {
+      const ops = whole ? [{ type: 'ins', text: x.res }] : wordDiff(x.orig, x.res).filter(o => o.type !== 'del');
+      next[x.pid] = { start: x.start, end: x.start + x.res.length, ops, whole, fx: mode === 'preview' ? 'fade' : c.replaceFx, diff: mode === 'preview' ? 'underline' : c.diff, key: `${performance.now()}` };
+      nextTexts[x.pid] = x.full.slice(0, x.start) + x.res + x.full.slice(x.end);
     }
-    setTexts(t => ({ ...t, ...r.results }));
+    setTexts(t => ({ ...t, ...nextTexts }));
     setDisplay(d => ({ ...d, ...next }));
+    // The new text stays selected, as after a paste that keeps the selection.
+    setSel(r.ranges.map(x => ({ pid: x.pid, start: x.start, end: x.start + x.res.length })));
   };
 
   const revert = (r, fx = 'fade') => {
     if (!r) return;
-    setTexts(t => ({ ...t, ...r.originals }));
-    setDisplay(d => { const n = { ...d }; for (const id of r.ids) n[id] = { ops: [{ type: 'eq', text: r.originals[id] }], whole: false, fx, diff: 'off', key: `${performance.now()}` }; return n; });
+    setTexts(t => ({ ...t, ...Object.fromEntries(r.ranges.map(x => [x.pid, x.full])) }));
+    setDisplay(d => { const n = { ...d }; for (const x of r.ranges) n[x.pid] = { start: x.start, end: x.end, ops: [{ type: 'eq', text: x.orig }], whole: false, fx, diff: 'off', key: `${performance.now()}` }; return n; });
+    setSel(r.ranges.map(x => ({ pid: x.pid, start: x.start, end: x.end })));
   };
 
   // ——— Done: check / undo countdown, then leave ———
@@ -171,7 +177,7 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
       if (phaseRef.current === 'trigger') setPhase('idle');
       if (e.key === 'Escape' && ['working', 'done', 'error', 'notice', 'trigger'].includes(phaseRef.current)) { e.preventDefault(); if (phaseRef.current === 'working') status('Annulé pendant le travail'); close(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && phaseRef.current === 'done' && cfgRef.current.undo) { e.preventDefault(); undo(); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && desk.current?.contains(document.activeElement)) { e.preventDefault(); setSel(PARAGRAPHS.map(p => p.id)); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && desk.current?.contains(document.activeElement)) { e.preventDefault(); setSel(wholeParas(PARAGRAPHS.map(p => p.id), textsRef.current)); return; }
       if (phaseRef.current === 'preview') {
         const r = runRef.current;
         if (e.key === 'Enter') { e.preventDefault(); setPhase('done'); status('Aperçu gardé'); return; }
@@ -197,24 +203,32 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
   }, [openMenu, startRun, close, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ——— Mouse selection in the mail, snapped to paragraphs ———
+  // ——— Mouse selection in the mail, to the character (click, drag, double/triple click) ———
   const onMouseUp = e => {
     if (e.target.closest('[data-surface]')) return;
+    if (['menu', 'working', 'preview'].includes(phaseRef.current)) return;
     const s = window.getSelection();
-    let ids = [];
+    let ranges = [];
     if (s && !s.isCollapsed && s.rangeCount) {
       const range = s.getRangeAt(0);
-      ids = PARAGRAPHS.map(p => p.id).filter(id => { const el = body.current.querySelector(`[data-pid="${id}"]`); return el && range.intersectsNode(el); });
+      for (const p of PARAGRAPHS) {
+        const el = body.current.querySelector(`[data-pid="${p.id}"]`);
+        if (!el || !range.intersectsNode(el)) continue;
+        const len = textsRef.current[p.id].length;
+        const start = el.contains(range.startContainer) ? offsetIn(el, range.startContainer, range.startOffset) : 0;
+        const end = el.contains(range.endContainer) ? offsetIn(el, range.endContainer, range.endOffset) : len;
+        const t = textsRef.current[p.id];
+        let a = Math.max(0, Math.min(start, len)), b = Math.max(a, Math.min(end, len));
+        while (a < b && /\s/.test(t[a])) a++;
+        while (b > a && /\s/.test(t[b - 1])) b--;
+        if (b > a) ranges.push({ pid: p.id, start: a, end: b });
+      }
       s.removeAllRanges();
-    } else {
-      const el = e.target.closest('[data-pid]');
-      if (el) ids = e.shiftKey || e.ctrlKey ? [...new Set([...selRef.current, el.dataset.pid])] : [el.dataset.pid];
     }
-    if (['menu', 'working', 'preview'].includes(phaseRef.current)) return;
-    setSel(PARAGRAPHS.map(p => p.id).filter(id => ids.includes(id)));
-    setDisplay(d => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.diff === 'underline' || v.diff === 'persist' ? { ...v, diff: 'off', fx: 'instant' } : v])));
-    if (phaseRef.current === 'done' || phaseRef.current === 'error') setPhase('idle');
-    if (ids.length && cfgRef.current.trigger === 'selection') { selRef.current = ids; setTimeout(() => { place(); if (phaseRef.current === 'idle') setPhase('trigger'); }, 180 / clock.rate); }
+    setSel(ranges);
+    setDisplay({}); // a new click or selection settles the last result
+    if (phaseRef.current === 'done' || phaseRef.current === 'error' || phaseRef.current === 'trigger') setPhase('idle');
+    if (ranges.length && cfgRef.current.trigger === 'selection') { selRef.current = ranges; setTimeout(() => { place(); if (phaseRef.current === 'idle') setPhase('trigger'); }, 180 / clock.rate); }
   };
   const onDeskDown = e => { if (phaseRef.current === 'menu' && !e.target.closest('[data-surface]') && !e.target.closest('.settings-win')) close(); };
 
@@ -223,8 +237,8 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
     api.current = {
       open: openMenu,
       finish: () => holdRelease.current?.(),
-      select: ids => { if (!['menu', 'working', 'preview'].includes(phaseRef.current)) { setSel(ids); setPhase('idle'); } },
-      resetText: () => { close(); setTexts(initialTexts()); setDisplay({}); setRun(null); },
+      select: ids => { if (!['menu', 'working', 'preview'].includes(phaseRef.current)) { setSel(wholeParas(ids, textsRef.current)); setDisplay({}); setPhase('idle'); } },
+      resetText: () => { close(); setTexts(initialTexts()); setDisplay({}); setSel([]); setRun(null); },
       phase,
       holding: phase === 'working' && cfg.hold,
     };
@@ -281,13 +295,13 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
   const shown = surfaceOpen ? { content, key, fx } : lastContent.current;
 
   const workingIds = phase === 'working' && showLoader && placementText ? run?.ids || [] : [];
-  return <div className="desk" ref={desk} data-wall={cfg.wall} onMouseDown={onDeskDown} tabIndex={-1}>
+  return <div className="desk" ref={desk} data-wall={cfg.wall} data-dark={cfg.material.dark} onMouseDown={onDeskDown} tabIndex={-1}>
     <div className="window">
       <div className="win-title"><span>✉︎</span><span>{lang === 'fr' ? 'Nouveau message' : 'New message'}</span><span className="ctl">— ▢ ✕</span></div>
       <div className="mail-fields"><div>{lang === 'fr' ? 'À' : 'To'} : Claire Martin</div><div>{lang === 'fr' ? 'Objet' : 'Subject'} : Q3 report</div></div>
       <div className="mail-body" ref={body} onMouseUp={onMouseUp}>
-        {PARAGRAPHS.map(p => <p key={p.id}><Para id={p.id} text={texts[p.id]} disp={display[p.id]} selected={sel.includes(p.id) && !['done', 'undone'].includes(phase)}
-          working={workingIds.includes(p.id)} cfg={cfg} /></p>)}
+        {PARAGRAPHS.map(p => <p key={p.id}><Para id={p.id} text={texts[p.id]} disp={display[p.id]} range={sel.find(x => x.pid === p.id)}
+          showSel={!['done', 'undone'].includes(phase)} working={workingIds.includes(p.id)} cfg={cfg} /></p>)}
       </div>
     </div>
     <div className="task"><span>⌂</span><span>{lang === 'fr' ? 'Mail' : 'Mail'}</span><span>·</span><span>FlowTranslate</span></div>
@@ -297,29 +311,42 @@ export function Simulator({ cfg, set, onStatus, onPhase, api }) {
   </div>;
 }
 
-// One paragraph: plain, or rebuilt from the diff with the replacement animation.
-function Para({ id, text, disp, selected, working, cfg }) {
-  const fxClass = working ? `tfx-${cfg.textFx}` : '';
-  const fxStyle = working ? Object.fromEntries(Object.entries(cfg.textFxParams[cfg.textFx] || {})) : undefined;
-  // The effect sits on an inner span: the selection tint and the text gradient are separate layers.
-  if (working) return <span className={`para ${selected ? 'is-sel' : ''}`} data-pid={id}>
-    {cfg.textFx === 'words' ? <span className="tfx-words">{words(text)}</span> : <span className={fxClass} style={fxStyle}>{text}</span>}
-  </span>;
-  if (!disp) return <span className={`para ${selected ? 'is-sel' : ''}`} data-pid={id}>{text}</span>;
-  const { ops, whole, fx, diff, key } = disp;
-  const perWord = ['blur', 'rise', 'type'].includes(fx);
-  const vars = { '--stagger': `${cfg.replaceParams.stagger}ms`, '--blur': `${cfg.replaceParams.blur}px`, '--wdur': `${cfg.replaceParams.dur}ms`, '--diff-hold': `${cfg.diffHold}ms`, '--diff-fade': `${cfg.diffFade}ms` };
-  const chg = diff === 'fade' ? 'chg-fade' : diff === 'persist' ? 'chg-persist' : diff === 'underline' ? 'chg-underline' : '';
-  let i = 0;
-  const parts = ops.map((op, k) => {
-    const toks = tokenize(op.text);
-    const changed = op.type === 'ins' && !whole && chg;
-    const nodes = toks.map((t, j) => /^\s+$/.test(t) ? t : <span key={j} className="w" style={perWord ? { '--i': i++ } : undefined}>{t}</span>);
-    return changed ? <span key={k} className={chg}>{nodes}</span> : <React.Fragment key={k}>{nodes}</React.Fragment>;
-  });
-  const wholeCls = whole && chg ? (diff === 'underline' ? 'chg-underline' : diff === 'persist' ? 'chg-persist' : 'chg-fade') : '';
-  const fxCls = fx === 'blur' ? 'rx-blur' : fx === 'rise' ? 'rx-rise' : fx === 'type' ? 'rx-type' : fx === 'fade' ? 'rx-fade' : fx === 'crossblur' ? 'rx-crossblur' : '';
-  return <span key={key} className={`para ${selected ? 'is-sel' : ''} ${fxCls} ${wholeCls}`} style={vars} data-pid={id}>{parts}</span>;
+const wholeParas = (ids, texts) => PARAGRAPHS.filter(p => ids.includes(p.id)).map(p => ({ pid: p.id, start: 0, end: texts[p.id].length }));
+// Character offset of a DOM position inside a paragraph element.
+function offsetIn(el, node, offset) { const r = document.createRange(); r.setStart(el, 0); r.setEnd(node, offset); return r.toString().length; }
+
+// One paragraph: text before, the selected or rewritten range, text after.
+function Para({ id, text, disp, range, showSel, working, cfg }) {
+  // While the model works, the range carries the effect (no selection tint unless asked).
+  if (working && range) {
+    const fxStyle = cfg.textFxParams[cfg.textFx];
+    const piece = text.slice(range.start, range.end);
+    const cls = `work-range ${cfg.keepSelection ? 'sel-range' : ''}`;
+    return <span className="para" data-pid={id}>{text.slice(0, range.start)}
+      {cfg.textFx === 'words'
+        ? <span className={`${cls} tfx-words`} data-range>{words(piece)}</span>
+        : <span className={`${cls} tfx-${cfg.textFx}`} style={fxStyle} data-range>{piece}</span>}
+      {text.slice(range.end)}</span>;
+  }
+  if (disp) {
+    const { start, end, ops, whole, fx, diff, key } = disp;
+    const perWord = ['blur', 'rise', 'type'].includes(fx);
+    const vars = { '--stagger': `${cfg.replaceParams.stagger}ms`, '--blur': `${cfg.replaceParams.blur}px`, '--wdur': `${cfg.replaceParams.dur}ms`, '--diff-hold': `${cfg.diffHold}ms`, '--diff-fade': `${cfg.diffFade}ms` };
+    const chg = diff === 'fade' ? 'chg-fade' : diff === 'persist' ? 'chg-persist' : diff === 'underline' ? 'chg-underline' : '';
+    let i = 0;
+    const parts = ops.map((op, k) => {
+      const nodes = tokenize(op.text).map((t, j) => /^\s+$/.test(t) ? t : <span key={j} className="w" style={perWord ? { '--i': i++ } : undefined}>{t}</span>);
+      return op.type === 'ins' && !whole && chg ? <span key={k} className={chg}>{nodes}</span> : <React.Fragment key={k}>{nodes}</React.Fragment>;
+    });
+    const wholeCls = whole && chg ? chg : '';
+    const fxCls = { blur: 'rx-blur', rise: 'rx-rise', type: 'rx-type', fade: 'rx-fade', crossblur: 'rx-crossblur' }[fx] || '';
+    const selected = showSel && range && range.start === start && range.end === end;
+    return <span className="para" data-pid={id}>{text.slice(0, start)}
+      <span key={key} className={`${fxCls} ${wholeCls} ${selected ? 'sel-range' : ''}`} style={vars} data-range={selected ? '' : undefined}>{parts}</span>
+      {text.slice(end)}</span>;
+  }
+  if (range && showSel) return <span className="para" data-pid={id}>{text.slice(0, range.start)}<span className="sel-range" data-range>{text.slice(range.start, range.end)}</span>{text.slice(range.end)}</span>;
+  return <span className="para" data-pid={id}>{text}</span>;
 }
 function words(text) { let i = 0; return tokenize(text).map((t, j) => /^\s+$/.test(t) ? t : <span key={j} className="w" style={{ '--i': i++ }}>{t}</span>); }
 

@@ -108,10 +108,40 @@ export function materialVars(m) {
   return { '--s-bg': bg, '--s-rim': rim, '--s-shadow': shadow, '--s-backdrop': backdrop, '--s-sheen': sheen, '--s-noise': m.noise };
 }
 
-// ——— Defaults ———
+// ——— Mock rewriting of an arbitrary range (word-precise selection) ———
+const FIXES = [
+  [/\byou notes\b/g, 'your notes'], [/draft, I has read/g, 'draft; I read'], [/\bI has read\b/g, 'I read'], [/\bhas read\b/g, 'read'],
+  [/\breunion\b/g, 'réunion'], [/\b10h\b/g, '10 h'], [/l'equipe/g, 'l’équipe'], [/\bgpu\b/g, 'GPU'], [/gpu,/g, 'GPU ;'], [/\bprevoir\b/g, 'prévoir'],
+  [/\bmonday, we\b/g, 'Monday; we'], [/\bmonday\b/g, 'Monday'], [/\bwe still waiting\b/g, 'we are still waiting'], [/\bi dont\b/g, 'I don’t'], [/\bdont\b/g, 'don’t'], [/\bsomething wrong\b/g, 'anything wrong'],
+];
+const words = t => (t.match(/\S+/g) || []).length;
+// The canned output when the whole paragraph is selected; otherwise a plausible slice of it
+// (Fix uses a small correction list, so any range gets a real correction).
+export function mockRewrite(pid, fullText, start, end, outId) {
+  const para = PARAGRAPHS.find(p => p.id === pid);
+  const piece = fullText.slice(start, end);
+  const lead = piece.match(/^\s*/)[0], trail = piece.match(/\s*$/)[0];
+  const core = piece.trim();
+  const out = para.out[outId];
+  const whole = fullText === para.text && core.length >= para.text.trim().length * 0.95;
+  if (whole || outId === 'email') return lead + out + trail;
+  if (outId === 'fix') {
+    let r = core;
+    for (const [re, to] of FIXES) r = r.replace(re, to);
+    if (start === 0) r = r.charAt(0).toUpperCase() + r.slice(1);
+    return lead + r + trail;
+  }
+  const total = Math.max(1, words(fullText)), a0 = words(fullText.slice(0, start)), b0 = words(fullText.slice(0, end));
+  const ow = out.split(/\s+/);
+  const a = Math.min(ow.length - 1, Math.round(a0 / total * ow.length));
+  const b = Math.max(a + 1, Math.round(b0 / total * ow.length));
+  return lead + ow.slice(a, b).join(' ') + trail;
+}
+
+// ——— Defaults (Lucas, 24 septembre : Îlot, Perle, Lucide, verre clair / sombre) ———
 export const DEFAULTS = {
   lang: 'en',
-  iconSet: 'iconoir',
+  iconSet: 'lucide',
   showIcons: true,
   showKeys: true,
   trigger: 'shortcut',
@@ -119,17 +149,18 @@ export const DEFAULTS = {
   menu: 'ilot',
   anchor: 'below',
   rememberLast: true,
-  loader: 'souffle',
+  loader: 'perle',
   loaderParams: {},
   placement: 'pill',
-  textFx: 'color',
+  textFx: 'sweep',
   textFxParams: {},
+  keepSelection: false,
   loaderDelay: 250,
   slowLabel: 'none',
   latency: 1400,
   hold: false,
   outcome: 'success',
-  replaceFx: 'blur',
+  replaceFx: 'fade',
   replaceParams: { stagger: 22, blur: 6, dur: 320 },
   diff: 'fade',
   diffHold: 600,
@@ -140,8 +171,10 @@ export const DEFAULTS = {
   errorStyle: 'pill',
   motionPreset: 'apple-snappy',
   motion: MOTION_PRESETS['apple-snappy'],
-  materialPreset: 'apple-light',
-  material: MATERIAL_PRESETS['apple-light'],
-  glowWhileWorking: 'none',
+  theme: 'system',
+  materialLightPreset: 'apple-light',
+  materialLight: MATERIAL_PRESETS['apple-light'],
+  materialDarkPreset: 'dark-glass',
+  materialDark: MATERIAL_PRESETS['dark-glass'],
   wall: 'bloom',
 };

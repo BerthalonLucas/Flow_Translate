@@ -6,22 +6,36 @@ import { LoaderGallery, TextFxGallery, MenuGallery, MotionGallery, MaterialGalle
 import { DEFAULTS, PARAGRAPHS, MOTION_PRESETS, MATERIAL_PRESETS, OUTCOME_BY_ID } from './data.js';
 import { MENU_BY_ID } from './menus.jsx';
 import { LOADER_BY_ID, injectMorphKeyframes } from './loaders.jsx';
-import { setClock, resolve } from './motion.js';
+import { setClock, resolve, LINEAR_OK } from './motion.js';
 
-const STORE = 'flowtranslate-labo-v1';
+const STORE = 'flowtranslate-labo-v2';
 function load() {
   try { const raw = localStorage.getItem(STORE); if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }; } catch { /* storage unavailable */ }
   return DEFAULTS;
 }
+const mqDark = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : { matches: false, addEventListener() {} };
 const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false, addEventListener() {} };
 const SHORTCUT = { 'ctrl-alt-space': 'Ctrl+Alt+Espace', 'ctrl-alt': 'Ctrl+Alt', 'double-shift': 'Maj Maj' };
 
 function App() {
   const [cfg, setCfg] = useState(load);
-  const set = patch => setCfg(c => ({ ...c, ...patch }));
+  const [sysDark, setSysDark] = useState(mqDark.matches);
+  useEffect(() => { const on = () => setSysDark(mqDark.matches); mqDark.addEventListener('change', on); return () => mqDark.removeEventListener?.('change', on); }, []);
+  const dark = cfg.theme === 'dark' || (cfg.theme === 'system' && sysDark);
+  // A material goes to the theme it belongs to; picking one of the other theme switches to it.
+  const set = patch => setCfg(c => {
+    if (!patch.material) return { ...c, ...patch };
+    const { material, materialPreset, ...rest } = patch;
+    const next = { ...c, ...rest };
+    const effDark = next.theme === 'dark' || (next.theme === 'system' && sysDark);
+    if (material.dark) { next.materialDark = material; next.materialDarkPreset = materialPreset; if (!effDark) next.theme = 'dark'; }
+    else { next.materialLight = material; next.materialLightPreset = materialPreset; if (effDark) next.theme = 'light'; }
+    return next;
+  });
+  const view = { ...cfg, material: dark ? cfg.materialDark : cfg.materialLight, materialPreset: dark ? cfg.materialDarkPreset : cfg.materialLightPreset };
   const [tab, setTab] = useState('parcours');
   const [rate, setRate] = useState(1);
-  const [animMode, setAnimMode] = useState('system');
+  const [animMode, setAnimMode] = useState('full');
   const [sysReduced, setSysReduced] = useState(mq.matches);
   const [status, setStatus] = useState('Sélectionne un paragraphe du mail, puis fais le raccourci.');
   const [phase, setPhase] = useState('idle');
@@ -41,7 +55,7 @@ function App() {
   };
 
   const exportCfg = async () => {
-    const text = summary(cfg);
+    const text = summary(view);
     try { await navigator.clipboard.writeText(text); setExported({ text, copied: true }); }
     catch { setExported({ text, copied: false }); }
   };
@@ -57,14 +71,15 @@ function App() {
 
     <div className="toolbar" role="toolbar" aria-label="Lecture">
       <div className="grp"><span>Vitesse</span><Seg label="Vitesse" value={rate} options={[[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.1, '⅒×']]} onChange={setRate} /></div>
-      <div className="grp"><span>Animations</span><Seg label="Animations" value={animMode} options={[['system', 'Comme Windows'], ['full', 'Toujours'], ['reduced', 'Réduites']]} onChange={setAnimMode} /></div>
+      <div className="grp"><span>Animations</span><Seg label="Animations" value={animMode} options={[['full', 'Toujours'], ['system', 'Comme l’appareil'], ['reduced', 'Réduites']]} onChange={setAnimMode} /></div>
+      <span className={`anim-state ${reduced ? 'off' : ''}`}><i />{reduced ? 'Animations réduites' : 'Animations actives'}{sysReduced ? ' · l’appareil demande de les réduire' : ''}{LINEAR_OK ? '' : ' · ressorts approximés'}</span>
       <span className="spacer" />
       <button className="btn primary" onClick={exportCfg}>Copier ma config</button>
       <button className="btn" onClick={() => { setCfg(DEFAULTS); api.current.resetText?.(); }}>Tout remettre à zéro</button>
     </div>
 
-    {sysReduced && animMode === 'system' && <div className="banner" role="status">
-      <b>Les animations de Windows sont coupées sur cet appareil.</b> La page les coupe aussi, comme le fait l’app. <button className="btn" onClick={() => setAnimMode('full')}>Afficher les animations quand même</button>
+    {sysReduced && <div className="banner" role="status">
+      <b>Cet appareil demande de réduire les animations.</b> Le labo les affiche quand même (« Toujours »). La vraie app, elle, les couperait. Si tu viens de changer le réglage de Windows, redémarre le navigateur ou l’app Claude pour qu’il soit pris en compte.
     </div>}
 
     {exported && <div className="note" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -85,18 +100,18 @@ function App() {
           <button className="btn ghost" onClick={() => api.current.resetText?.()}>Remettre le texte</button>
           <span className="status" aria-live="polite">{status}</span>
         </div>
-        <Simulator cfg={cfg} set={set} onStatus={setStatus} onPhase={setPhase} api={api} />
+        <Simulator cfg={view} set={set} onStatus={setStatus} onPhase={setPhase} api={api} />
         <p className="hint">Astuces : clique un paragraphe (ou glisse la souris) pour le sélectionner, Maj+clic pour en ajouter. Au clavier dans les menus : Entrée relance la dernière action, F T P S E choisissent, Espace ouvre la consigne libre, Échap ferme. Après remplacement : Ctrl+Z annule.</p>
       </div>
-      <Panel cfg={cfg} set={set} tab={tab} setTab={setTab} />
+      <Panel cfg={view} set={set} tab={tab} setTab={setTab} />
     </div>
 
-    <MenuGallery cfg={cfg} set={set} tryMenu={tryMenu} />
-    <LoaderGallery cfg={cfg} set={set} />
-    <TextFxGallery cfg={cfg} set={set} />
-    <MotionGallery cfg={cfg} />
-    <MaterialGallery cfg={cfg} set={set} />
-    <IconGallery cfg={cfg} set={set} />
+    <MenuGallery cfg={view} set={set} tryMenu={tryMenu} />
+    <LoaderGallery cfg={view} set={set} />
+    <TextFxGallery cfg={view} set={set} />
+    <MotionGallery cfg={view} />
+    <MaterialGallery cfg={view} set={set} />
+    <IconGallery cfg={view} set={set} />
   </div>;
 }
 
@@ -109,10 +124,11 @@ function summary(cfg) {
     'FlowTranslate · config du labo',
     `Menu : ${menu?.name} · raccourci ${SHORTCUT[cfg.shortcut]} · déclenchement ${cfg.trigger === 'shortcut' ? 'raccourci' : 'point à chaque sélection'} · position ${cfg.anchor === 'below' ? 'sous' : 'au-dessus'} · dernière action ${cfg.rememberLast ? 'oui' : 'non'}`,
     `Langue ${cfg.lang} · icônes ${cfg.iconSet}${cfg.showIcons ? '' : ' (masquées)'} · touches ${cfg.showKeys ? 'affichées' : 'masquées'}`,
+    `Sélection : surlignage pendant le travail ${cfg.keepSelection ? 'gardé' : 'retiré'}`,
     `Chargement : ${cfg.placement} · indicateur ${loader?.name} ${JSON.stringify(cfg.loaderParams[cfg.loader] || {})} · effet texte ${tfx?.name} ${JSON.stringify(cfg.textFxParams[cfg.textFx] || {})} · délai ${cfg.loaderDelay} ms · si long : ${cfg.slowLabel}`,
     `Résultat : ${cfg.replaceFx} ${JSON.stringify(cfg.replaceParams)} · mots changés ${cfg.diff} (${cfg.diffHold}/${cfg.diffFade} ms) · coche ${cfg.check ? 'oui' : 'non'} · annuler ${cfg.undo ? cfg.undoSeconds + ' s' : 'non'} · erreurs ${cfg.errorStyle}`,
     `Mouvement : ${MOTION_PRESETS[cfg.motionPreset]?.label || 'personnalisé'} · apparition ${spec(cfg.motion.enter)} · transformation ${spec(cfg.motion.morph)} · disparition ${spec(cfg.motion.exit)} · contenu ${spec(cfg.motion.content)} · échelle ${cfg.motion.fromScale} · glissement ${cfg.motion.travel}px`,
-    `Matière : ${MATERIAL_PRESETS[cfg.materialPreset]?.label || 'personnalisée'} ${JSON.stringify(cfg.material)}`,
+    `Thème ${cfg.theme} · matière claire ${MATERIAL_PRESETS[cfg.materialLightPreset]?.label || 'personnalisée'} ${JSON.stringify(cfg.materialLight)} · matière sombre ${MATERIAL_PRESETS[cfg.materialDarkPreset]?.label || 'personnalisée'} ${JSON.stringify(cfg.materialDark)}`,
     `Simulation : ${cfg.latency} ms · issue ${OUTCOME_BY_ID[cfg.outcome]?.label}`,
     '',
     JSON.stringify(cfg),

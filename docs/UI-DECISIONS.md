@@ -45,3 +45,12 @@ Les choix ci-dessus sont validés comme direction. Ils ne décrivent pas des fon
 - La traduction longue en bande de lecture n’est plus centrale. La bulle actuelle est jugée « pâtée », peu jolie.
 - Thème : clair, suit Windows, matière transparente type verre ; référence visuelle Apple Intelligence. Vrai verre (Acrylic Windows) souhaité si fonctionnel et net.
 - Labo : préréglages plus réglages fins (durées, courbes, ralenti, recentrage) ; interface du labo en français ; app par défaut en anglais avec bascule français.
+
+# Choix de Lucas dans le labo — 24 septembre 2026
+
+- Menu Ctrl+Alt : **Îlot** (dernière action + pastille de consigne ; grille de tuiles en dépliant).
+- Indicateur : orbe **Perle** ou **Nébuleuse** ; dans les lignes, **Ruban** plutôt que Sinus.
+- Icônes : **Lucide** (trait fin).
+- Matière : **verre Apple clair** en thème clair, **verre sombre** en thème sombre ; suit le thème de l’appareil.
+- Le surlignage bleu pendant le travail est rejeté : l’effet doit porter sur le texte lui-même, sur la sélection exacte (au mot près, pas le paragraphe).
+- Contrainte technique relevée : FlowTranslate ne peut pas redessiner les lettres d’une autre application. Seuls les effets dessinés par-dessus les lignes sélectionnées sont faisables (balayage de lumière, lueur, contour, soulignement, voile), et seulement là où l’application expose sa sélection (UI Automation) ; sinon la pilule seule. Même limite pour l’arrivée du texte : collage d’un coup, un voile qui s’efface ou un surlignage des mots changés restent faisables, pas le mot à mot flou.

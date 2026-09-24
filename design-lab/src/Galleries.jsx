@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { LOADERS, FAMILIES, LoaderInner, LoaderFx } from './loaders.jsx';
 import { MENUS } from './menus.jsx';
 import { GlassChip, Icon } from './Surface.jsx';
-import { TEXT_FX, CurvePlot } from './Panel.jsx';
+import { TEXT_FX, CurvePlot, Badge } from './Panel.jsx';
 import { MOTION_PRESETS, MATERIAL_PRESETS } from './data.js';
 import { CURVES, resolve, animate, progressFn, wait } from './motion.js';
 import DATA from './icons-data.js';
@@ -38,10 +38,10 @@ export function LoaderGallery({ cfg, set }) {
 }
 
 export function TextFxGallery({ cfg, set }) {
-  return <Section id="texte" eyebrow="Sans bulle" title="Le texte sélectionné montre le travail" desc="La piste façon Writing Tools : aucune pilule, c’est la sélection elle-même qui scintille. Chaque carte tourne en boucle.">
+  return <Section id="texte" eyebrow="Sans bulle" title="La sélection montre le travail" desc="La piste façon Writing Tools, sans pilule. « Faisable » : dessiné par-dessus les lignes sélectionnées, donc possible dans Outlook, Word ou un navigateur. « Démo seulement » : il faudrait redessiner les lettres d’une autre application, ce qui est impossible.">
     <div className="gallery">{TEXT_FX.filter(t => t.id !== 'none').map(t => <div key={t.id} className={`card fx-card ${cfg.textFx === t.id ? 'is-on' : ''}`}>
-      <div className="demo"><p className="sample-text"><span className="para is-sel"><span className={`tfx-${t.id} ${t.id === 'words' ? 'tfx-words' : ''}`} style={cfg.textFxParams[t.id]}>{t.id === 'words' ? 'Thanks for your notes on the draft; I read them all.'.split(/(\s+)/).map((w, i) => /\s/.test(w) ? w : <span key={i} className="w" style={{ '--i': i / 2 }}>{w}</span>) : 'Thanks for your notes on the draft; I read them all.'}</span></span></p></div>
-      <div className="meta"><h3>{t.name}</h3><p>{t.note}</p><div className="row"><button className="btn" onClick={() => set({ textFx: t.id, placement: cfg.placement === 'pill' ? 'text' : cfg.placement })}>Utiliser</button></div></div>
+      <div className="demo"><p className="sample-text">Hi Claire, <span className={`work-range tfx-${t.id} ${t.id === 'words' ? 'tfx-words' : ''}`} style={cfg.textFxParams[t.id]}>{t.id === 'words' ? 'Thanks for your notes on the draft; I read them all.'.split(/(\s+)/).map((w, i) => /\s/.test(w) ? w : <span key={i} className="w" style={{ '--i': i / 2 }}>{w}</span>) : 'Thanks for your notes on the draft; I read them all.'}</span> See you Monday.</p></div>
+      <div className="meta"><h3>{t.name}<Badge real={t.real} /></h3><p>{t.note}</p><div className="row"><button className="btn" onClick={() => set({ textFx: t.id, placement: cfg.placement === 'pill' ? 'text' : cfg.placement })}>Utiliser</button></div></div>
     </div>)}</div>
   </Section>;
 }
@@ -80,7 +80,8 @@ export function MotionGallery({ cfg }) {
       const dist = Math.round((t.clientWidth - 24) * 0.8);
       t.style.setProperty('--goal', `${dist + 12}px`);
       ball.getAnimations().forEach(a => a.cancel());
-      animate(ball, [{ transform: 'translateX(0)' }, { transform: `translateX(${dist}px)` }], l.spec);
+      try { animate(ball, [{ transform: 'translateX(0)' }, { transform: `translateX(${dist}px)` }], l.spec, { force: true }); }
+      catch (err) { console.error('lane', l.id, err); }
     }
   };
   useEffect(() => {
@@ -109,7 +110,7 @@ export function MaterialGallery({ cfg, set }) {
   const [bg, setBg] = useState('photo');
   return <Section id="matieres" eyebrow="Matière" title="Matières" desc="La même pilule et le même petit menu dans chaque matière. Choisis un fond pour juger la transparence."
     right={<div className="seg">{[['photo', 'Coucher'], ['bloom', 'Bleu'], ['pastel', 'Pastel'], ['white', 'Blanc'], ['dark', 'Sombre']].map(([k, l]) => <button key={k} aria-pressed={bg === k} onClick={() => setBg(k)}>{l}</button>)}</div>}>
-    <div className="gallery" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>{Object.entries(MATERIAL_PRESETS).map(([k, m]) => <div key={k} className={`card ${cfg.materialPreset === k ? 'is-on' : ''}`}>
+    <div className="gallery" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>{Object.entries(MATERIAL_PRESETS).map(([k, m]) => <div key={k} className={`card ${(m.dark ? cfg.materialDarkPreset : cfg.materialLightPreset) === k ? 'is-on' : ''}`}>
       <div className="material-stage" style={{ background: WALL[bg] }}>
         <div className="lines" style={{ color: bg === 'white' ? '#333' : 'rgba(255,255,255,.85)' }}>Thanks for your notes on the draft. The appendix will follow on Monday, we are still waiting for the final numbers from finance.</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', position: 'relative' }}>
@@ -117,7 +118,7 @@ export function MaterialGallery({ cfg, set }) {
           <GlassChip material={m} style={{ height: 34, display: 'flex', alignItems: 'center' }}><div className="m-row"><span className="m-btn is-default">Fix <span className="k">↵</span></span><span className="m-sep" /><span className="m-btn"><span className="ai-dot" /></span></div></GlassChip>
         </div>
       </div>
-      <div className="meta"><h3>{m.label}</h3><p>{m.desc}</p><div className="row"><button className="btn" onClick={() => set({ material: m, materialPreset: k })}>{cfg.materialPreset === k ? 'Utilisée' : 'Utiliser'}</button></div></div>
+      <div className="meta"><h3>{m.label}<span className="fam">{m.dark ? 'sombre' : 'clair'}</span></h3><p>{m.desc}</p><div className="row"><button className="btn" onClick={() => set({ material: m, materialPreset: k })}>{(m.dark ? cfg.materialDarkPreset : cfg.materialLightPreset) === k ? (m.dark ? 'Matière du thème sombre' : 'Matière du thème clair') : (m.dark ? 'Utiliser en sombre' : 'Utiliser en clair')}</button></div></div>
     </div>)}</div>
   </Section>;
 }
