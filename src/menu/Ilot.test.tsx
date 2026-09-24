@@ -128,7 +128,7 @@ describe('Ilot', () => {
     expect(calls.onChoose).toHaveBeenCalledWith('translate');
   });
 
-  // Lot 9 (Sol's measure): the keys the window received before the Îlot listened are replayed
+  // Lot 9 (the native agent's measure): the keys the window received before the Îlot listened are replayed
   // through press() once it shows, with their modifiers; those after the one that opened the
   // field are its text.
   it('replays the keys typed before it showed: a chord is not a letter, and the characters after the field opened are its text', async () => {

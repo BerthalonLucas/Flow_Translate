@@ -31,11 +31,12 @@ Chaque ligne : ce qu’on fait → ce qu’on attend. *Preuve* : ce qu’il faut
 VALIDATION.md. « Sentinelle » : une phrase synthétique copiée avant l’essai, puis recollée dans
 le Bloc-notes après, pour voir si le presse-papiers est intact.
 
-**État au commit de cette recette.** Le lot 9 côté front n’est pas encore branché : après un
-collage, l’Îlot montre la coche seule 1,1 s puis disparaît. Pas encore d’Annuler, de mots
-changés ni de pilule replacée sous le nouveau texte, même si la section « After replacing » des
-Réglages les propose déjà. Leurs lignes sont regroupées plus bas, marquées « en attente du lot 9
-front », à dérouler quand il sera livré.
+**État au commit de cette recette.** Le lot 9 est livré, natif et front (24/09/2026) : après un
+collage, la pilule se pose sous le nouveau texte avec la coche et Annuler, et les mots changés
+sont surlignés. La passe scriptée l’a déroulé une fois en vraie fenêtre dans Chrome, en clair et
+en sombre (docs/DA-RAPPORT.md) : collage, pilule sous le texte sans le couvrir, surlignage des
+mots changés, Annuler qui rend l’original, frappe qui retire Annuler. Le reste de ses lignes,
+regroupées plus bas, reste à dérouler, notamment dans le Bloc-notes, Word et Outlook.
 
 ### Avant de commencer
 
@@ -74,8 +75,9 @@ Sur une phrase, puis sur un paragraphe de plusieurs lignes :
 4. **Balayage** : 250 ms après le choix, une lumière parcourt les seules lignes sélectionnées ;
    un clic dessus atteint l’application. Sans rectangles (VS Code), pas de balayage : pilule
    seule.
-5. **Résultat** : texte remplacé, coche tracée seule 1,1 s, puis plus rien. Sentinelle intacte.
-6. **Annuler et mots changés** : en attente du lot 9 front (voir plus bas).
+5. **Résultat** : texte remplacé, la pilule sous le nouveau texte avec la coche et Annuler (8 s
+   par défaut), puis plus rien. Sentinelle intacte.
+6. **Annuler et mots changés** : voir plus bas.
 
 | Application | Poste au 24/09/2026 | 1 | 2 | 3 | 4 | 5 | 6 |
 |---|---|---|---|---|---|---|---|
@@ -215,11 +217,10 @@ arrêter côté GPU : provoquer les erreurs par les Réglages.
 - [ ] Application sans UI Automation ou élevée → repli par la copie synthétique, aucune
   injection privilégiée ; sinon « Read-only text, not replaced » et « Copy result ».
 
-### Annuler, mots changés et place de la pilule (en attente du lot 9 front)
+### Annuler, mots changés et place de la pilule
 
-Le natif est livré (docs/BRIDGE.md, « Îlot: the result ») ; le front ne l’appelle pas encore.
-À dérouler quand le lot 9 front sera livré, en Chrome et dans le Bloc-notes par la passe, et
-dans Word et Outlook à la main par Lucas, sur un texte de démonstration. Une fois avec After
+Natif et front livrés (lot 9, docs/BRIDGE.md, « Îlot: the result »). À dérouler en Chrome et
+dans le Bloc-notes par la passe, et dans Word et Outlook à la main par Lucas, sur un texte de démonstration. Une fois avec After
 replacing › How to undo sur « Ctrl+Z » (défaut, option A), puis sur « Paste original »
 (option B).
 

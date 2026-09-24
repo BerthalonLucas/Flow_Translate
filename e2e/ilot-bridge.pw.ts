@@ -228,7 +228,7 @@ test('Îlot: in the fallback, the window\'s focus or a click on the ✦ gives th
   expect(await chosen(page, 'regain')).toHaveLength(0);
 });
 
-// Sol's measure (lot 9): a key sent to the overlay in the ~25 ms after `focus_overlay` activated it
+// The native agent's measure (lot 9): a key sent to the overlay in the ~25 ms after `focus_overlay` activated it
 // was lost twice. The WebView has the keyboard then, but the Îlot only shows once its window's side
 // is read; the fixture holds that reading so the keys surely arrive before it.
 async function pressBeforeTheIlot(page: Page, id: string, keys: Array<{ key: string; code?: string }>) {

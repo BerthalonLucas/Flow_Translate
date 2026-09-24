@@ -1,8 +1,8 @@
 # Essai Acrylic (lot 12, phase B) : constat pour la décision
 
-Essai du 24 septembre 2026, branche `da-ilot-sol`. Plan : [DA-PLAN.md](DA-PLAN.md), lot 12 ;
-décision par défaut 3 de [UI-DECISIONS.md](UI-DECISIONS.md). Contrat technique :
-[BRIDGE.md](BRIDGE.md), « Îlot: the Acrylic trial ».
+Essai du 24 septembre 2026 par l'agent natif, fusionné dans `da-ilot` (839340d). Plan :
+[DA-PLAN.md](DA-PLAN.md), lot 12 ; décision par défaut 3 de [UI-DECISIONS.md](UI-DECISIONS.md).
+Contrat technique : [BRIDGE.md](BRIDGE.md), « Îlot: the Acrylic trial ».
 
 ## En bref
 
@@ -58,10 +58,10 @@ L'essai emprunte donc la voie la plus simple qui montre honnêtement le rendu :
 ## Ce qu'on voit
 
 Captures recadrées sur nos fenêtres, au-dessus d'une page de démonstration à bandes de couleurs
-vives, hors du dépôt (rendu de Sol) : `comparaison-light.png` et `comparaison-dark.png` (Acrylic
-et verre peint côte à côte, pour le menu compact, la grille, la pilule de travail et la coche),
-`film-light-*-grid.png` et `film-light-*-pill.png` (images successives d'un changement de forme),
-`compare-active-frame-trick.png`.
+vives, hors du dépôt (rendu de l'agent natif) : `comparaison-light.png` et `comparaison-dark.png`
+(Acrylic et verre peint côte à côte, pour le menu compact, la grille, la pilule de travail et la
+coche), `film-light-*-grid.png` et `film-light-*-pill.png` (images successives d'un changement de
+forme), `compare-active-frame-trick.png`.
 
 - **Clair** : un verre dépoli qui prend la couleur de ce qu'il y a dessous (rose, vert d'eau,
   beige selon les bandes). Le texte se lit bien. Le verre peint est presque blanc.
