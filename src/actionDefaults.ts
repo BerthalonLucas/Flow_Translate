@@ -14,6 +14,14 @@ export const defaultActions: ActionDefinition[] = [
   { id: 'professionalize', name: 'Professionnaliser', promptTemplate: instruction('You are an editor. Rewrite the text in a clear, courteous, professional tone, in the same language, with the same meaning and a similar length. Keep names, numbers and facts.') },
 ];
 export const newActionTemplate = instruction('Transform the text as follows: describe the change you want here.');
+// The Îlot's free instruction (mirrors actions.rs): `choose_action` with this id and the
+// instruction (1 to 1,000 characters, no NUL) makes an ephemeral action frozen in Rust.
+export const instructionActionId = 'instruction';
+export const instructionActionName = 'Instruction';
+export function instructionError(value: string): string | null {
+  if (!value.trim() || [...value].length > 1000 || value.includes('\0')) return 'La consigne libre doit contenir de 1 à 1 000 caractères, sans caractère nul.';
+  return null;
+}
 export const defaultBindings: ShortcutBinding[] = [{ id: 'primary', shortcut: 'Ctrl+Alt+T', actionId: 'translate-fr', outputMode: 'display', enabled: true }];
 export function promptError(template: string): string | null {
   if (!template.trim() || [...template].length > 8000 || template.includes('\0')) return 'La consigne doit contenir de 1 à 8 000 caractères, sans caractère nul.';

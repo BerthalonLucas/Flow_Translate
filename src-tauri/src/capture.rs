@@ -113,6 +113,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             }),
             replay: None,
             execution: None,
+            menu: None,
         };
         return Ok(StoredCapture {
             public,
@@ -158,6 +159,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         screen: None,
                         replay: None,
                         execution: None,
+                        menu: None,
                     };
                     let target = Some(TargetIdentity {
                         runtime_id: Some(runtime_id),
@@ -235,6 +237,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         screen: None,
         replay: None,
         execution: None,
+        menu: None,
     };
     Ok(StoredCapture { public, target })
 }

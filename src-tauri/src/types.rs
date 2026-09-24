@@ -170,6 +170,28 @@ pub struct Capture {
     pub replay: Option<Replay>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionInfo>,
+    /// A capture of a `menu` shortcut under the Îlot (lot 3): no execution until
+    /// `choose_action`; the frontend opens the menu instead of translating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu: Option<MenuInfo>,
+}
+
+/// What the Îlot needs to open: the last action chosen in the source application
+/// (lot 4, null when none is remembered or it no longer exists). Never any text.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuInfo {
+    pub last_action_id: Option<String>,
+}
+
+/// A menu key the hook took from the source window (the overlay could not hold the
+/// foreground): `key` as `KeyboardEvent.key`, `shiftKey` for Shift+Tab.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuKeyEvent {
+    pub capture_id: String,
+    pub key: String,
+    pub shift_key: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

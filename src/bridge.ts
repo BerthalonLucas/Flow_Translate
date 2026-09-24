@@ -1,10 +1,10 @@
-import { defaultActions, defaultBindings } from './actionDefaults';
+import { defaultActions, defaultBindings, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Capture, ConnectionStatus, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
+import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, StreamEvent, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'menu-key';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
@@ -64,6 +64,20 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
     };
     activeTimer = window.setTimeout(tick, 120); return undefined as T;
   }
+  // The Îlot in the preview: the page has the keyboard, a choice runs the demo translation.
+  if (name === 'focus_overlay') return true as T;
+  if (name === 'choose_action') {
+    const actionId = args?.actionId as string;
+    const instruction = args?.instruction as string | undefined;
+    if (instruction !== undefined) {
+      const error = actionId === instructionActionId ? instructionError(instruction) : 'La consigne libre ne correspond pas à l’action demandée.';
+      if (error) throw error;
+      return { actionId, actionName: instructionActionName, outputMode: 'replace', mode: demoSettings.mode } as T;
+    }
+    const action = demoSettings.actions.find(item => item.id === actionId);
+    if (!action) throw 'L’action n’existe plus.';
+    return { actionId, actionName: action.name, outputMode: 'replace', mode: demoSettings.mode } satisfies ExecutionInfo as T;
+  }
   if (name === 'dismiss_overlay') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); emit('overlay-dismiss-requested', { captureId: demoCapture.id }); return undefined as T; }
   if (name === 'cancel_translation') { activeDemoRequest = undefined; window.clearTimeout(activeTimer); return undefined as T; }
   return undefined as T;
@@ -101,7 +115,11 @@ export const bridge = {
     if (native) return command<void>('open_settings');
     location.assign('?window=settings&demo=1');
   },
-  focusOverlay: () => command<void>('focus_overlay'),
+  // Îlot (lots 3–4): true when the overlay really holds the foreground; false leaves the
+  // menu to the native keyboard fallback (`menu-key` events, no free field).
+  focusOverlay: () => command<boolean>('focus_overlay'),
+  // Once per menu capture: a saved action, or `instructionActionId` with the free instruction.
+  chooseAction: (captureId: string, actionId: string, instruction?: string) => command<ExecutionInfo>('choose_action', { captureId, actionId, ...(instruction === undefined ? {} : { instruction }) }),
   startDrag: (clientX: number, clientY: number) => command<void>('start_drag', { clientX, clientY }),
   resize: (width: number, height: number, geometry: OverlayGeometry) => command<void>('resize_overlay', { width, height, ...geometry }),
   // The reading budget is spent: Rust frees Escape while the glass dims; an approach re-arms it.

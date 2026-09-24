@@ -1,4 +1,4 @@
-import type { Capture, Mode, StreamEvent, ResultDelivery } from './types';
+import type { Capture, ExecutionInfo, Mode, StreamEvent, ResultDelivery } from './types';
 
 export type TranslationState = {
   capture: Capture | null;
@@ -20,6 +20,7 @@ export const initialTranslationState: TranslationState = {
 
 export type Action =
   | { type: 'CAPTURE'; capture: Capture }
+  | { type: 'CHOOSE'; captureId: string; execution: ExecutionInfo }
   | { type: 'START'; requestId: string; mode: Mode }
   | { type: 'STREAM'; event: StreamEvent }
   | { type: 'TARGET'; captureId: string; canReplace: boolean }
@@ -34,6 +35,11 @@ export function translationReducer(state: TranslationState, action: Action): Tra
     case 'CAPTURE':
       return { ...state, capture: action.capture, requestId: null, result: '', error: null, comparing: false,
         replacementValid: false, invalidated: false, phase: 'idle', delivery: action.capture.execution?.outputMode === 'replace' && !action.capture.replay ? 'pending' : null };
+    // Îlot: the menu capture received its execution (`choose_action`); the menu always
+    // replaces, so the pill waits for the native delivery like a direct « replace » capture.
+    case 'CHOOSE':
+      if (action.captureId !== state.capture?.id || state.capture.execution) return state;
+      return { ...state, capture: { ...state.capture, execution: action.execution }, delivery: action.execution.outputMode === 'replace' ? 'pending' : null };
     case 'START':
       return { ...state, requestId: action.requestId, mode: action.mode,
         result: '', error: null, phase: 'streaming', replacementValid: false, delivery: state.requestId ? null : state.delivery };

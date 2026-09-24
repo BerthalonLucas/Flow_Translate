@@ -66,11 +66,28 @@ impl Execution {
     pub fn snapshot(settings: &Settings, binding: Option<&ShortcutBinding>) -> Result<Self, String> {
         let id = binding.map_or(settings.default_action_id.as_str(), |b| b.action_id.as_str());
         let action = settings.actions.iter().find(|a| a.id == id).cloned().ok_or("L’action n’existe plus.")?;
-        Ok(Self {
-            info: ExecutionInfo { action_id: action.id.clone(), action_name: action.name.clone(),
-                output_mode: binding.map_or(OutputMode::Display, |b| b.output_mode), mode: settings.mode },
+        Ok(Self::with_action(settings, action, binding.map_or(OutputMode::Display, |b| b.output_mode)))
+    }
+    fn with_action(settings: &Settings, action: ActionDefinition, output_mode: OutputMode) -> Self {
+        Self {
+            info: ExecutionInfo { action_id: action.id.clone(), action_name: action.name.clone(), output_mode, mode: settings.mode },
             action, profiles: settings.profiles.clone(), started: false, auto_request: None, delivered: false,
-        })
+        }
+    }
+    /// The choice made in the Îlot (`choose_action`), against the settings frozen at the
+    /// capture: a saved action, or the free instruction as an ephemeral action. The menu
+    /// always replaces the selection.
+    pub fn chosen(settings: &Settings, action_id: &str, instruction: Option<&str>) -> Result<Self, String> {
+        let action = match instruction {
+            Some(instruction) => {
+                validate_instruction(instruction)?;
+                if action_id != INSTRUCTION_ACTION_ID { return Err("La consigne libre ne correspond pas à l’action demandée.".into()); }
+                ActionDefinition { id: INSTRUCTION_ACTION_ID.into(), name: INSTRUCTION_ACTION_NAME.into(), prompt_template: instruction_prompt(instruction), key: None, short_name: None, icon: None }
+            }
+            None => settings.actions.iter().find(|a| a.id == action_id).cloned().ok_or("L’action n’existe plus.")?,
+        };
+        validate_template(&action.prompt_template)?;
+        Ok(Self::with_action(settings, action, OutputMode::Replace))
     }
     /// Only the first request of a « replace » capture is delivered automatically: a
     /// relaunch with the other profile shows its result in the glass.
@@ -100,6 +117,23 @@ pub fn defaults() -> Vec<ActionDefinition> {
 }
 pub fn default_bindings(shortcut: String) -> Vec<ShortcutBinding> {
     vec![ShortcutBinding { id: "primary".into(), kind: BindingKind::Action, shortcut, action_id: "translate-fr".into(), output_mode: OutputMode::Display, enabled: true }]
+}
+/// The id and the name of the ephemeral action a free instruction of the Îlot becomes.
+/// The name reads the same in English and French (history, glass).
+pub const INSTRUCTION_ACTION_ID: &str = "instruction";
+pub const INSTRUCTION_ACTION_NAME: &str = "Instruction";
+/// The system message of a free instruction, written for small instruct models without
+/// thinking: say what to do with the text, then the user's words as the task, then the
+/// output rules every action ends with. The instruction is never logged.
+pub fn instruction_prompt(instruction: &str) -> String {
+    format!("You are a writing assistant. Rewrite the text by following the user's instruction below. Do what the instruction asks and nothing else; unless it says otherwise, keep the language of the text, its meaning, names, numbers and facts.\n\nThe user's instruction: {}\n\n{OUTPUT_RULES}", instruction.trim())
+}
+/// A free instruction typed in the Îlot: 1 to 1,000 Unicode characters, not blank, no NUL.
+pub fn validate_instruction(instruction: &str) -> Result<(), String> {
+    if instruction.trim().is_empty() || instruction.chars().count() > 1000 || instruction.contains('\0') {
+        return Err("La consigne libre doit contenir de 1 à 1 000 caractères, sans caractère nul.".into());
+    }
+    Ok(())
 }
 pub fn validate_template(template: &str) -> Result<(), String> {
     if template.trim().is_empty() || template.chars().count() > 8000 || template.contains('\0') { return Err("La consigne doit contenir de 1 à 8 000 caractères, sans caractère nul.".into()); }
@@ -240,6 +274,31 @@ mod tests {
         assert!(!run.claim_delivery("first"));
         run.begin("retry");
         assert!(!run.claim_delivery("retry"));
+    }
+    #[test]
+    fn a_free_instruction_is_one_to_a_thousand_characters_and_becomes_an_ephemeral_replace_action() {
+        for value in ["Plus court", "é", &"é".repeat(1000), "Rends ça « plus poli »\u{1F600}"] { assert!(validate_instruction(value).is_ok(), "{value}"); }
+        for value in ["", "   \n", "a\0b", &"é".repeat(1001)] { assert!(validate_instruction(value).is_err()); }
+        let prompt = instruction_prompt("  Mets au pluriel  ");
+        assert!(prompt.contains("The user's instruction: Mets au pluriel\n"));
+        assert!(prompt.ends_with(OUTPUT_RULES));
+        assert!(validate_template(&prompt).is_ok());
+        let settings = Settings::default();
+        let run = Execution::chosen(&settings, INSTRUCTION_ACTION_ID, Some("Mets au pluriel")).unwrap();
+        assert_eq!((run.info.action_id.as_str(), run.info.action_name.as_str(), run.info.output_mode), (INSTRUCTION_ACTION_ID, INSTRUCTION_ACTION_NAME, OutputMode::Replace));
+        assert_eq!(run.action.prompt_template, instruction_prompt("Mets au pluriel"));
+        assert!(Execution::chosen(&settings, "correct", Some("Mets au pluriel")).is_err(), "an instruction needs its reserved id");
+        assert!(Execution::chosen(&settings, INSTRUCTION_ACTION_ID, Some("")).is_err());
+    }
+    #[test]
+    fn a_menu_choice_runs_a_saved_action_of_the_capture_settings_and_always_replaces() {
+        let mut settings = Settings::default();
+        let run = Execution::chosen(&settings, "correct", None).unwrap();
+        assert_eq!((run.info.action_id.as_str(), run.info.output_mode, run.info.mode), ("correct", OutputMode::Replace, settings.mode));
+        assert!(Execution::chosen(&settings, "missing", None).is_err());
+        assert!(Execution::chosen(&settings, INSTRUCTION_ACTION_ID, None).is_err(), "no saved action carries the reserved id");
+        settings.actions.retain(|a| a.id != "correct");
+        assert!(Execution::chosen(&settings, "correct", None).is_err());
     }
     #[test]
     fn a_capture_keeps_its_action_prompt_and_profile_snapshot() {
