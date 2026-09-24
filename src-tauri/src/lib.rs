@@ -282,6 +282,26 @@ impl Inner {
         self.frontend_ready = true;
         (self.pending_capture.take(), reloaded)
     }
+    /// The watcher found the target of `capture_id` changed: nothing can be replaced any more.
+    /// A menu still waiting closes (review n°6: nothing left to act on; a choice in flight is
+    /// refused). Under the Îlot the window keeps its place, anchor and side (the working pill,
+    /// then the error pill, stay where the user looks; review of da-ilot 3e678ff); under v4 the
+    /// glass loses its anchor and docks at the bottom, as in 0.4.
+    fn invalidate(&mut self, capture_id: &str) -> Invalidated {
+        let ilot = self.settings.ui_version == UiVersion::Ilot;
+        let Some(capture) = self.capture.as_mut().filter(|c| c.public.id == capture_id && !c.invalidated) else { return Invalidated::Stale };
+        capture.public.can_replace = false;
+        capture.target = None;
+        capture.invalidated = true;
+        if let Some(menu) = self.menu.as_mut().filter(|m| m.capture_id == capture_id && !m.chosen) {
+            menu.invalidated = true;
+            return Invalidated::CloseMenu;
+        }
+        if ilot { return Invalidated::Stay; }
+        capture.public.anchor = None;
+        self.side = None;
+        Invalidated::Redock
+    }
     /// The menu of `capture_id` still waits for its choice.
     fn menu_waits(&self, capture_id: &str) -> bool {
         self.menu.as_ref().is_some_and(|menu| menu.capture_id == capture_id && !menu.chosen && !menu.invalidated)
@@ -714,6 +734,18 @@ fn release_held_keys(app: &AppHandle, state: &AppState, capture_id: Option<&str>
             let _ = app.emit_to("overlay", "menu-key", MenuKeyEvent { capture_id, key: key.key, shift_key: key.shift });
         }
     }
+}
+/// What the watcher does with a capture whose target changed (`Inner::invalidate`).
+#[derive(Debug, PartialEq, Eq)]
+enum Invalidated {
+    /// Not the current capture, or already invalidated.
+    Stale,
+    /// A menu still waiting: it closes.
+    CloseMenu,
+    /// Under the Îlot: `target-invalidated`, the window stays where it is.
+    Stay,
+    /// Under v4: `target-invalidated`, then the glass docks at the bottom.
+    Redock,
 }
 /// What the scope becomes when a menu press opened it and got no capture: the scope of what
 /// is still shown, never a menu scope left open over nothing (the hook would keep the keys).
@@ -2017,7 +2049,8 @@ fn watch_context(app: AppHandle) {
             // A capture without anchor (a copy, a selection without drawable rectangle) has no
             // place to lose; its target is still checked while the source is in front (review n°1).
             let anchored = captured.public.anchor.is_some();
-            if !anchored && captured.target.is_none() {
+            // Once invalidated, a capture is not checked again (under the Îlot it keeps its anchor).
+            if captured.invalidated || (!anchored && captured.target.is_none()) {
                 continue;
             }
             let moved = anchored && host::window_rect(snapshot.0) != snapshot.1;
@@ -2030,39 +2063,30 @@ fn watch_context(app: AppHandle) {
             if moved || switched || changed {
                 halo::hide(&app);
                 let id = captured.public.id;
-                {
-                    let Ok(mut i) = state.inner.lock() else {
-                        continue;
-                    };
-                    if let Some(c) = i.capture.as_mut().filter(|c| c.public.id == id) {
-                        c.public.anchor = None;
-                        c.public.can_replace = false;
-                        c.target = None;
-                        c.invalidated = true;
-                    } else {
-                        continue;
-                    }
-                    i.side = None;
-                    // Review n°6: a menu that still waits has nothing left to act on: it closes
-                    // (its scope with it), and a choice already in flight is refused.
-                    if let Some(menu) = i.menu.as_mut().filter(|m| m.capture_id == id && !m.chosen) {
-                        menu.invalidated = true;
-                        drop(i);
+                let outcome = match state.inner.lock() {
+                    Ok(mut i) => i.invalidate(&id),
+                    Err(_) => continue,
+                };
+                let redock = match outcome {
+                    Invalidated::Stale => continue,
+                    Invalidated::CloseMenu => {
                         let _ = dismiss(&app, &state);
                         continue;
                     }
-                }
+                    Invalidated::Stay => false,
+                    Invalidated::Redock => true,
+                };
                 let _ = app.emit_to(
                     "overlay",
                     "target-invalidated",
                     TargetInvalidated {
                         capture_id: id,
-                        anchor_lost: anchored,
+                        anchor_lost: redock && anchored,
                         message: "La sélection a changé. Utilisez Copier.".into(),
                         code: ErrorKind::TargetChanged,
                     },
                 );
-                let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None);
+                if redock { let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None); }
             }
         }
     });
@@ -2362,6 +2386,35 @@ mod tests {
         assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
         assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
         assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
+    }
+    #[test]
+    fn an_invalidated_capture_keeps_its_place_under_the_ilot_and_docks_under_v4() {
+        let anchor = Rect { x: 10., y: 20., width: 30., height: 16. };
+        let chosen = |ui: UiVersion| {
+            let mut i = Inner::new(Settings { ui_version: ui, ..Settings::default() });
+            menu_capture(&mut i, "c");
+            i.capture.as_mut().unwrap().public.anchor = Some(anchor);
+            i.side = Some(PlacementSide::Below);
+            i.choose("c", "correct", None).unwrap();
+            i
+        };
+        // The working pill under the Îlot: it stays where it is, anchor and side kept.
+        let mut i = chosen(UiVersion::Ilot);
+        assert_eq!(i.invalidate("c"), Invalidated::Stay);
+        let c = i.capture.as_ref().unwrap();
+        assert_eq!((c.public.anchor, c.public.can_replace, c.target.is_none(), c.invalidated), (Some(anchor), false, true, true));
+        assert_eq!(i.side, Some(PlacementSide::Below));
+        assert_eq!(i.invalidate("c"), Invalidated::Stale, "checked once");
+        // Under v4 the glass loses its anchor and docks at the bottom, as in 0.4.
+        let mut i = chosen(UiVersion::V4);
+        assert_eq!(i.invalidate("c"), Invalidated::Redock);
+        assert_eq!((i.capture.as_ref().unwrap().public.anchor, i.side), (None, None));
+        // A menu still waiting closes; another capture is stale.
+        let mut i = Inner::new(Settings::default());
+        menu_capture(&mut i, "m");
+        assert_eq!(i.invalidate("other"), Invalidated::Stale);
+        assert_eq!(i.invalidate("m"), Invalidated::CloseMenu);
+        assert!(i.menu.as_ref().unwrap().invalidated);
     }
     #[test]
     fn an_overlay_page_loaded_again_under_a_shown_capture_is_told_apart() {
