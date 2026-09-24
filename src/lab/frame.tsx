@@ -4,8 +4,9 @@ import { Capsule, SettingsWindow } from '../App';
 import { GlassOverlay } from '../GlassOverlay';
 import { useTranslation } from '../useTranslation';
 import { bridge } from '../bridge';
-import { ilotScenarioFrom, scenarioFrom } from './scenarios';
+import { ilotScenarioFrom, resultScenarioFrom, scenarioFrom } from './scenarios';
 import { IlotFixture } from './ilot';
+import { ResultFixture } from './result';
 import { setLanguage } from '../i18n';
 import '../theme.css';
 import { MotionPreferences } from '../motion/MotionPreferences';
@@ -69,6 +70,15 @@ async function mount() {
     setLanguage(params.get('lang') === 'fr' ? 'fr' : 'en');
     document.body.className = 'flowtranslate-window flowtranslate-overlay';
     createRoot(document.getElementById('root')!).render(<StrictMode><MotionPreferences motion={motion} preset={preset}><div className="standalone-demo" data-preview-background={theme}><IlotFixture scenario={ilotScenario.id} params={params}/></div></MotionPreferences></StrictMode>);
+    return;
+  }
+  const resultScenario = resultScenarioFrom(params.get('scenario'));
+  if (resultScenario) {
+    // The result pill alone (lots 9 and 10), on the overlay's page style.
+    document.documentElement.dataset.labScenario = resultScenario.id;
+    setLanguage(params.get('lang') === 'fr' ? 'fr' : 'en');
+    document.body.className = 'flowtranslate-window flowtranslate-overlay';
+    createRoot(document.getElementById('root')!).render(<StrictMode><MotionPreferences motion={motion} preset={preset}><div className="standalone-demo" data-preview-background={theme}><ResultFixture scenario={resultScenario.id} params={params}/></div></MotionPreferences></StrictMode>);
     return;
   }
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;

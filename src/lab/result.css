@@ -1,0 +1,24 @@
+/* Lab fixture of the result pill (src/lab/result.tsx): a line of text with its selection, the
+   pill below it, a bar of lab controls; and the changed-words page. Nothing here ships. */
+.result-demo { position: absolute; left: calc(50% - 170px); top: 28%; width: 340px; font-size: 15px; line-height: 1.6; }
+.result-demo-text { margin: 0; color: rgb(var(--ink-rgb) / .9); }
+.result-demo-text mark { color: inherit; background: rgb(53 99 233 / .22); border-radius: 2px; }
+.result-demo-anchor { position: absolute; left: 150px; top: calc(100% + 6px); }
+.result-demo-bar { position: fixed; left: 12px; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: rgb(var(--ink-rgb) / .8); }
+.result-demo-bar output { flex: 1 1 200px; }
+.result-demo-bar button, .result-diff button { padding: 4px 9px; border: 0; border-radius: 7px; color: rgb(var(--ink-rgb)); background: rgb(var(--ink-rgb) / .08); font-size: 12px; }
+.result-demo-bar label { display: inline-flex; align-items: center; gap: 4px; }
+.result-demo-bar select, .result-demo-bar input[type="number"] { font: inherit; color: rgb(var(--ink-rgb)); background: rgb(var(--ink-rgb) / .06); border: 0; border-radius: 6px; padding: 2px 4px; }
+.result-demo-bar input[type="number"] { width: 44px; }
+@media (max-width: 420px) { .result-demo { left: 16px; width: calc(100% - 32px); } .result-demo-anchor { left: 0; } }
+
+/* Changed words: the lab's .chg-hold (design-lab/src/app.css:315-317), as the halo will draw it. */
+.result-diff { position: absolute; inset: 0; overflow: auto; padding: 16px; display: grid; gap: 10px; align-content: start; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); color: rgb(var(--ink-rgb)); font-size: 13px; }
+.result-diff-head { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.result-diff-card { padding: 10px 12px; border-radius: 12px; background: var(--surface-sheen), var(--surface-bg); box-shadow: var(--surface-rim), var(--surface-shadow); }
+.result-diff-card h3 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; }
+.result-diff-card h3 small { font-weight: 400; color: rgb(var(--ink-rgb) / .7); }
+.result-demo-marked { margin: 0; line-height: 1.6; white-space: pre-wrap; }
+.result-demo-marked mark { color: inherit; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; background-color: var(--chg); transition: background-color var(--chg-out) ease-out; animation: result-chg-in var(--chg-in) ease-out both; }
+.result-demo-marked mark.is-leaving { background-color: transparent; }
+@keyframes result-chg-in { from { background-color: transparent; } }
