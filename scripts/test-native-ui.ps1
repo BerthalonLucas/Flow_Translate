@@ -6,7 +6,10 @@ param(
     # rewrite the installed app's settings.json and history (%APPDATA%\com.flowtranslate.desktop).
     [string]$DataDirectory = '',
     # Optional settings.json copied into that folder before launch (e.g. uiVersion « ilot »).
-    [string]$SettingsFile = ''
+    [string]$SettingsFile = '',
+    # Delay between simulated words (FLOWTRANSLATE_SIMULATE_WORD_MS): the Îlot's work pill and its
+    # halo window must last long enough for the probe's region and halo checks.
+    [int]$WordMs = 1000
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -22,6 +25,7 @@ $previousArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $previousData = $env:WEBVIEW2_USER_DATA_FOLDER
 $previousEndpoint = $env:FLOWTRANSLATE_CDP_URL
 $previousDataDir = $env:FLOWTRANSLATE_DATA_DIR
+$previousWordMs = $env:FLOWTRANSLATE_SIMULATE_WORD_MS
 if (-not $DataDirectory) { $DataDirectory = Join-Path $projectRoot "release\native-data\$([guid]::NewGuid())" }
 New-Item -ItemType Directory -Force -Path $DataDirectory | Out-Null
 if ($SettingsFile) { Copy-Item -LiteralPath $SettingsFile -Destination (Join-Path $DataDirectory 'settings.json') -Force }
@@ -31,6 +35,7 @@ try {
     $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $projectRoot "release\native-profiles\$([guid]::NewGuid())"
     $env:FLOWTRANSLATE_CDP_URL = "http://127.0.0.1:$Port"
     $env:FLOWTRANSLATE_DATA_DIR = $DataDirectory
+    $env:FLOWTRANSLATE_SIMULATE_WORD_MS = "$WordMs"
     $testProcess = Start-Process -FilePath $resolvedExe -ArgumentList '--demo-selection' -WindowStyle Hidden -PassThru
     # The probe inspects the HWNDs of this process only (scripts/inspect-native-windows.ps1).
     $env:FLOWTRANSLATE_TEST_PID = "$($testProcess.Id)"
@@ -48,5 +53,6 @@ try {
     $env:WEBVIEW2_USER_DATA_FOLDER = $previousData
     $env:FLOWTRANSLATE_CDP_URL = $previousEndpoint
     $env:FLOWTRANSLATE_DATA_DIR = $previousDataDir
+    $env:FLOWTRANSLATE_SIMULATE_WORD_MS = $previousWordMs
     Remove-Item Env:FLOWTRANSLATE_TEST_PID -ErrorAction SilentlyContinue
 }

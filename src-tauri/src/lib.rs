@@ -5,6 +5,7 @@ use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
 mod clipboard_guard;
 mod crypto;
+mod demo_menu;
 mod error;
 use error::{AppError, ErrorKind, Refusal};
 mod halo;
@@ -2331,6 +2332,7 @@ pub fn run() {
             choose_action,
             shortcut_conflict,
             override_cursor,
+            demo_menu::demo_menu_capture,
             resize_overlay,
             overlay_dimming,
             drag_settings,
