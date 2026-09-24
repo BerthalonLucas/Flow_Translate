@@ -11,41 +11,71 @@ focus et le contenu réel du presse-papiers avant et après. Ne fermer que les f
 pour le test et ne jamais arrêter une autre charge (processus GPU compris). Un exécutable de
 test lancé depuis `src-tauri\target\release\` se lance avec `FLOWTRANSLATE_DATA_DIR` pointé
 vers un dossier jetable, pour ne jamais toucher aux réglages ni à l’historique de
-l’installation de Lucas (docs/UI-DECISIONS.md, décision 11 du 24 septembre 2026).
+l’installation de Lucas (docs/UI-DECISIONS.md, décision 11 du 24 septembre 2026). Dans ce
+document, « `settings.json` » désigne `<FLOWTRANSLATE_DATA_DIR>\settings.json` pour un
+exécutable de test, sinon `%APPDATA%\com.flowtranslate.desktop\settings.json` pour
+l’application installée ; `menu-memory.json` et `history.sqlite3` sont dans le même dossier.
+Toujours quitter FlowTranslate avant de modifier ce fichier à la main.
 
 Consigner les résultats réels dans VALIDATION.md. Une case ne se coche qu’avec une preuve
 consignée ; les listes ci-dessous sont une recette, pas une déclaration de tests réussis.
 
-## Recette de la DA Îlot (0.5.0, en cours sur la branche `da-ilot`)
+## Recette de la DA Îlot (0.5.0, branche `da-ilot`)
 
-Cible : lot 14 de docs/DA-PLAN.md et décisions par défaut de la dernière section de
-docs/UI-DECISIONS.md. Rien n’est coché tant que la version n’est pas passée sur un vrai poste.
+Cible : lot 14 de docs/DA-PLAN.md, décisions par défaut de la dernière section de
+docs/UI-DECISIONS.md, contrat des sections « Îlot » de docs/BRIDGE.md. Les lignes décrivent ce
+que le code livre au commit de cette recette, pas le plan quand ils diffèrent. Rien n’est coché
+tant que la version n’est pas passée sur un vrai poste.
 
-### Poste de Lucas au 24 septembre 2026
+Chaque ligne : ce qu’on fait → ce qu’on attend. *Preuve* : ce qu’il faut consigner dans
+VALIDATION.md. « Sentinelle » : une phrase synthétique copiée avant l’essai, puis recollée dans
+le Bloc-notes après, pour voir si le presse-papiers est intact.
 
-- Installés : Chrome, Teams, Bloc-notes, VS Code.
-- Absents : Word, Outlook et Edge (le navigateur ; seul le runtime WebView2 est présent). Les
-  lignes de ces applications sont des recettes manuelles à faire par Lucas.
-- Écrans : trois, tous à 100 % : 2560 × 1440 (principal) et deux 1920 × 1080. Les passages à
-  150 % et 200 % sont aussi des recettes manuelles à faire par Lucas.
+**État au commit de cette recette.** Le lot 9 côté front n’est pas encore branché : après un
+collage, l’Îlot montre la coche seule 1,1 s puis disparaît. Pas encore d’Annuler, de mots
+changés ni de pilule replacée sous le nouveau texte, même si la section « After replacing » des
+Réglages les propose déjà. Leurs lignes sont regroupées plus bas, marquées « en attente du lot 9
+front », à dérouler quand il sera livré.
+
+### Avant de commencer
+
+- Poste de Lucas au 24/09/2026. Installés : Chrome, Teams, Bloc-notes, VS Code. Absents : Word,
+  Outlook, Edge (seul le runtime WebView2 est présent). Trois écrans à 100 % : 2560 × 1440
+  (principal) et deux 1920 × 1080. Word, Outlook, Edge, 150 %, 200 % et les erreurs d’un vrai
+  serveur sont à dérouler à la main par Lucas.
+- [ ] Réglages, pied de fenêtre → `0.5.0`. *Preuve* : capture du pied.
+- [ ] Raccourci déjà pris (UI-029). Sur le poste de Lucas, Claude desktop tient `Ctrl+Alt+Espace`.
+  Au démarrage, les Réglages s’ouvrent, avec sous la ligne Menu › Shortcut : « Another app is
+  already using Ctrl+Alt+Space… » (en français : « Une autre application utilise déjà… »).
+  Ce n’est qu’un avertissement : l’enregistreur reste libre. Enregistrer une autre combinaison
+  (les preuves de la passe ont utilisé `Ctrl+Alt+Maj+Espace`) ou libérer le raccourci dans
+  Claude desktop, puis faire toute la recette avec cette combinaison. *Preuve* : capture de la
+  ligne, combinaison retenue.
+- [ ] Mise à jour depuis une 0.4 installée (pour un exécutable de test : copier le
+  `settings.json` d’une 0.4 dans le dossier jetable avant le premier lancement) → l’Îlot est
+  le parcours par défaut. Actions,
+  consignes et raccourcis directs gardés, aucun renommé (« Corriger » reste « Corriger »).
+  Liaison du menu ajoutée sur `Ctrl+Alt+Espace`, sauf si une liaison utilise déjà cette
+  combinaison. Interface en anglais, fichier 0.4 compris : repasser en français dans
+  Appearance › Language. *Preuve* : capture des sections Menu et Actions.
 
 ### Parcours par application
 
-À faire sur une phrase, puis sur un paragraphe de plusieurs lignes :
+Sur une phrase, puis sur un paragraphe de plusieurs lignes :
 
-1. Îlot : Ctrl+Alt+Espace l’ouvre à côté de la sélection ; choix au clavier (Entrée, lettre,
-   Tab puis flèches) et à la souris.
-2. Consigne libre : Espace ou « / » ouvre le champ ; une consigne avec accents et touches
-   mortes (« réécris ça plus sympa, prêt à envoyer ») s’écrit sans perte.
-3. Échap depuis le menu : le menu se ferme, la source retrouve le focus et sa sélection, rien
-   n’est collé.
-4. Balayage : visible sur les seules lignes sélectionnées, aucun clic intercepté ; sans
-   rectangles de sélection, pilule seule en bas de l’écran du curseur et aucun effet sur le
-   texte.
-5. Résultat : texte remplacé, coche, mots changés surlignés pendant 8 s, pilule sous le
-   nouveau texte et jamais dessus.
-6. Annuler : dans les 8 s, l’original revient ; après une frappe dans la source, Annuler
-   disparaît.
+1. **Îlot** : le raccourci l’ouvre 8 px sous la sélection, son bord droit sur la fin de la
+   sélection (au-dessus s’il manque la place en bas). État compact : dernière action + pastille
+   ✦. Choix par Entrée, par une lettre, par Tab puis flèches et Entrée, et à la souris.
+2. **Consigne libre** : Espace, « / », la pastille ✦ ou la tuile Ask ouvrent le champ. Une
+   consigne avec accents et touches mortes (« réécris ça plus sympa, prêt à envoyer »)
+   s’écrit sans perte, Entrée l’envoie.
+3. **Échap** : de la grille ou du champ, retour à l’état compact ; de l’état compact, l’Îlot se
+   ferme, la source reprend le focus avec sa sélection, rien n’est collé.
+4. **Balayage** : 250 ms après le choix, une lumière parcourt les seules lignes sélectionnées ;
+   un clic dessus atteint l’application. Sans rectangles (VS Code), pas de balayage : pilule
+   seule.
+5. **Résultat** : texte remplacé, coche tracée seule 1,1 s, puis plus rien. Sentinelle intacte.
+6. **Annuler et mots changés** : en attente du lot 9 front (voir plus bas).
 
 | Application | Poste au 24/09/2026 | 1 | 2 | 3 | 4 | 5 | 6 |
 |---|---|---|---|---|---|---|---|
@@ -57,17 +87,52 @@ docs/UI-DECISIONS.md. Rien n’est coché tant que la version n’est pas passé
 | Bloc-notes | installé | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | VS Code | installé | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 
-### Clavier : AZERTY et QWERTY
+*Preuve* par case : capture de l’Îlot ouvert (1), courte vidéo du balayage (4), sentinelle
+recollée (5). Limites connues, à noter si vues, pas à corriger pendant la recette :
 
-- [ ] AZERTY (France) : Ctrl+Alt+Espace ouvre l’Îlot ; les caractères AltGr tapés dans la
-  source (@, €, #, {) n’ouvrent jamais le menu.
-- [ ] QWERTY (États-Unis) : parcours 1 à 3 dans le Bloc-notes et dans Chrome.
-- [ ] Lettres F T P S E et chiffres 1 à 6 : même action sur les deux dispositions ; une lettre
-  non attribuée ouvre la consigne pré-remplie avec cette lettre.
-- [ ] Enregistreur de raccourci : une combinaison Ctrl+Alt+lettre en conflit avec AltGr sur la
-  disposition active est signalée.
-- [ ] Double appui du raccourci en moins de 400 ms : la dernière action de cette application
-  est relancée sans afficher le menu.
+- VS Code : copie synthétique, sans rectangles ni ancre. L’Îlot et la pilule se posent en bas
+  au centre de l’écran de la souris, sans balayage.
+- Bloc-notes, première ligne du document : le balayage déborde vers le haut (UI-031).
+- Bloc-notes, repli sans clavier : collage refusé proprement, rien n’est écrit (UI-030).
+
+### Îlot au clavier : AZERTY et QWERTY
+
+- [ ] QWERTY (États-Unis) puis AZERTY (France) : parcours 1 à 3 dans le Bloc-notes et dans
+  Chrome. *Preuve* : disposition active notée, capture de l’Îlot.
+- [ ] Lettres F, T, P, S, E (Fix grammar, Translate, Make professional, Shorten, Write email) →
+  même action sur les deux dispositions. *Preuve* : action lancée, par disposition.
+- [ ] Une lettre sans action (par exemple « r ») → le champ s’ouvre, déjà rempli de cette
+  lettre.
+- [ ] Chiffres 1 à 6 → la tuile de ce rang. La tuile Ask suit la dernière action (6 avec les
+  cinq actions par défaut) ; un chiffre sans tuile ne fait rien. Sur AZERTY, avec l’Îlot au clavier, la rangée du haut sans Maj tape `&`, `é`, `"`…
+  D’après le code (non vérifié en vraie fenêtre), ces touches ouvrent le champ pré-rempli au
+  lieu de choisir une tuile. Maj + chiffre et le pavé numérique choisissent la tuile. Noter ce
+  qu’on voit. *Preuve* : capture après la touche.
+- [ ] AZERTY : `@`, `€`, `#`, `{` tapés avec AltGr dans la source n’ouvrent jamais l’Îlot ; dans
+  le champ de l’Îlot, ils s’écrivent.
+- [ ] Dans l’Îlot : F5, Ctrl+R, Ctrl+P, Ctrl+F, Ctrl + molette → rien (ni rechargement, ni
+  impression, ni zoom). Ctrl+A, Ctrl+V et les flèches marchent dans le champ.
+- [ ] Double appui du raccourci en moins de 400 ms → la dernière action de cette application
+  part sans passer par le menu (l’Îlot, s’il a eu le temps de s’afficher, devient la pilule).
+- [ ] Mémoire par application : choisir Shorten dans le Bloc-notes, Translate dans Chrome ;
+  rouvrir l’Îlot dans chacun → l’état compact propose l’action de cette application.
+  `menu-memory.json` (à côté de `settings.json`) ne contient que des noms d’exécutables et des
+  identifiants d’actions. *Preuve* : capture des deux états compacts, fichier relu.
+
+### Réglages de l’Îlot
+
+- [ ] Actions › In the menu : réordonner, changer une lettre, retirer, ajouter → l’Îlot suit
+  l’ordre (six tuiles au plus). Une lettre déjà prise est refusée avec le nom de l’action qui
+  la tient.
+- [ ] Retirer toutes les actions du menu → Réglages : « No action in the menu: only the free
+  instruction. » Dans l’Îlot : grille réduite à Ask, aucune lettre ; l’état compact propose
+  toujours la dernière action (sinon l’action par défaut du Menu).
+- [ ] Enregistreur : `Ctrl+Alt+E` sur AZERTY → avertissement « …is also AltGr+E on this
+  keyboard: you could no longer type €. », sans refus.
+- [ ] Menu › Default action → l’action que propose l’Îlot dans une application encore jamais
+  utilisée.
+- [ ] Raccourci pris par une autre application → avertissement sous sa ligne (voir « Avant de
+  commencer »). Une nouvelle combinaison déjà prise refuse l’enregistrement.
 
 ### Échelles et écrans
 
@@ -75,86 +140,162 @@ docs/UI-DECISIONS.md. Rien n’est coché tant que la version n’est pas passé
 - [ ] 150 % (manuel, Lucas) : Îlot, pilule et balayage alignés sur les lignes, texte net.
 - [ ] 200 % (manuel, Lucas) : mêmes vérifications.
 - [ ] Deux écrans : sélection sur un écran secondaire, y compris celui à coordonnées
-  négatives ; l’Îlot, la pilule et le balayage restent sur l’écran de la sélection, dans sa
-  zone de travail, à la bonne échelle.
-- [ ] Sélection près d’un bord : l’Îlot et la pilule restent dans la zone de travail et
-  passent au-dessus si nécessaire.
+  négatives. L’Îlot, la pilule et le balayage restent sur l’écran de la sélection, dans sa zone
+  de travail, à la bonne échelle.
+- [ ] Sélection qui finit près du bord gauche : l’Îlot reste au bout de la sélection tant qu’il
+  a 283 px de place ; une pilule d’erreur, plus large, glisse vers la droite sans sortir de
+  l’écran.
+- [ ] Sélection en bas de l’écran : l’Îlot passe au-dessus et s’ouvre vers le haut.
 
-### Thème et animations
+*Preuve* : capture par échelle et par écran, avec l’échelle Windows notée.
 
-- [ ] Thème clair de Windows : verre clair ; thème sombre : verre sombre ; bascule du thème
-  pendant que l’app tourne.
-- [ ] Lisibilité sur une page blanche, une page sombre et un fond chargé (contraste d’au moins
-  4,5:1).
-- [ ] Animations « suivre Windows » avec l’option Windows « Effets d’animation » coupée : mode
-  réduit, et la phrase explicative affichée dans les Réglages.
-- [ ] Animations « réduites » : fondus d’opacité courts seulement, orbe fixe, voile fixe à la
-  place du balayage, aucun déplacement ni ressort.
-- [ ] Animations « toujours » : ressorts actifs même quand Windows réduit ; préréglages
-  « smooth » (défaut) et « bouncy ».
+### Thème, langue et animations
+
+- [ ] Appearance › Theme : Follow Windows, Light, Dark → verre clair ou sombre sur l’Îlot, la pilule, le
+  verre du résultat et les Réglages. Changer le thème de Windows pendant que l’app tourne →
+  bascule sans relance.
+- [ ] Lisibilité sur une page blanche, une page sombre et un fond chargé. En sombre, noter si
+  le fond se lit à travers la grille (valeur `.86` à valider, décision 12 et
+  docs/ACRYLIC-TRIAL.md).
+- [ ] Appearance › Language : English ↔ Français → Réglages, Îlot, pilules d’erreur et menu de
+  l’icône de notification changent de langue sans relance. Les noms des actions restent tels
+  qu’écrits.
+- [ ] Interface en anglais, liaison directe en mode « Afficher le résultat » vers une adresse
+  sans serveur → le verre affiche le message d’erreur en français, suivi d’une aide en anglais.
+  Limite connue de 0.5.0 : les erreurs du verre des liaisons directes restent en français.
+- [ ] Animations « Follow Windows », avec « Effets d’animation » coupé dans Windows → mode
+  réduit, et la ligne « Windows asks to reduce animations. » sous le réglage.
+- [ ] Animations « Reduced » : fondus courts seulement, sans ressort ni déplacement. Orbe
+  immobile, voile fixe à la place du balayage.
+- [ ] Animations « Always » : ressorts même quand Windows réduit. Motion style « Smooth »
+  (défaut) puis « Bouncy » : l’ouverture et le passage menu → pilule rebondissent.
+- [ ] Appearance › Indicator : Perle (défaut), Nebula, Ribbon → l’orbe de la pilule change ;
+  il n’apparaît qu’après 250 ms, une réponse plus rapide ne montre que la pilule vide.
+
+*Preuve* : capture par thème et par langue, courte vidéo par réglage d’animation.
 
 ### Erreurs
 
-- [ ] Serveur coupé : pilule d’erreur, Réessayer ; rien n’est remplacé.
-- [ ] Clé fausse (401 ou 403) : le bouton ouvre les Réglages sur le champ de la clé, mis en
-  évidence.
-- [ ] Modèle absent (404) : le bouton ouvre le champ du modèle.
-- [ ] Aucun texte source, résultat ni clé dans les journaux ; jamais le corps de la réponse du
-  serveur dans le message.
+Toujours sur le profil de la requête (Quality ou Fast), sur un texte de démonstration. Ne rien
+arrêter côté GPU : provoquer les erreurs par les Réglages.
+
+- [ ] Adresse sans serveur (par exemple un port libre) → pilule « Can’t reach the server »,
+  bouton « Open endpoint ». Le bouton ouvre les Réglages sur le champ de l’adresse, qui pulse
+  2,8 s avec le curseur dedans. Rien n’est remplacé.
+- [ ] Clé fausse (401 ou 403, serveur protégé par clé) → « API key rejected », « Fix key » →
+  champ de la clé.
+- [ ] Nom de modèle faux (404) → « Model not found: <nom des Réglages> », « Choose model » →
+  champ du modèle.
+- [ ] Serveur occupé, trop lent ou réponse coupée (si l’occasion se présente) → « Try again » :
+  la pilule repart, puis le résultat est collé après revalidation de la cible.
+- [ ] Rien de sélectionné → « Select some text first », sans bouton ni ✕, disparaît en 4 s ;
+  champ mot de passe → « Protected field, not read » ; plus de 6 000 caractères → « Selection
+  too long (max 6,000 characters) ».
+- [ ] Raccourci pressé avec les Réglages au premier plan → « Close Settings first ».
+- [ ] ✕ ou Échap sur une pilule d’erreur → l’Îlot se ferme, rien n’est collé.
+- [ ] Aucune pilule ni info-bulle de l’icône ne montre le texte, le résultat, la consigne, la
+  clé ou la réponse du serveur. L’app n’écrit pas de journal : le dossier de données ne
+  contient que `settings.json`, `menu-memory.json` et `history.sqlite3`. Ce dernier existe
+  toujours (créé au démarrage), même historique coupé ; `history.sqlite3-wal` et `-shm`
+  peuvent l’accompagner pendant que l’app tourne. Historique coupé, sa table `history` reste
+  vide. *Preuve* : liste du dossier ; nombre de lignes de la table `history` (0 historique
+  coupé) ; recherche d’un mot de la phrase de test dans les fichiers lisibles, sans résultat.
 
 ### Cible, sélection et presse-papiers
 
-- [ ] Sélection modifiée pendant le travail : rien n’est remplacé, le résultat est proposé à
-  la copie.
-- [ ] Fenêtre au premier plan changée pendant le travail : aucun collage dans une autre
-  fenêtre.
-- [ ] Fenêtre déplacée ou texte défilé pendant le travail : balayage caché, aucun collage vers
-  une cible périmée.
-- [ ] Presse-papiers modifié par l’utilisateur pendant l’opération : jamais restauré
+- [ ] Menu ouvert, clic dans le document ou passage à une autre application → l’Îlot se ferme,
+  rien n’est collé.
+- [ ] Après le choix, sélection modifiée, fenêtre déplacée ou texte défilé pendant le travail
+  → balayage caché. À la fin, rien n’est remplacé : pilule « Text changed — not replaced »,
+  bouton « Copy result » → « Copied », le résultat est dans le presse-papiers.
+- [ ] Fenêtre au premier plan changée pendant le travail → aucun collage dans l’autre fenêtre ;
+  même pilule.
+- [ ] Presse-papiers modifié par l’utilisateur pendant l’opération → jamais restauré
   par-dessus.
-- [ ] Annuler après modification du texte collé : refus propre, rien n’est modifié, message
-  clair.
-- [ ] Annuler en option B (Réglages) : même revalidation, l’original est recollé.
-- [ ] Application sans UI Automation ou élevée : repli sûr par la copie synthétique, aucune
-  injection privilégiée.
+- [ ] Application sans UI Automation ou élevée → repli par la copie synthétique, aucune
+  injection privilégiée ; sinon « Read-only text, not replaced » et « Copy result ».
 
-### Résultat et Annuler dans Word et Outlook (lot 9, manuel, Lucas)
+### Annuler, mots changés et place de la pilule (en attente du lot 9 front)
 
-Word et Outlook sont absents du poste de test : ces points se vérifient à la main, sur un texte
-de démonstration (jamais un document réel), une fois avec `undoStrategy` sur `keystroke`
-(défaut, Ctrl+Z) puis sur `repaste` (recoller l’original).
+Le natif est livré (docs/BRIDGE.md, « Îlot: the result ») ; le front ne l’appelle pas encore.
+À dérouler quand le lot 9 front sera livré, en Chrome et dans le Bloc-notes par la passe, et
+dans Word et Outlook à la main par Lucas, sur un texte de démonstration. Une fois avec After
+replacing › How to undo sur « Ctrl+Z » (défaut, option A), puis sur « Paste original »
+(option B).
 
-- [ ] Word, une phrase au milieu d’un paragraphe de plusieurs lignes, Îlot puis « Corriger » :
-  le texte est remplacé ; la pilule se pose sous la dernière ligne du nouveau texte, son bord
-  droit sur la fin de cette ligne, sans toucher aucune ligne ; en bas de page, au-dessus de la
-  première ligne ; avec « dans la marge », à droite de la colonne.
-- [ ] Les mots changés sont surlignés en bleu pâle tant qu’Annuler est offert, puis s’effacent
-  en fondu ; « Traduire » surligne le bloc entier.
-- [ ] Annuler : l’original revient à l’identique (accents, espaces insécables, retours à la
-  ligne, mise en forme), la pilule affiche « Annulé ». En `repaste`, le presse-papiers est
-  celui d’avant (le coller ailleurs pour le vérifier).
-- [ ] Après le collage, une lettre tapée dans le document : Annuler disparaît et le surlignage
-  s’efface ; le Ctrl+Z de l’utilisateur annule le collage lui-même et retire aussi Annuler.
-- [ ] Après le collage, un clic ailleurs dans le texte : Annuler disparaît, la pilule reste ;
-  un défilement ou un déplacement de la fenêtre : pilule et surlignage disparaissent.
-- [ ] Word, texte dans un tableau puis dans une liste à puces : la pilule reste hors du texte.
-  Si le texte collé n’est pas retrouvé (correction automatique de Word après le collage,
-  par exemple), ni surlignage ni Annuler : comportement attendu, à noter avec l’application.
-- [ ] Outlook, corps d’un nouveau message puis d’une réponse, thème clair et sombre : mêmes
+- [ ] Après le collage, la pilule se pose 8 px sous la dernière ligne du nouveau texte, son bord
+  droit sur la fin de cette ligne, sans toucher aucune ligne. En bas de l’écran, au-dessus de la
+  première ligne. Avec Pill position « In the margin », à droite de la ligne la plus large.
+- [ ] Mots changés surlignés en bleu pâle tant qu’Annuler est offert, puis effacés en fondu ;
+  Translate, Write email et la consigne libre surlignent le bloc entier. Highlight changed
+  words coupé → aucun surlignage.
+- [ ] Annuler dans les 8 s (réglable de 2 à 20 s, pause au survol) → l’original revient à
+  l’identique (accents, espaces insécables, retours à la ligne) et la pilule affiche
+  « Undone ». En « Ctrl+Z », la mise en forme de Word revient aussi. En « Paste original »,
+  l’original est recollé en texte brut : dans Word, il prend la mise en forme du point
+  d’insertion (limite connue, une mise en forme mixte ne revient pas) ; la sentinelle est
+  intacte.
+- [ ] Option A, une lettre tapée dans la source après le collage → Annuler disparaît et le
+  surlignage s’efface. Le Ctrl+Z de l’utilisateur annule le collage lui-même et retire aussi
+  Annuler.
+- [ ] Un clic ailleurs dans le texte → Annuler disparaît, la pilule reste. Un défilement ou un
+  déplacement de la fenêtre → pilule et surlignage disparaissent.
+- [ ] Texte collé modifié puis Annuler → refus propre, rien n’est modifié.
+- [ ] Word : texte dans un tableau, puis dans une liste à puces → la pilule reste hors du texte.
+  Si le texte collé n’est pas retrouvé (correction automatique de Word, par exemple), ni
+  surlignage ni Annuler : c’est attendu, à noter avec l’application.
+- [ ] Outlook : corps d’un nouveau message puis d’une réponse, thème clair et sombre → mêmes
   points.
+
+### Essai Acrylic (réglage caché `glassMaterial`, désactivé par défaut)
+
+Décision de Lucas attendue sur docs/ACRYLIC-TRIAL.md (recommandation : garder le verre peint).
+Ces lignes ne servent qu’à voir l’essai.
+
+- [ ] Quitter FlowTranslate (icône de notification › Quit). Dans `settings.json`, mettre
+  `"glassMaterial": "acrylic"`, puis relancer. Le réglage n’apparaît jamais dans les Réglages.
+- [ ] Menu compact, grille, pilule, coche : le verre peint pendant chaque changement de forme,
+  puis le vrai Acrylic environ 0,8 s après que la forme s’est posée, avec des coins de 8 px.
+  La source garde le focus. *Preuve* : capture au repos, courte vidéo du saut.
+- [ ] Clic sur un coin de l’Acrylic → le clic atteint ce qu’il y a dessous.
+- [ ] « Effets de transparence » coupé dans Windows, ou économiseur d’énergie → verre peint,
+  sans fenêtre de fond (manuel, non vérifié par la passe).
+- [ ] Modifier un réglage dans les Réglages → `"glassMaterial"` toujours présent dans
+  `settings.json`.
+- [ ] Revenir : `"painted"` ou retirer la clé, puis relancer.
 
 ### Général
 
 - [ ] Au repos : aucune fenêtre ni bouton de barre des tâches, seulement l’icône de
   notification.
-- [ ] Historique désactivé : ni source ni résultat persistés ; activé : charges chiffrées,
+- [ ] Liaison directe (par exemple `Ctrl+Alt+T` gardé d’une 0.4) en mode Remplacer → pilule de
+  travail avec l’orbe, collage, coche, puis plus rien. Si le collage échoue, le verre s’ouvre
+  avec le résultat et Copier.
+- [ ] Liaison directe en mode « Afficher le résultat » → verre court près de la sélection ou
+  bande de lecture en bas, comportement de la 0.4.0 dans la nouvelle matière.
+- [ ] Historique désactivé : ni source ni résultat persistés. Activé : charges chiffrées,
   suppression et rétention fonctionnent.
 - [ ] Installateur puis redémarrage : app disponible, pas de lancement automatique sans
   accord.
-- [ ] Langue : anglais au premier lancement, bascule française complète sans rechargement ;
-  une action existante ou personnalisée n’est jamais renommée.
-- [ ] Mode « Afficher le résultat » et traduction longue : même comportement qu’en 0.4.0 dans
-  la nouvelle matière.
+
+## Parcours 0.4 derrière `uiVersion: "v4"`
+
+Gardé pour dépanner et comparer. Pour y revenir : quitter FlowTranslate, mettre
+`"uiVersion": "v4"` dans `settings.json`, relancer. Pour revenir à l’Îlot : `"ilot"` ou retirer
+la clé. Le réglage n’apparaît jamais dans les Réglages.
+
+- [ ] Le raccourci du menu lance directement Menu › Default action et remplace la sélection :
+  ni Îlot, ni balayage.
+- [ ] Pilule avec l’ancien indicateur tournant, collage, ✓, puis plus rien. Si le collage
+  échoue, le verre s’ouvre avec la raison (en français, comme en 0.4) et Copier.
+- [ ] Liaison en mode « Afficher le résultat » : verre court ou bande de lecture, comme en
+  0.4.0, dans la nouvelle matière claire ou sombre.
+- [ ] Erreurs : le message français de la 0.4, pas les pilules de l’Îlot ni leurs liens vers
+  les Réglages.
+- [ ] Réglages : ni grille, ni After replacing, ni Indicator.
+- [ ] Bloc-notes, remplacement direct : refusé proprement (UI-030), comme en 0.4.
+- [ ] Sélection modifiée, fenêtre changée, presse-papiers modifié pendant l’opération : mêmes
+  garanties qu’en 0.4 (rien de collé ailleurs, presse-papiers jamais restauré par-dessus).
 
 ## Historique : recette de la bulle graphite (0.1.x à 0.4.0)
 
