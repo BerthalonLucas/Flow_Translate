@@ -680,6 +680,30 @@ fn ours(app: &AppHandle, handle: isize) -> bool {
 fn leaves_menu(open: bool, focused: bool, fg: isize, ours: bool) -> bool {
     open && focused && fg != 0 && !ours
 }
+/// Another application took the foreground from `window`. A null foreground is not one: Windows
+/// reports none for an instant while it hands the foreground over, to the Îlot taking the
+/// keyboard for instance.
+fn switched_away(fg: isize, window: isize, ours: bool) -> bool {
+    fg != 0 && fg != window && !ours
+}
+/// Whether the context watcher acts on a target seen lost (moved, switched, changed): only when
+/// the next tick, 35 ms later, still sees it lost. Right after a capture the foreground passes to
+/// the Îlot (`focus_overlay`); a check made during that handover can read a null foreground, or
+/// UI Automation already answering for our window while the source still holds the foreground
+/// (measured on 2026-09-24: 4 menus in 250 closed 12 to 36 ms after their capture, in Chrome).
+/// Nothing lost on a tick, or another capture, forgets the suspicion.
+fn confirmed_loss(suspected: &mut Option<String>, capture_id: &str, lost: bool) -> bool {
+    if !lost {
+        *suspected = None;
+        return false;
+    }
+    if suspected.as_deref() == Some(capture_id) {
+        *suspected = None;
+        return true;
+    }
+    *suspected = Some(capture_id.to_string());
+    false
+}
 /// None when nothing was captured on purpose: a press while one of our windows holds
 /// the foreground (the Îlot has the keyboard) never captures our own window.
 fn capture_with_binding(app: AppHandle, state: &AppState, shortcut: Option<(u32, std::time::Instant)>) -> Result<Option<Capture>, AppError> {
@@ -2021,6 +2045,8 @@ fn watch_context(app: AppHandle) {
     std::thread::spawn(move || {
         let mut ticks = 0u32;
         let mut escape_was_down = false;
+        // The capture whose target was seen lost on the previous tick, to be confirmed on this one.
+        let mut suspected: Option<String> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(35));
             ticks = ticks.wrapping_add(1);
@@ -2034,6 +2060,7 @@ fn watch_context(app: AppHandle) {
                 let Ok(i) = state.inner.lock() else { continue };
                 if !i.visible {
                     escape_was_down = false;
+                    suspected = None;
                     continue;
                 }
                 let applied = i.applied.as_ref().map(|a| (a.request_id.clone(), a.window, a.window_rect, a.located.clone(), a.undo));
@@ -2066,7 +2093,7 @@ fn watch_context(app: AppHandle) {
             // After a paste under the Îlot (lot 9) too: the pill and the marks stand on the
             // new text.
             let period = if halo::visible() || snapshot.4.is_some() { 3 } else { 12 };
-            if ticks % period != 0 || state.demo {
+            if (ticks % period != 0 && suspected.is_none()) || state.demo {
                 continue;
             }
             if let Some((request_id, window, window_rect, located, undo)) = snapshot.4 {
@@ -2074,8 +2101,9 @@ fn watch_context(app: AppHandle) {
                 // moving, another application in front, or the text scrolling or reflowing
                 // (its rectangles changed) hide pill and marks. The text no longer before the
                 // caret (a click elsewhere): Undo is withdrawn, the pill stays.
+                suspected = None;
                 let moved = host::window_rect(window) != window_rect;
-                let switched = fg != window && !ours;
+                let switched = switched_away(fg, window, ours);
                 if moved || switched {
                     let _ = dismiss(&app, &state);
                     continue;
@@ -2091,49 +2119,51 @@ fn watch_context(app: AppHandle) {
                 }
                 continue;
             }
-            let Some(captured) = snapshot.2 else { continue };
+            let Some(captured) = snapshot.2 else { suspected = None; continue };
             // A capture without anchor (a copy, a selection without drawable rectangle) has no
             // place to lose; its target is still checked while the source is in front (review n°1).
             let anchored = captured.public.anchor.is_some();
             // Once invalidated, a capture is not checked again (under the Îlot it keeps its anchor).
             if captured.invalidated || (!anchored && captured.target.is_none()) {
+                suspected = None;
                 continue;
             }
             let moved = anchored && host::window_rect(snapshot.0) != snapshot.1;
-            let switched = anchored && fg != snapshot.0 && !ours;
+            let switched = anchored && switched_away(fg, snapshot.0, ours);
             let changed = fg == snapshot.0
                 && captured
                     .target
                     .as_ref()
                     .is_some_and(|t| capture::validate_target(t).is_err());
-            if moved || switched || changed {
-                halo::hide(&app);
-                let id = captured.public.id;
-                let outcome = match state.inner.lock() {
-                    Ok(mut i) => i.invalidate(&id),
-                    Err(_) => continue,
-                };
-                let redock = match outcome {
-                    Invalidated::Stale => continue,
-                    Invalidated::CloseMenu => {
-                        let _ = dismiss(&app, &state);
-                        continue;
-                    }
-                    Invalidated::Stay => false,
-                    Invalidated::Redock => true,
-                };
-                let _ = app.emit_to(
-                    "overlay",
-                    "target-invalidated",
-                    TargetInvalidated {
-                        capture_id: id,
-                        anchor_lost: redock && anchored,
-                        message: "La sélection a changé. Utilisez Copier.".into(),
-                        code: ErrorKind::TargetChanged,
-                    },
-                );
-                if redock { let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None); }
+            if !confirmed_loss(&mut suspected, &captured.public.id, moved || switched || changed) {
+                continue;
             }
+            halo::hide(&app);
+            let id = captured.public.id;
+            let outcome = match state.inner.lock() {
+                Ok(mut i) => i.invalidate(&id),
+                Err(_) => continue,
+            };
+            let redock = match outcome {
+                Invalidated::Stale => continue,
+                Invalidated::CloseMenu => {
+                    let _ = dismiss(&app, &state);
+                    continue;
+                }
+                Invalidated::Stay => false,
+                Invalidated::Redock => true,
+            };
+            let _ = app.emit_to(
+                "overlay",
+                "target-invalidated",
+                TargetInvalidated {
+                    capture_id: id,
+                    anchor_lost: redock && anchored,
+                    message: "La sélection a changé. Utilisez Copier.".into(),
+                    code: ErrorKind::TargetChanged,
+                },
+            );
+            if redock { let _ = position(&app, &state, snapshot.3 .0, snapshot.3 .1, None); }
         }
     });
 }
@@ -2538,6 +2568,27 @@ mod tests {
         i.menu.as_mut().unwrap().invalidated = true;
         assert!(i.choose("menu", "correct", None).is_err());
         assert!(!i.menu.as_ref().unwrap().chosen);
+    }
+    #[test]
+    fn a_target_is_lost_only_when_the_next_tick_still_sees_it_lost_and_never_on_a_null_foreground() {
+        // Windows reports no foreground for an instant while it hands it to the Îlot.
+        assert!(!switched_away(0, 10, false));
+        assert!(!switched_away(10, 10, false));
+        assert!(!switched_away(20, 10, true));
+        assert!(switched_away(20, 10, false));
+        // Seen lost once (the handover to the Îlot): nothing yet; the next tick sees it fine.
+        let mut suspected = None;
+        assert!(!confirmed_loss(&mut suspected, "a", true));
+        assert!(!confirmed_loss(&mut suspected, "a", false));
+        assert_eq!(suspected, None);
+        // Seen lost twice in a row: the watcher acts, once.
+        assert!(!confirmed_loss(&mut suspected, "a", true));
+        assert!(confirmed_loss(&mut suspected, "a", true));
+        assert_eq!(suspected, None);
+        // A suspicion never carries over to another capture.
+        assert!(!confirmed_loss(&mut suspected, "a", true));
+        assert!(!confirmed_loss(&mut suspected, "b", true));
+        assert!(confirmed_loss(&mut suspected, "b", true));
     }
     #[test]
     fn a_short_work_area_shifts_the_docked_regions_up_and_clips_them_at_the_top() {
