@@ -15,3 +15,15 @@ export const scenarios = [
 ] as const;
 export type Scenario = typeof scenarios[number]['id'];
 export function scenarioFrom(value: string | null) { return scenarios.find(item => item.id === value) ?? scenarios[0]; }
+
+// The Îlot (lot 7), apart from the list above: visual-tests/ keeps one reference image per entry
+// of `scenarios`. Theme, preset (smooth / bouncy) and motion are parameters of the frame.
+export const ilotScenarios = [
+  { id: 'ilot-compact', label: 'Îlot au repos', issue: 'Lot 7', expected: 'Compact, 32 px de haut : dernière action (Entrée la relance) · pastille ✦. Tab, ↓ ou un survol de 450 ms déplient la grille ; F T P S E lancent ; 1-6 choisissent une tuile ; Espace ou / ouvrent la consigne ; une lettre libre ouvre la consigne déjà tapée ; Échap ferme. Un choix transforme l’Îlot en pilule (contenu factice), puis il revient.' },
+  { id: 'ilot-grid', label: 'Îlot en grille', issue: 'Lot 7', expected: 'Grille 3 × 2 de tuiles 66 × 50 (218 × 116, rayon 16), surbrillance sur la dernière action ; flèches, Tab, Entrée, lettres, chiffres ; Échap revient au compact, puis ferme.' },
+  { id: 'ilot-prompt', label: 'Îlot : consigne libre', issue: 'Lot 7', expected: 'Champ de 283 × 34 (saisie de 230) : un vrai champ, accents, AltGr et touches mortes compris ; Entrée envoie, Échap revient au compact. La consigne n’est affichée nulle part ailleurs.' },
+  { id: 'ilot-injected', label: 'Îlot sans le clavier (repli natif)', issue: 'Lot 7', expected: 'Les touches arrivent de Rust (menu-key) : boutons « Touche reçue » en bas. La consigne libre est indisponible, pastille et tuile estompées, Espace ignoré.' },
+  { id: 'ilot-pill', label: 'Îlot → pilule', issue: 'Lot 7', expected: 'La même surface, jamais démontée, devient la pilule de 44 × 28 (rayon 14) sur le ressort « morph », contenu centré ; bouton « Menu ⇄ pilule » en bas. Contenu factice : le vrai indicateur vient du lot 8.' },
+] as const;
+export type IlotScenario = typeof ilotScenarios[number]['id'];
+export function ilotScenarioFrom(value: string | null) { return ilotScenarios.find(item => item.id === value); }

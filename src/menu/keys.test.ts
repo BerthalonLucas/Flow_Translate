@@ -1,0 +1,179 @@
+import { describe, expect, it } from 'vitest';
+import { gridColumns, ilotKeyContext, ilotTiles, letterTable, moveHot, resolveIlotKey, type IlotAction, type IlotState, type KeyInput } from './keys';
+
+// The lab's five actions (design-lab/src/data.js:5-12); the sixth tile is the free instruction.
+const actions: IlotAction[] = [
+  { id: 'fix', name: 'Fix grammar', shortName: 'Fix', key: 'F', icon: 'SpellCheck' },
+  { id: 'translate', name: 'Translate', key: 'T', icon: 'Languages' },
+  { id: 'pro', name: 'Make professional', shortName: 'Pro', key: 'P', icon: 'BriefcaseBusiness' },
+  { id: 'shorten', name: 'Shorten', key: 'S', icon: 'FoldVertical' },
+  { id: 'email', name: 'Write email', shortName: 'Email', key: 'E', icon: 'Mail' },
+];
+const compact: IlotState = { mode: 'compact', hot: 0, compactHot: 'last' };
+const grid = (hot = 0): IlotState => ({ mode: 'grid', hot, compactHot: 'last' });
+const prompt: IlotState = { mode: 'prompt', hot: 0, compactHot: 'last' };
+const focused = ilotKeyContext(actions, 'translate', true);
+const injected = ilotKeyContext(actions, 'translate', false);
+const press = (key: string | KeyInput, state: IlotState = compact, context = focused) => resolveIlotKey(typeof key === 'string' ? { key } : key, state, context);
+
+describe('Îlot tiles', () => {
+  it('fills the tiles in the given order and ends with the free instruction while there are fewer than six', () => {
+    expect(ilotTiles(actions).map(tile => tile.kind === 'action' ? tile.action.id : 'ask')).toEqual(['fix', 'translate', 'pro', 'shorten', 'email', 'ask']);
+    expect(ilotTiles(actions.slice(0, 2)).map(tile => tile.kind)).toEqual(['action', 'action', 'ask']);
+    expect(ilotTiles([]).map(tile => tile.kind)).toEqual(['ask']);
+  });
+
+  it('shows six actions and no « More » tile when there are six or more (default decision 6)', () => {
+    const many = [...actions, { id: 'formal', name: 'Formal', key: 'O' }, { id: 'summary', name: 'Summary', key: 'U' }];
+    const tiles = ilotTiles(many);
+    expect(tiles).toHaveLength(6);
+    expect(tiles.every(tile => tile.kind === 'action')).toBe(true);
+    // The order is never changed by the last action: only the highlight follows it.
+    expect(ilotKeyContext(many, 'email', true).tiles.map(tile => tile.kind === 'action' && tile.action.id)).toEqual(['fix', 'translate', 'pro', 'shorten', 'email', 'formal']);
+    expect(ilotKeyContext(many, 'email', true).lastTile).toBe(4);
+  });
+
+  it('keeps three columns, or one short row for fewer tiles', () => {
+    expect([1, 2, 3, 4, 6].map(gridColumns)).toEqual([1, 2, 3, 3, 3]);
+  });
+
+  it('relaunches the last action, else the first, and starts the highlight on its tile', () => {
+    expect(focused.last?.id).toBe('translate');
+    expect(focused.lastTile).toBe(1);
+    expect(ilotKeyContext(actions, 'unknown', true).last?.id).toBe('fix');
+    expect(ilotKeyContext(actions, undefined, true).lastTile).toBe(0);
+    expect(ilotKeyContext([], undefined, true).last).toBeUndefined();
+  });
+});
+
+describe('letter table', () => {
+  it('takes the letters from action.key, case-insensitive, first claim wins', () => {
+    const table = letterTable([...actions, { id: 'again', name: 'Fix again', key: 'f' }, { id: 'summary', name: 'Summary', key: 'U' }]);
+    expect([...table]).toEqual([['f', 'fix'], ['t', 'translate'], ['p', 'pro'], ['s', 'shorten'], ['e', 'email'], ['u', 'summary']]);
+  });
+
+  it('ignores keys the menu uses itself, blanks and anything longer than one character', () => {
+    const table = letterTable([{ id: 'a', name: 'A', key: '1' }, { id: 'b', name: 'B', key: ' ' }, { id: 'c', name: 'C', key: '/' }, { id: 'd', name: 'D', key: 'Ctrl' }, { id: 'e', name: 'E' }, { id: 'f', name: 'F', key: 'é' }]);
+    expect([...table]).toEqual([['é', 'f']]);
+  });
+});
+
+describe('moveHot', () => {
+  it('wraps like the lab on six tiles (menus.jsx:70-71)', () => {
+    for (let hot = 0; hot < 6; hot++) {
+      expect(moveHot(hot, 'ArrowRight', false, 6, 3)).toBe((hot + 1) % 6);
+      expect(moveHot(hot, 'ArrowLeft', false, 6, 3)).toBe((hot + 5) % 6);
+      expect(moveHot(hot, 'ArrowDown', false, 6, 3)).toBe((hot + 3) % 6);
+      expect(moveHot(hot, 'ArrowUp', false, 6, 3)).toBe((hot + 3) % 6);
+      expect(moveHot(hot, 'Tab', false, 6, 3)).toBe((hot + 1) % 6);
+      expect(moveHot(hot, 'Tab', true, 6, 3)).toBe((hot + 5) % 6);
+    }
+    expect([moveHot(4, 'Home', false, 6, 3), moveHot(1, 'End', false, 6, 3)]).toEqual([0, 5]);
+  });
+
+  it('stays in the column on an incomplete last row', () => {
+    // Four tiles: 0 1 2 / 3.
+    expect(moveHot(0, 'ArrowDown', false, 4, 3)).toBe(3);
+    expect(moveHot(1, 'ArrowDown', false, 4, 3)).toBe(1);
+    expect(moveHot(3, 'ArrowDown', false, 4, 3)).toBe(0);
+    expect(moveHot(0, 'ArrowUp', false, 4, 3)).toBe(3);
+    expect(moveHot(2, 'ArrowUp', false, 4, 3)).toBe(2);
+    expect(moveHot(3, 'ArrowUp', false, 4, 3)).toBe(0);
+    expect(moveHot(0, 'Enter', false, 4, 3)).toBeNull();
+  });
+});
+
+describe('resolveIlotKey', () => {
+  it('runs the actions from their letters, in either case, compact or grid', () => {
+    for (const [key, id] of [['f', 'fix'], ['t', 'translate'], ['p', 'pro'], ['s', 'shorten'], ['e', 'email'], ['F', 'fix'], ['E', 'email']]) {
+      expect(press(key)).toEqual({ type: 'choose', actionId: id });
+      expect(press(key, grid(3))).toEqual({ type: 'choose', actionId: id });
+    }
+    expect(press({ key: 'F', shiftKey: true })).toEqual({ type: 'choose', actionId: 'fix' });
+  });
+
+  it('runs the tiles from the digits 1 to 6; the sixth opens the free instruction', () => {
+    expect(['1', '2', '3', '4', '5'].map(key => press(key))).toEqual(actions.map(action => ({ type: 'choose', actionId: action.id })));
+    expect(press('6')).toEqual({ type: 'prompt', seed: '' });
+    // A digit without a tile is swallowed, not typed into a field.
+    expect(press('5', compact, ilotKeyContext(actions.slice(0, 2), 'fix', true))).toEqual({ type: 'none' });
+    expect(press('3', compact, ilotKeyContext(actions.slice(0, 2), 'fix', true))).toEqual({ type: 'prompt', seed: '' });
+  });
+
+  it('relaunches the last action on Enter; Tab or ↓ unfolds the grid', () => {
+    expect(press('Enter')).toEqual({ type: 'choose', actionId: 'translate' });
+    expect(press('Tab')).toEqual({ type: 'grid' });
+    expect(press({ key: 'Tab', shiftKey: true })).toEqual({ type: 'grid' });
+    expect(press('ArrowDown')).toEqual({ type: 'grid' });
+    expect(press('ArrowUp')).toBeNull();
+  });
+
+  it('moves between the last action and the pastille in the compact state', () => {
+    expect(press('ArrowRight')).toEqual({ type: 'compact-hot', item: 'ask' });
+    const onAsk: IlotState = { ...compact, compactHot: 'ask' };
+    expect(press('ArrowLeft', onAsk)).toEqual({ type: 'compact-hot', item: 'last' });
+    expect(press('Enter', onAsk)).toEqual({ type: 'prompt', seed: '' });
+    // No last action at all: Enter writes an instruction.
+    expect(press('Enter', compact, ilotKeyContext([], undefined, true))).toEqual({ type: 'prompt', seed: '' });
+  });
+
+  it('moves the highlight and runs the highlighted tile in the grid', () => {
+    expect(press('ArrowRight', grid(1))).toEqual({ type: 'hot', index: 2 });
+    expect(press('ArrowDown', grid(1))).toEqual({ type: 'hot', index: 4 });
+    expect(press('Tab', grid(5))).toEqual({ type: 'hot', index: 0 });
+    expect(press('Enter', grid(2))).toEqual({ type: 'choose', actionId: 'pro' });
+    expect(press('Enter', grid(5))).toEqual({ type: 'prompt', seed: '' });
+  });
+
+  it('opens the free instruction on Space or « / », and on any other character already typed', () => {
+    expect(press(' ')).toEqual({ type: 'prompt', seed: '' });
+    expect(press('/', grid(0))).toEqual({ type: 'prompt', seed: '' });
+    for (const key of ['x', 'X', 'é', 'à', '7', '?', '😀']) expect(press(key)).toEqual({ type: 'prompt', seed: key });
+  });
+
+  it('goes back one step on Escape, then closes', () => {
+    expect(press('Escape', grid(4))).toEqual({ type: 'compact' });
+    expect(press('Escape')).toEqual({ type: 'close' });
+  });
+
+  it('leaves Ctrl, Alt and Meta combinations alone, but lets AltGr type (AZERTY: AltGr+E = €)', () => {
+    for (const modifier of ['ctrlKey', 'altKey', 'metaKey'] as const) {
+      expect(press({ key: 'f', [modifier]: true })).toBeNull();
+      expect(press({ key: 'Enter', [modifier]: true })).toBeNull();
+    }
+    // Windows reports AltGr as Ctrl+Alt with the AltGraph modifier.
+    expect(press({ key: '€', ctrlKey: true, altKey: true, altGraph: true })).toEqual({ type: 'prompt', seed: '€' });
+    expect(press({ key: '@', ctrlKey: true, altKey: true, altGraph: true }, grid(0))).toEqual({ type: 'prompt', seed: '@' });
+    expect(press({ key: 'AltGraph', ctrlKey: true, altKey: true, altGraph: true })).toBeNull();
+  });
+
+  it('never takes a key while an IME composes or a dead key waits', () => {
+    expect(press({ key: 'f', isComposing: true })).toBeNull();
+    expect(press('Process')).toBeNull();
+    expect(press('Dead')).toBeNull();
+  });
+
+  it('lets the text field handle every key, Enter and Escape included', () => {
+    for (const key of ['Enter', 'Escape', 'f', ' ', 'Tab', '1', 'ArrowDown']) expect(press(key, prompt)).toBeNull();
+  });
+
+  it('has no field when the keys come from Rust: Space is swallowed, other characters pass', () => {
+    expect(press(' ', compact, injected)).toEqual({ type: 'none' });
+    expect(press('/', compact, injected)).toEqual({ type: 'none' });
+    expect(press('x', compact, injected)).toBeNull();
+    expect(press('6', compact, injected)).toEqual({ type: 'none' });
+    expect(press('Enter', grid(5), injected)).toEqual({ type: 'none' });
+    expect(press('ArrowRight', compact, injected)).toBeNull();
+    // Everything else behaves the same.
+    expect(press('f', compact, injected)).toEqual({ type: 'choose', actionId: 'fix' });
+    expect(press('Enter', compact, injected)).toEqual({ type: 'choose', actionId: 'translate' });
+    expect(press('Tab', compact, injected)).toEqual({ type: 'grid' });
+    expect(press('Escape', grid(0), injected)).toEqual({ type: 'compact' });
+  });
+
+  it('answers the letter of an action past the six tiles', () => {
+    const many = [...actions, { id: 'formal', name: 'Formal', key: 'O' }, { id: 'summary', name: 'Summary', key: 'U' }];
+    expect(press('u', compact, ilotKeyContext(many, 'fix', true))).toEqual({ type: 'choose', actionId: 'summary' });
+    expect(press('6', compact, ilotKeyContext(many, 'fix', true))).toEqual({ type: 'choose', actionId: 'formal' });
+  });
+});

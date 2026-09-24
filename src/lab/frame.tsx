@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { StrictMode, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Capsule, SettingsWindow } from '../App';
 import { GlassOverlay } from '../GlassOverlay';
 import { useTranslation } from '../useTranslation';
 import { bridge } from '../bridge';
-import { scenarioFrom } from './scenarios';
+import { ilotScenarioFrom, scenarioFrom } from './scenarios';
+import { IlotFixture } from './ilot';
+import { setLanguage } from '../i18n';
 import '../theme.css';
 import { MotionPreferences } from '../motion/MotionPreferences';
 import { applyMotion } from '../motion/preference';
@@ -60,6 +62,15 @@ async function mount() {
   document.documentElement.dataset.labScenario = scenario;
   applyMotion(motion);
   applyMotionPreset(preset);
+  const ilot = ilotScenarioFrom(params.get('scenario'));
+  if (ilot) {
+    // The Îlot alone (lot 7), on the overlay's page style.
+    document.documentElement.dataset.labScenario = ilot.id;
+    setLanguage(params.get('lang') === 'fr' ? 'fr' : 'en');
+    document.body.className = 'flowtranslate-window flowtranslate-overlay';
+    createRoot(document.getElementById('root')!).render(<StrictMode><MotionPreferences motion={motion} preset={preset}><div className="standalone-demo" data-preview-background={theme}><IlotFixture scenario={ilot.id} params={params}/></div></MotionPreferences></StrictMode>);
+    return;
+  }
   document.body.className = `flowtranslate-window flowtranslate-${scenario === 'settings' || scenario === 'history' ? 'settings' : 'overlay'}`;
   if (ilot) await bridge.saveSettings({ ...await bridge.getSettings(), uiVersion: 'ilot', ...(indicator ? { indicator } : {}) });
   if (scenario === 'history') {

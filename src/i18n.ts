@@ -30,6 +30,12 @@ const dictionary = {
   'menu.rerun': { en: 'Run again in {mode}', fr: 'Relancer en {mode}' },
   'menu.settings': { en: 'Settings', fr: 'Réglages' },
   'menu.close': { en: 'Close', fr: 'Fermer' },
+  // The Îlot (lot 7): wording of the design lab (design-lab/src/data.js:11, 17-18) where it has one.
+  'ilot.menu': { en: 'Actions on the selection', fr: 'Actions sur la sélection' },
+  'ilot.ask': { en: 'Ask', fr: 'Consigne' },
+  'ilot.askName': { en: 'Custom…', fr: 'Consigne…' },
+  'ilot.describe': { en: 'Describe your change…', fr: 'Décrivez la modification…' },
+  'ilot.unavailable': { en: 'Instructions need the keyboard, which stayed with the other app', fr: 'La consigne demande le clavier, resté dans l’autre application' },
   'feedback.pasted': { en: 'Result pasted into the selection.', fr: 'Résultat collé dans la sélection.' },
   'feedback.copyRefused': { en: 'Copy was refused.', fr: 'La copie a été refusée.' },
   'feedback.replaceUnavailable': { en: 'Replace is unavailable; use Copy.', fr: 'Remplacement indisponible; utilisez Copier.' },
