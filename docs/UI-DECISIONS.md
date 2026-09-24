@@ -56,3 +56,9 @@ Les choix ci-dessus sont validés comme direction. Ils ne décrivent pas des fon
 - Contrainte technique relevée : FlowTranslate ne peut pas redessiner les lettres d’une autre application. Seuls les effets dessinés par-dessus les lignes sélectionnées sont faisables (balayage de lumière, lueur, contour, soulignement, voile), et seulement là où l’application expose sa sélection (UI Automation) ; sinon la pilule seule. Même limite pour l’arrivée du texte : collage d’un coup, un voile qui s’efface ou un surlignage des mots changés restent faisables, pas le mot à mot flou.
 - Suite du 24 septembre : balayage de lumière retenu pour la sélection pendant le travail ; mouvement Apple « smooth » (ou « bouncy ») ; les mots changés restent surlignés tant que l’annulation est possible (8 s par défaut), puis s’effacent ; la pilule ne recouvre jamais le texte modifié (repositionnée après le remplacement, option « dans la marge »).
 - Correctif de centrage : pendant la transformation (menu → pilule), le contenu reste centré dans la forme qui se redimensionne.
+
+# Plan de la nouvelle DA — 24 septembre 2026
+
+- Le plan GitLab du travail est abandonné au profit de `docs/DA-PLAN.md` (plan complet, lots, accrocs, valeurs exactes, ce qui a été écarté).
+- Point encore ouvert : le raccourci du menu (recommandation Ctrl+Alt+Espace, à cause du conflit Ctrl+Alt = AltGr sur AZERTY). Autres questions ouvertes : §8 du plan.
+- Précision : le balayage de lumière s’ajoute à la pilule (réglage « les deux » du labo), il ne la remplace pas.

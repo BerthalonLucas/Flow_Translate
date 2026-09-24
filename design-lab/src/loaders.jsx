@@ -6,7 +6,7 @@ import React, { useId } from 'react';
 const P = (key, label, min, max, step, def, unit = '') => ({ key, label, min, max, step, def, unit });
 
 export const LOADERS = [
-  { id: 'souffle', name: 'Souffle', family: 'Points', kind: 'inner', note: 'Ta préférence actuelle : les points gonflent et s’allument tour à tour.',
+  { id: 'souffle', name: 'Souffle', family: 'Points', kind: 'inner', note: 'Ta première préférence (avant Perle et Nébuleuse) : les points gonflent et s’allument tour à tour.',
     params: [P('--size', 'Taille des points', 3, 7, .5, 5, 'px'), P('--gap', 'Écart', 2, 7, .5, 4, 'px'), P('--dur', 'Durée du cycle', .6, 2.6, .1, 1.4, 's'), P('--stagger', 'Décalage', 60, 400, 10, 200, 'ms'), P('--min-scale', 'Taille au repos', .3, .95, .01, .62), P('--min-op', 'Opacité au repos', .1, .8, .01, .35)],
     render: () => <span className="ldr souffle"><i /><i /><i /></span> },
   { id: 'vague', name: 'Vague', family: 'Points', kind: 'inner', note: 'Les points montent de 2,5 px et s’éclairent. Propre, familier.',

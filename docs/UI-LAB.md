@@ -15,11 +15,11 @@ fenêtre Windows.
   Recette, Writing Tools (référence Apple).
 - 23 indicateurs de chargement (points, orbes, symbole, anneaux, barres, lignes, effets de pilule,
   plus le spinner actuel comme témoin), chacun avec ses réglages.
-- 7 effets sur le texte sélectionné pendant le travail (piste « sans bulle » façon Writing Tools).
+- 8 effets sur la sélection pendant le travail (5 faisables dans une autre application, 3 en démo seulement).
 - Arrivée du texte (net, fondu, flou → net, mot à mot), mots changés (surlignés, soulignés), coche,
   Annuler avec compte à rebours.
-- Mouvement : préréglages Apple (snappy, smooth, bouncy), Windows 11 Fluent, Material 3 Expressive,
-  Emil Kowalski ; éditeur ressort (durée + rebond) ou courbe ; vitesse ½× à ⅒×.
+- Mouvement : 8 préréglages, Apple (snappy, smooth, bouncy), Windows 11 Fluent, Material 3 Expressive,
+  Emil Kowalski, lent (à éviter), aucune animation ; éditeur ressort (durée + rebond) ou courbe ; vitesse ½× à ⅒×.
 - Matières : verre Apple clair, dépoli, liquide (filtre SVG), clair opaque, Acrylic simulé
   (coins 8 px), verre sombre, graphite 0.4.0.
 - Bouton « Copier ma config » : résumé lisible plus JSON, à recoller dans la conversation.

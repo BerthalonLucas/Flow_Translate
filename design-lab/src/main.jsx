@@ -8,7 +8,7 @@ import { MENU_BY_ID } from './menus.jsx';
 import { LOADER_BY_ID, injectMorphKeyframes } from './loaders.jsx';
 import { setClock, resolve, LINEAR_OK } from './motion.js';
 
-const STORE = 'flowtranslate-labo-v3';
+const STORE = 'flowtranslate-labo-v4';
 function load() {
   try { const raw = localStorage.getItem(STORE); if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }; } catch { /* storage unavailable */ }
   return DEFAULTS;
@@ -122,7 +122,7 @@ function summary(cfg) {
   const tfx = TEXT_FX.find(t => t.id === cfg.textFx);
   const lines = [
     'FlowTranslate · config du labo',
-    `Menu : ${menu?.name} · raccourci ${SHORTCUT[cfg.shortcut]} · déclenchement ${cfg.trigger === 'shortcut' ? 'raccourci' : 'point à chaque sélection'} · position ${cfg.anchor === 'below' ? 'sous' : 'au-dessus'} · dernière action ${cfg.rememberLast ? 'oui' : 'non'}`,
+    `Menu : ${menu?.name} · raccourci ${SHORTCUT[cfg.shortcut]} · déclenchement ${cfg.trigger === 'shortcut' ? 'raccourci' : 'point à chaque sélection'} · position ${{ below: 'sous', above: 'au-dessus', margin: 'dans la marge' }[cfg.anchor]} · dernière action ${cfg.rememberLast ? 'oui' : 'non'}`,
     `Langue ${cfg.lang} · icônes ${cfg.iconSet}${cfg.showIcons ? '' : ' (masquées)'} · touches ${cfg.showKeys ? 'affichées' : 'masquées'}`,
     `Sélection : surlignage pendant le travail ${cfg.keepSelection ? 'gardé' : 'retiré'}`,
     `Chargement : ${cfg.placement} · indicateur ${loader?.name} ${JSON.stringify(cfg.loaderParams[cfg.loader] || {})} · effet texte ${tfx?.name} ${JSON.stringify(cfg.textFxParams[cfg.textFx] || {})} · délai ${cfg.loaderDelay} ms · si long : ${cfg.slowLabel}`,

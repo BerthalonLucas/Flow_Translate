@@ -69,7 +69,7 @@ export const OUTCOMES = [
   { id: 'busy', label: 'Serveur occupé (503, transitoire)', kind: 'transient', short: { en: 'Server busy — try again', fr: 'Serveur occupé, réessayez' }, detail: { en: 'The server is overloaded (503). Nothing to change on your side.', fr: 'Le serveur est surchargé (503). Rien à changer de votre côté.' }, action: { en: 'Try again', fr: 'Réessayer' } },
   { id: 'paste', label: 'Collage refusé par l’app', kind: 'paste', short: { en: 'Can’t edit this app’s text', fr: 'Impossible de modifier ce texte' }, detail: { en: 'This window refused the paste. The result is ready to copy.', fr: 'Cette fenêtre a refusé le collage. Le résultat est prêt à copier.' }, action: { en: 'Copy result', fr: 'Copier le résultat' } },
   { id: 'changed', label: 'Sélection modifiée entre-temps', kind: 'paste', short: { en: 'Text changed — not replaced', fr: 'Texte modifié, rien remplacé' }, detail: { en: 'The selection changed while the model worked, so nothing was replaced.', fr: 'La sélection a changé pendant le travail : rien n’a été remplacé.' }, action: { en: 'Copy result', fr: 'Copier le résultat' } },
-  { id: 'long', label: 'Sélection trop longue', kind: 'content', short: { en: 'Selection too long (max ≈ 6,000 words)', fr: 'Sélection trop longue (≈ 6 000 mots max)' }, detail: { en: 'Select less text or split it in parts.', fr: 'Sélectionnez moins de texte ou découpez-le.' } },
+  { id: 'long', label: 'Sélection trop longue', kind: 'content', short: { en: 'Selection too long (max 6,000 characters)', fr: 'Sélection trop longue (6 000 caractères max)' }, detail: { en: 'Select less text or split it in parts.', fr: 'Sélectionnez moins de texte ou découpez-le.' } },
 ];
 export const OUTCOME_BY_ID = Object.fromEntries(OUTCOMES.map(o => [o.id, o]));
 
@@ -138,7 +138,7 @@ export function mockRewrite(pid, fullText, start, end, outId) {
   return lead + ow.slice(a, b).join(' ') + trail;
 }
 
-// ——— Defaults (Lucas, 24 septembre : Îlot, Perle, Lucide, verre clair / sombre, Apple smooth, mots changés visibles pendant l’annulation) ———
+// ——— Defaults (Lucas, 24 septembre : Îlot, Perle, Lucide, verre clair / sombre, Apple smooth, balayage de lumière + pilule, mots changés visibles pendant l’annulation) ———
 export const DEFAULTS = {
   lang: 'en',
   iconSet: 'lucide',
@@ -151,7 +151,7 @@ export const DEFAULTS = {
   rememberLast: true,
   loader: 'perle',
   loaderParams: {},
-  placement: 'pill',
+  placement: 'both',
   textFx: 'sweep',
   textFxParams: {},
   keepSelection: false,

@@ -739,7 +739,7 @@ Lucas`,
     { id: "busy", label: "Serveur occup\xE9 (503, transitoire)", kind: "transient", short: { en: "Server busy \u2014 try again", fr: "Serveur occup\xE9, r\xE9essayez" }, detail: { en: "The server is overloaded (503). Nothing to change on your side.", fr: "Le serveur est surcharg\xE9 (503). Rien \xE0 changer de votre c\xF4t\xE9." }, action: { en: "Try again", fr: "R\xE9essayer" } },
     { id: "paste", label: "Collage refus\xE9 par l\u2019app", kind: "paste", short: { en: "Can\u2019t edit this app\u2019s text", fr: "Impossible de modifier ce texte" }, detail: { en: "This window refused the paste. The result is ready to copy.", fr: "Cette fen\xEAtre a refus\xE9 le collage. Le r\xE9sultat est pr\xEAt \xE0 copier." }, action: { en: "Copy result", fr: "Copier le r\xE9sultat" } },
     { id: "changed", label: "S\xE9lection modifi\xE9e entre-temps", kind: "paste", short: { en: "Text changed \u2014 not replaced", fr: "Texte modifi\xE9, rien remplac\xE9" }, detail: { en: "The selection changed while the model worked, so nothing was replaced.", fr: "La s\xE9lection a chang\xE9 pendant le travail : rien n\u2019a \xE9t\xE9 remplac\xE9." }, action: { en: "Copy result", fr: "Copier le r\xE9sultat" } },
-    { id: "long", label: "S\xE9lection trop longue", kind: "content", short: { en: "Selection too long (max \u2248 6,000 words)", fr: "S\xE9lection trop longue (\u2248 6 000 mots max)" }, detail: { en: "Select less text or split it in parts.", fr: "S\xE9lectionnez moins de texte ou d\xE9coupez-le." } }
+    { id: "long", label: "S\xE9lection trop longue", kind: "content", short: { en: "Selection too long (max 6,000 characters)", fr: "S\xE9lection trop longue (6 000 caract\xE8res max)" }, detail: { en: "Select less text or split it in parts.", fr: "S\xE9lectionnez moins de texte ou d\xE9coupez-le." } }
   ], OUTCOME_BY_ID = Object.fromEntries(OUTCOMES.map((o) => [o.id, o])), m3 = (zeta, k) => {
     let a = toAppleDurationBounce(fromDampingRatio(zeta, k));
     return { type: "spring", duration: +a.duration.toFixed(3), bounce: +a.bounce.toFixed(3) };
@@ -806,7 +806,7 @@ Lucas`,
     rememberLast: !0,
     loader: "perle",
     loaderParams: {},
-    placement: "pill",
+    placement: "both",
     textFx: "sweep",
     textFxParams: {},
     keepSelection: !1,
@@ -1233,7 +1233,7 @@ Lucas`,
       name: "Souffle",
       family: "Points",
       kind: "inner",
-      note: "Ta pr\xE9f\xE9rence actuelle : les points gonflent et s\u2019allument tour \xE0 tour.",
+      note: "Ta premi\xE8re pr\xE9f\xE9rence (avant Perle et N\xE9buleuse) : les points gonflent et s\u2019allument tour \xE0 tour.",
       params: [P("--size", "Taille des points", 3, 7, 0.5, 5, "px"), P("--gap", "\xC9cart", 2, 7, 0.5, 4, "px"), P("--dur", "Dur\xE9e du cycle", 0.6, 2.6, 0.1, 1.4, "s"), P("--stagger", "D\xE9calage", 60, 400, 10, 200, "ms"), P("--min-scale", "Taille au repos", 0.3, 0.95, 0.01, 0.62), P("--min-op", "Opacit\xE9 au repos", 0.1, 0.8, 0.01, 0.35)],
       render: () => /* @__PURE__ */ react_shim_default.createElement("span", { className: "ldr souffle" }, /* @__PURE__ */ react_shim_default.createElement("i", null), /* @__PURE__ */ react_shim_default.createElement("i", null), /* @__PURE__ */ react_shim_default.createElement("i", null))
     },
@@ -1930,7 +1930,7 @@ Lucas`,
   }
 
   // src/main.jsx
-  var STORE = "flowtranslate-labo-v3";
+  var STORE = "flowtranslate-labo-v4";
   function load() {
     try {
       let raw = localStorage.getItem(STORE);
@@ -1991,7 +1991,7 @@ Lucas`,
     let menu = MENU_BY_ID[cfg.menu], loader = LOADER_BY_ID[cfg.loader], tfx = TEXT_FX.find((t) => t.id === cfg.textFx);
     return [
       "FlowTranslate \xB7 config du labo",
-      `Menu : ${menu?.name} \xB7 raccourci ${SHORTCUT[cfg.shortcut]} \xB7 d\xE9clenchement ${cfg.trigger === "shortcut" ? "raccourci" : "point \xE0 chaque s\xE9lection"} \xB7 position ${cfg.anchor === "below" ? "sous" : "au-dessus"} \xB7 derni\xE8re action ${cfg.rememberLast ? "oui" : "non"}`,
+      `Menu : ${menu?.name} \xB7 raccourci ${SHORTCUT[cfg.shortcut]} \xB7 d\xE9clenchement ${cfg.trigger === "shortcut" ? "raccourci" : "point \xE0 chaque s\xE9lection"} \xB7 position ${{ below: "sous", above: "au-dessus", margin: "dans la marge" }[cfg.anchor]} \xB7 derni\xE8re action ${cfg.rememberLast ? "oui" : "non"}`,
       `Langue ${cfg.lang} \xB7 ic\xF4nes ${cfg.iconSet}${cfg.showIcons ? "" : " (masqu\xE9es)"} \xB7 touches ${cfg.showKeys ? "affich\xE9es" : "masqu\xE9es"}`,
       `S\xE9lection : surlignage pendant le travail ${cfg.keepSelection ? "gard\xE9" : "retir\xE9"}`,
       `Chargement : ${cfg.placement} \xB7 indicateur ${loader?.name} ${JSON.stringify(cfg.loaderParams[cfg.loader] || {})} \xB7 effet texte ${tfx?.name} ${JSON.stringify(cfg.textFxParams[cfg.textFx] || {})} \xB7 d\xE9lai ${cfg.loaderDelay} ms \xB7 si long : ${cfg.slowLabel}`,
