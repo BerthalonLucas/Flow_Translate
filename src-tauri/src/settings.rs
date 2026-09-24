@@ -425,10 +425,13 @@ mod tests {
         fs::write(root.join("settings.json"), serde_json::to_vec_pretty(&old).unwrap()).unwrap();
         let store = SettingsStore::new(&root);
         let migrated = store.load().unwrap();
-        // Nothing of 0.4 is renamed, rewritten or dropped.
+        // Nothing of 0.4 is renamed, rewritten or dropped; a shipped id gets its icon, and
+        // « Professionnaliser » the short name « Pro » (review of da-ilot, n°9).
         let before: Vec<ActionDefinition> = serde_json::from_value(old["actions"].clone()).unwrap();
-        for (kept, original) in migrated.actions.iter().zip(&before) {
-            assert_eq!((&kept.id, &kept.name, &kept.prompt_template, &kept.short_name, &kept.icon), (&original.id, &original.name, &original.prompt_template, &None, &None));
+        let looks = [(None, Some("Languages")), (None, Some("Languages")), (None, Some("SpellCheck")), (Some("Pro"), Some("BriefcaseBusiness")), (None, None)];
+        for ((kept, original), (short, icon)) in migrated.actions.iter().zip(&before).zip(looks) {
+            assert_eq!((&kept.id, &kept.name, &kept.prompt_template), (&original.id, &original.name, &original.prompt_template));
+            assert_eq!((kept.short_name.as_deref(), kept.icon.as_deref()), (short, icon), "{}", kept.id);
         }
         assert_eq!(migrated.actions.iter().skip(5).map(|a| a.id.as_str()).collect::<Vec<_>>(), ["translate", "shorten", "email"]);
         assert_eq!(migrated.actions[5].name, "Translate");

@@ -161,18 +161,33 @@ pub fn legacy_bindings(shortcut: String) -> Vec<ShortcutBinding> {
     vec![ShortcutBinding { id: "primary".into(), kind: BindingKind::Action, shortcut, action_id: "translate-fr".into(), output_mode: OutputMode::Display, enabled: true }]
 }
 
+/// The Lucide icon of a shipped action id, 0.3 and 0.4 ones included (review of da-ilot, n°9).
+fn shipped_icon(id: &str) -> Option<&'static str> {
+    match id {
+        "translate-fr" | "translate-en" => Some("Languages"),
+        _ => DEFAULTS.iter().find(|(default, ..)| *default == id).map(|(.., icon, _)| *icon),
+    }
+}
 /// A settings file of 0.4 (no Îlot grid yet) gains the Îlot without losing anything: its
 /// actions, ids, names, instructions and shortcuts stay as they are (Ctrl+Alt+T keeps
 /// translating into French, directly). The default actions it lacks are added by id, the
 /// grid is the default actions it now has, each gets its letter when free (else the first
 /// free letter of its name), and the menu shortcut is added unless a binding already
-/// uses Ctrl+Alt+Space. Returns whether anything changed.
+/// uses Ctrl+Alt+Space. A kept action of a shipped id gets its icon when it has none, and
+/// « Professionnaliser », still under its 0.4 name, the short name « Pro » (« Corriger »
+/// fits its tile): nothing is renamed. Returns whether anything changed.
 pub fn migrate_to_ilot(settings: &mut Settings) -> bool {
     let before = settings.clone();
     for action in defaults() {
         if settings.actions.len() >= 24 { break; }
         if !settings.actions.iter().any(|a| a.id == action.id) {
             settings.actions.push(ActionDefinition { key: None, ..action });
+        }
+    }
+    for action in settings.actions.iter_mut() {
+        if action.icon.is_none() { action.icon = shipped_icon(&action.id).map(String::from); }
+        if action.short_name.is_none() && action.id == "professionalize" && action.name == "Professionnaliser" {
+            action.short_name = Some("Pro".into());
         }
     }
     let grid = DEFAULTS.iter().map(|(id, ..)| *id).filter(|id| settings.actions.iter().any(|a| a.id == *id)).collect::<Vec<_>>();
@@ -464,6 +479,33 @@ mod tests {
         assert_eq!((key("translate").as_deref(), key("professionalize").as_deref(), key("shorten").as_deref(), key("email").as_deref()), (Some("T"), Some("P"), Some("S"), Some("E")));
         assert_eq!((key("translate-fr"), key("custom").as_deref()), (None, Some("F")), "no letter outside the grid, a letter kept");
         assert!(validate(&settings).is_ok());
+        assert!(!migrate_to_ilot(&mut settings), "idempotent");
+    }
+    #[test]
+    fn the_ilot_migration_gives_the_shipped_icons_and_pro_only_to_an_untouched_name() {
+        // Review n°9: the 0.4 tiles « Corriger » and « Professionnaliser » had no icon.
+        let legacy = || Settings { actions: legacy_defaults(), shortcut_bindings: legacy_bindings("Ctrl+Alt+T".into()), default_action_id: "translate-fr".into(), menu_action_ids: Vec::new(), ..Settings::default() };
+        let mut settings = legacy();
+        settings.actions.push(ActionDefinition { id: "custom".into(), name: "Résumer".into(), prompt_template: "Résume.".into(), key: None, short_name: None, icon: None });
+        assert!(migrate_to_ilot(&mut settings));
+        let find = |settings: &Settings, id: &str| settings.actions.iter().find(|a| a.id == id).cloned().unwrap();
+        let icon = |id: &str| find(&settings, id).icon;
+        assert_eq!(["correct", "professionalize", "translate-fr", "translate-en", "translate", "shorten", "email"].map(icon),
+            ["SpellCheck", "BriefcaseBusiness", "Languages", "Languages", "Languages", "FoldVertical", "Mail"].map(|i| Some(i.to_string())));
+        assert_eq!(icon("custom"), None, "a user's action keeps its own look");
+        for original in legacy_defaults() {
+            let kept = find(&settings, &original.id);
+            assert_eq!((&kept.name, &kept.prompt_template), (&original.name, &original.prompt_template), "nothing renamed or rewritten");
+        }
+        assert_eq!((find(&settings, "professionalize").short_name.as_deref(), find(&settings, "correct").short_name), (Some("Pro"), None));
+        // A renamed action keeps its name as its label; an icon already chosen stays.
+        let mut renamed = legacy();
+        renamed.actions[3].name = "Ton soutenu".into();
+        renamed.actions[2].icon = Some("Sparkles".into());
+        migrate_to_ilot(&mut renamed);
+        assert_eq!(find(&renamed, "professionalize").short_name, None);
+        assert_eq!(find(&renamed, "professionalize").icon.as_deref(), Some("BriefcaseBusiness"));
+        assert_eq!(find(&renamed, "correct").icon.as_deref(), Some("Sparkles"));
         assert!(!migrate_to_ilot(&mut settings), "idempotent");
     }
     #[test]
