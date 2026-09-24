@@ -274,6 +274,10 @@ impl Inner {
             }
         }
     }
+    /// The menu of `capture_id` still waits for its choice.
+    fn menu_waits(&self, capture_id: &str) -> bool {
+        self.menu.as_ref().is_some_and(|menu| menu.capture_id == capture_id && !menu.chosen && !menu.invalidated)
+    }
     fn complete_pending_dismiss(&mut self, capture_id: &str, generation: u64) -> bool {
         if self.pending_dismiss.as_ref().is_none_or(|pending| pending.0 != capture_id || pending.1 != generation) {
             return false;
@@ -1426,10 +1430,14 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
         if !i.visible || i.pending_dismiss.is_some() {
             return Err("La capture n’est plus active.".into());
         }
-        i.capture
+        let capture_id = i.capture
             .as_ref()
             .map(|capture| capture.public.id.clone())
-            .ok_or_else(|| "La capture n’est plus active.".to_string())?
+            .ok_or_else(|| "La capture n’est plus active.".to_string())?;
+        // Review n°3: a double press may choose before the menu even shows; a menu already
+        // chosen (or closed) never takes the keyboard from the source.
+        if !i.menu_waits(&capture_id) { return Ok(false); }
+        capture_id
     };
     let w = app
         .get_webview_window("overlay")
@@ -1444,8 +1452,7 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
     // cannot be provoked on demand, so FLOWTRANSLATE_REFUSE_FOCUS exercises the fallback.
     let refuse = std::env::var_os("FLOWTRANSLATE_CDP_URL").is_some() && std::env::var_os("FLOWTRANSLATE_REFUSE_FOCUS").is_some();
     let focused = if refuse { false } else { host::activate(&w)? };
-    if focused { host::set_menu_focused(); }
-    let (current, should_hide) = {
+    let (current, should_hide, waits, source) = {
         let state = app.state::<AppState>();
         let i = state.inner.lock().map_err(|_| lock_error())?;
         let current = i.visible
@@ -1454,7 +1461,7 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
                 .as_ref()
                 .is_some_and(|capture| capture.public.id == capture_id);
         let should_hide = !i.visible || i.pending_dismiss.is_some() || i.capture.is_none();
-        (current, should_hide)
+        (current, should_hide, i.menu_waits(&capture_id), i.source_window)
     };
     if !current {
         if should_hide {
@@ -1462,6 +1469,13 @@ fn focus_overlay_now(app: &AppHandle) -> Result<bool, String> {
         }
         return Err("La capture n’est plus active.".into());
     }
+    // The choice arrived while the overlay was being activated: the source gets the keyboard
+    // back once the chord is released, as after any choice.
+    if !waits {
+        if focused { return_foreground(host::handle(&w), source); }
+        return Ok(false);
+    }
+    if focused { host::set_menu_focused(); }
     Ok(focused)
 }
 
@@ -2326,6 +2340,20 @@ mod tests {
         assert_eq!(scope_after(true, true, false), ScopeAfter::Menu, "the previous menu still waits");
         assert_eq!(scope_after(true, false, true), ScopeAfter::Escape, "a glass still open");
         assert_eq!(scope_after(true, false, false), ScopeAfter::Closed, "a glass dimming");
+    }
+    #[test]
+    fn only_a_menu_that_still_waits_takes_the_keyboard() {
+        // Review n°3: a double press chooses while the Îlot is still being shown.
+        let mut i = Inner::new(Settings::default());
+        assert!(!i.menu_waits("menu"), "no menu");
+        menu_capture(&mut i, "menu");
+        assert!(i.menu_waits("menu"));
+        assert!(!i.menu_waits("other"), "another capture");
+        i.choose("menu", "correct", None).unwrap();
+        assert!(!i.menu_waits("menu"), "chosen: the source keeps the keyboard");
+        menu_capture(&mut i, "next");
+        i.menu.as_mut().unwrap().invalidated = true;
+        assert!(!i.menu_waits("next"), "invalidated");
     }
     #[test]
     fn a_menu_left_or_invalidated_closes_and_never_runs_a_choice() {
