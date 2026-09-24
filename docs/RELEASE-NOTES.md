@@ -1,3 +1,23 @@
+<!-- Brouillon de l’entrée 0.5.0 (lot 14), à finaliser après le lot 9 front (Annuler, mots
+changés, pilule sous le nouveau texte) et la correction native attendue : n’y ajouter ces points
+qu’une fois livrés. Volontairement absents : l’essai Acrylic (réglage caché `glassMaterial`,
+désactivé, en attente de la décision de Lucas, docs/ACRYLIC-TRIAL.md) et le « point à chaque
+sélection » (reporté, décision 5). La section « After replacing » des Réglages montre déjà
+Annuler, sa durée, sa méthode, les mots changés et la position de la pilule, mais seule la coche
+agit à ce jour. La ligne « Validation » reste à écrire avec les vérifications réellement faites. -->
+# FlowTranslate 0.5.0 — l’Îlot, un menu à côté de la sélection — septembre 2026
+
+- **Un raccourci, un menu.** `Ctrl+Alt+Espace` ouvre l’Îlot juste sous le texte sélectionné, au-dessus s’il manque la place en bas. Au repos, il ne montre que la dernière action utilisée dans cette application et une pastille ✦ ; Tab ou ↓ déplie une grille de six tuiles : Fix grammar, Translate (français → anglais, le reste → français), Make professional, Shorten, Write email et Ask. Entrée relance la dernière action, une lettre lance la sienne (F, T, P, S, E), les flèches parcourent la grille, Échap revient d’un cran puis ferme. Deux appuis rapides relancent la dernière action sans passer par le menu.
+- **Consigne libre.** Espace, « / », la pastille ✦ ou une lettre sans action ouvrent un champ : on écrit ce qu’on veut (« plus sympa, prêt à envoyer »), le texte est réécrit selon la consigne. La consigne n’est ni enregistrée, ni journalisée.
+- **Le travail se voit sur le texte.** Le menu se change en une petite pilule avec un orbe (Perle, Nébuleuse ou Ruban) ; là où l’application expose sa sélection, une lumière parcourt les lignes sélectionnées, sans jamais intercepter un clic. Le résultat remplace la sélection, une coche se trace, puis tout disparaît.
+- **Des erreurs claires.** Une pilule courte, dans la langue de l’interface, avec un seul bouton utile : ouvrir le bon champ des Réglages (adresse, clé, modèle, mis en évidence), réessayer, ou copier le résultat quand le collage a été refusé. Rien n’est jamais remplacé à moitié ; ni le texte, ni la réponse du serveur ne s’y affichent.
+- **Nouvelle matière.** Verre clair ou sombre qui suit le thème de Windows (ou forcé dans les Réglages), icônes Lucide fines, mouvements à ressort « Fluide » ou « Rebondi ». Animations : suivre Windows, toujours, ou réduites (fondus courts seulement).
+- **Interface en anglais, bascule en français.** Toute l’interface change de langue sans relance, menu de l’icône de notification compris. Les noms des actions ne sont jamais traduits ni renommés.
+- **Réglages refaits.** Sections Menu (raccourci, action par défaut), Actions (ordre de la grille, lettres), Après remplacement (coche) et Apparence (langue, thème, indicateur, animations). Un raccourci déjà pris par une autre application est signalé sous sa ligne ; une combinaison `Ctrl+Alt+lettre` qui empêcherait de taper un caractère AltGr (`€` sur AZERTY) est signalée à l’enregistrement.
+- **Mise à jour depuis la 0.4.** Actions, consignes et raccourcis sont gardés tels quels ; le raccourci du menu est ajouté s’il est libre. Les raccourcis directs continuent de marcher, avec la nouvelle pilule. L’interface passe en anglais : Réglages › Appearance › Language pour revenir au français.
+
+À savoir : `Ctrl+Alt+Espace` peut déjà être tenu par une autre application ; FlowTranslate ouvre alors ses Réglages au démarrage et le dit sous le raccourci du menu : en enregistrer un autre. Dans VS Code, sans sélection lisible par UI Automation, l’Îlot s’ouvre en bas de l’écran, sans lumière sur les lignes.
+
 # FlowTranslate 0.4.0 — chaque action marche vraiment — 15 septembre 2026
 
 - **Remplacement partout.** « Remplacer la sélection » colle le résultat à la place du texte sélectionné dans n’importe quel champ (navigateurs, mails, Word, VS Code, Bloc-notes…) : le résultat passe par le presse-papiers, une seule corde Ctrl+V est envoyée dans la sélection d’origine, le presse-papiers est remis en place (jamais par-dessus une copie plus récente). La relecture du champ est une preuve en bonus, plus une condition. Refus seulement pour une console, un champ mot de passe, une copie faite soi-même (aucune sélection garantie) ou une fenêtre qui a changé ; le résultat reste alors dans la bulle avec Copier. Plus d’`EM_REPLACESEL`.
