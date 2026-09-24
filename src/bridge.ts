@@ -4,7 +4,7 @@ import { listen as tauriListen } from '@tauri-apps/api/event';
 import type { Capture, ConnectionStatus, ExecutionInfo, HistoryEntry, Mode, OverlayGeometry, Screen, Settings, ShortcutConflict, StreamEvent, SystemMotion, TranslationRequest } from './types';
 
 type Unlisten = () => void;
-type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat';
+type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invalidated' | 'overlay-dismiss-requested' | 'glass-near' | 'capture-target' | 'capture-notice' | 'work-area' | 'result-delivery' | 'system-theme' | 'system-motion' | 'menu-key' | 'menu-repeat' | 'halo';
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {

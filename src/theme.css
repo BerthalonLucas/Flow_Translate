@@ -138,7 +138,7 @@
 /* One painted material for every floating surface: sheen over the fill, rim over the shadow.
    Geometry stays with each component: the 1 px border of 0.4 became 1 px of padding, so every
    box keeps its size while the hairline is a 0.5 px shadow outside it. */
-.translation-bubble, .wait-pill, .action-pill, .more-menu, .notice-pill, .compact-feedback, .capsule, .initialization-error {
+.translation-bubble, .wait-pill, .action-pill, .more-menu, .notice-pill, .compact-feedback, .initialization-error {
   background: var(--surface-sheen), var(--surface-bg);
   box-shadow: var(--surface-rim), var(--surface-shadow);
 }

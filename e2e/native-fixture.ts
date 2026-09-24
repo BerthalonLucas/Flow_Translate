@@ -2,7 +2,7 @@ import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds,
 // Browser-only IPC fixture. This does not launch a native window or read user data.
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
-import type { Capture, ExecutionInfo, Settings, TranslationRequest } from '../src/types';
+import type { Capture, ExecutionInfo, HaloEvent, Settings, TranslationRequest } from '../src/types';
 
 let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'v4', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
@@ -81,6 +81,8 @@ Object.assign(window, { nativeFixture: {
   menuKey: (key: string, shiftKey = false, captureId = currentCapture.id) => emit('menu-key', { captureId, key, shiftKey }),
   // Lot 4: the menu shortcut pressed twice within 400 ms while its menu waits.
   menuRepeat: (captureId = currentCapture.id) => emit('menu-repeat', { captureId }),
+  // Lot 6: what Rust sends the halo window (lines in logical pixels relative to it).
+  halo: (event: HaloEvent) => emit('halo', event),
   replay: (id: string) => { currentCapture = { ...capture(id, 'Example selection'), source: 'clipboard', canReplace: false, anchor: null, replay: { requestId: `replay-${id}`, translatedText: 'Exemple de sélection', mode: 'quality' } }; return emit('capture', currentCapture); },
 } });
 await import('../src/main');

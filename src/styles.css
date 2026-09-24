@@ -9,15 +9,6 @@ button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-/* Clipboard capsule: same material as the bubble (src/theme.css), 36 px, content left to right. */
-.capsule { height: 36px; width: 200px; display: flex; align-items: center; gap: 4px; padding: 1px 7px 1px 13px; border: 0; border-radius: 18px; color: var(--text); cursor: default; user-select: none; }
-.standalone-demo .capsule { backdrop-filter: blur(32px) saturate(140%); -webkit-backdrop-filter: blur(32px) saturate(140%); }
-.capsule-main { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 4px; margin-left: -4px; border: 0; border-radius: 8px; color: inherit; font-size: 13px; letter-spacing: -.01em; background: transparent; }
-.capsule-main:hover { background: var(--hover); }
-.capsule-main svg { flex: none; }
-.capsule-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.capsule-rule { width: 1px; height: 16px; margin: 0 4px 0 auto; background: rgb(var(--ink-rgb) / .14); }
-
 .standalone-demo { position: relative; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at 30% 15%, #d6edff, #8ab9e7 46%, #527ba9); }
 .standalone-demo[data-preview-background="light"] { background: linear-gradient(120deg, #fff, #eef1f5); }
 .standalone-demo[data-preview-background="dark"] { background: linear-gradient(120deg, #24272d, #111318); }

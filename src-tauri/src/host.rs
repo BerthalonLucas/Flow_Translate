@@ -25,7 +25,7 @@ use windows::Win32::{
             SetForegroundWindow, SetWindowLongPtrW, ShowWindow, SW_HIDE,
             SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, MA_NOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
             SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_MOUSEACTIVATE, WM_NCACTIVATE, WM_NCPAINT,
-            WS_CAPTION, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+            WS_CAPTION, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
             WS_SYSMENU, WS_THICKFRAME,
         },
     },
@@ -163,14 +163,13 @@ static ESCAPE_PENDING:AtomicBool=AtomicBool::new(false);
 static OVERLAY_VISIBLE:AtomicBool=AtomicBool::new(false);
 static SOURCE:AtomicIsize=AtomicIsize::new(0);
 static OVERLAY:AtomicIsize=AtomicIsize::new(0);
-static CAPSULE:AtomicIsize=AtomicIsize::new(0);
 /// The Îlot menu is open and waits for a choice (lot 3): its keys belong to the frontend.
 static MENU_OPEN:AtomicBool=AtomicBool::new(false);
 /// Where the hook hands the menu keys it took from the source (a worker emits them).
 static MENU_KEYS:OnceLock<std::sync::mpsc::SyncSender<MenuKey>>=OnceLock::new();
 
-pub fn escape_scope(source:isize,overlay:isize,capsule:isize){
-    SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);CAPSULE.store(capsule,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
+pub fn escape_scope(source:isize,overlay:isize){
+    SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
 }
 pub fn close_escape_scope(){OVERLAY_VISIBLE.store(false,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
 pub fn take_escape()->bool{ESCAPE_PENDING.swap(false,Ordering::AcqRel)}
@@ -321,7 +320,7 @@ pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static)->Result<
                     }
                 }
                 // With the overlay in front, every key (Escape included) belongs to the WebView.
-            }else if key.vkCode==VK_ESCAPE.0 as u32&&fg!=0&&[SOURCE.load(Ordering::Relaxed),OVERLAY.load(Ordering::Relaxed),CAPSULE.load(Ordering::Relaxed)].contains(&fg){
+            }else if key.vkCode==VK_ESCAPE.0 as u32&&fg!=0&&[SOURCE.load(Ordering::Relaxed),OVERLAY.load(Ordering::Relaxed)].contains(&fg){
                 if [WM_KEYDOWN,WM_SYSKEYDOWN].contains(&message){ESCAPE_PENDING.store(true,Ordering::Release);return LRESULT(1);}
                 if [WM_KEYUP,WM_SYSKEYUP].contains(&message){return LRESULT(1);}
             }
@@ -505,7 +504,7 @@ pub fn monitor_info(handle: isize) -> (Rect, f64) {
     )
 }
 
-// The overlay and the capsule never go through Tao's show()/hide(): show() uses
+// The overlay and the halo never go through Tao's show()/hide(): show() uses
 // SetWindowPos directly so the source keeps its focus, and any later Tao
 // visibility diff rebuilds the styles with WS_CAPTION | WS_SYSMENU (Tao 0.35
 // `WindowFlags::apply_diff`), which DWM then paints as a « FlowTranslate » title.
@@ -743,6 +742,50 @@ pub fn place(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
     Ok(())
 }
 
+/// The halo (lot 6) draws over other windows and never takes a click, the focus, a taskbar
+/// button or an Alt+Tab entry (a tool window, without the WS_EX_APPWINDOW Tao gives every
+/// top-level window). Its styles are set once and never touched by the hit tester (it
+/// publishes no surface); `place_below` re-applies them should Tao have rebuilt them.
+const HALO_EX_STYLE: isize = (WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
+
+unsafe fn halo_style_hwnd(hwnd: HWND) {
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = (current | HALO_EX_STYLE) & !(WS_EX_APPWINDOW.0 as isize);
+        if next != current {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+        }
+    }
+}
+
+pub fn halo_style(window: &WebviewWindow) -> Result<(), String> {
+    let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
+    unsafe { halo_style_hwnd(hwnd) };
+    Ok(())
+}
+
+/// Places the window at `rect` (physical) right under `above` in the z-order (the top of
+/// the topmost band when `above` is 0) and shows it without activating it. It moves while
+/// still hidden first: on a screen of another DPI, Tao resizes the window when
+/// WM_DPICHANGED arrives, and the second call restores the exact rectangle.
+pub fn place_below(window: &WebviewWindow, rect: Rect, above: isize) -> Result<(), String> {
+    let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
+    let (x, y) = (rect.x.round() as i32, rect.y.round() as i32);
+    let (width, height) = (rect.width.round().max(1.) as i32, rect.height.round().max(1.) as i32);
+    unsafe {
+        halo_style_hwnd(hwnd);
+        let mut flags = SWP_NOACTIVATE | SWP_NOZORDER;
+        if strip_chrome_hwnd(hwnd) {
+            flags |= SWP_FRAMECHANGED;
+        }
+        SetWindowPos(hwnd, None, x, y, width, height, flags).map_err(|_| "Placement indisponible.".to_string())?;
+        let after = if above != 0 { HWND(above as *mut _) } else { HWND_TOPMOST };
+        SetWindowPos(hwnd, Some(after), x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            .map_err(|_| "Placement indisponible.".to_string())?;
+    }
+    Ok(())
+}
+
 /// Publishes the surfaces the hit tester reads. The pass-through state is set at once:
 /// the cursor is almost always outside the glass when it appears, and a surface that
 /// just vanished under the pointer must stop catching clicks before the next poll.
@@ -753,16 +796,6 @@ pub fn set_regions(window: &WebviewWindow, regions: &[SurfaceRegion], scale: f64
     unsafe { pass_through(hwnd, !cursor_inside(hwnd, &surface)) };
     remember_surface(h.0 as isize, surface);
     Ok(())
-}
-
-pub fn show(
-    window: &WebviewWindow,
-    rect: Rect,
-    regions: &[SurfaceRegion],
-    scale: f64,
-) -> Result<(), String> {
-    place(window, rect)?;
-    set_regions(window, regions, scale)
 }
 
 /// Strips any caption Tao rebuilt. Safe from any thread: both calls message the

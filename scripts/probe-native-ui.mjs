@@ -85,7 +85,7 @@ try {
   if (cycle === 0) {
     await page.screenshot({ path: resolve(output, 'webview-short.png') });
     result.framelessAfterShow = await expectFrameless('after show');
-    // The capsule click path: activation must not bring Tao's caption back nor set a region.
+    // The Îlot menu path: activation must not bring Tao's caption back nor set a region.
     await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('focus_overlay'));
     await page.waitForTimeout(400);
     result.framelessAfterFocus = await expectFrameless('after focus_overlay');
@@ -115,9 +115,10 @@ try {
   await expect(page.locator('.glass-overlay')).toHaveCount(0);
   result.domClosed = true;
   result.overlayVisibleAfterDomClose = await nativeVisible('overlay');
-  result.capsuleVisibleAfterDomClose = await nativeVisible('capsule');
+  // The halo window (lot 6) only sweeps under the Îlot while an action works: never here.
+  result.haloVisibleAfterDomClose = await nativeVisible('halo');
   await expect.poll(() => nativeVisible('overlay')).toBe(false);
-  await expect.poll(() => nativeVisible('capsule')).toBe(false);
+  await expect.poll(() => nativeVisible('halo')).toBe(false);
   result.nativeHidden = true;
   }
   report.status = 'passed';

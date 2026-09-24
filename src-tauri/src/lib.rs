@@ -3,6 +3,7 @@ use actions::{BindingKind, Execution, ExecutionInfo, OutputMode};
 mod capture;
 mod clipboard_guard;
 mod crypto;
+mod halo;
 mod history;
 mod host;
 mod inference;
@@ -94,7 +95,6 @@ struct Inner {
     pending_dismiss: Option<(String, u64)>,
     dismiss_generation: u64,
     last_overlay: Option<(Rect, Vec<SurfaceRegion>)>,
-    last_capsule: Option<Option<Rect>>,
     measured: bool,
     /// Bumped by every notice: the timed hide only acts on its own generation.
     notice_generation: u64,
@@ -141,7 +141,6 @@ impl Inner {
             pending_dismiss: None,
             dismiss_generation: 0,
             last_overlay: None,
-            last_capsule: None,
             measured: false,
             notice_generation: 0,
             last_result: None,
@@ -219,7 +218,6 @@ impl Inner {
         self.pending_dismiss = None;
         self.capture = None;
         self.last_overlay = None;
-        self.last_capsule = None;
         true
     }
 }
@@ -321,7 +319,7 @@ fn save_settings(
     let _ = app.emit_to("settings", "settings-changed", &settings);
     let mut public = settings;
     for profile in public.profiles.values_mut() { profile.api_key.clear(); }
-    for label in ["overlay", "capsule"] { let _ = app.emit_to(label, "settings-changed", &public); }
+    for label in SURFACES { let _ = app.emit_to(label, "settings-changed", &public); }
 
     Ok(())
 }
@@ -348,6 +346,7 @@ fn store_capture(
     // glass stays clickable into focus, as in 0.4); a menu takes its keys at once.
     let overlay = app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0);
     host::set_no_activate(overlay, false);
+    halo::hide(app);
     let is_menu = menu.is_some();
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
@@ -373,7 +372,6 @@ fn store_capture(
         i.pending_dismiss = None;
         i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
         i.last_overlay = None;
-        i.last_capsule = None;
         i.measured = false;
         if !i.frontend_ready {
             i.pending_capture = Some(public.clone());
@@ -493,9 +491,11 @@ enum Opening {
     Direct(Execution),
     Menu(Box<Settings>),
 }
+/// The windows that draw over the source: the overlay (Îlot, pill, glass) and the halo.
+const SURFACES: [&str; 2] = ["overlay", "halo"];
 /// Whether `handle` is one of FlowTranslate's own windows.
 fn ours(app: &AppHandle, handle: isize) -> bool {
-    handle != 0 && ["overlay", "capsule", "settings"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, handle)))
+    handle != 0 && ["overlay", "halo", "settings"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, handle)))
 }
 /// None when nothing was captured on purpose: a press while one of our windows holds
 /// the foreground (the Îlot has the keyboard) never captures our own window.
@@ -591,7 +591,7 @@ fn translate(
     if request.text.is_empty() || request.text.chars().count() > 6000 {
         return Err("La traduction accepte de 1 à 6 000 caractères.".into());
     }
-    let (profile, instruction, execution_info, cancel, inner, history, demo, demo_long) = {
+    let (profile, instruction, execution_info, cancel, inner, history, demo, demo_long, halo_lines) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         let captured = i
             .capture
@@ -616,6 +616,7 @@ fn translate(
         actions::validate_template(&run.action.prompt_template)?;
         let instruction = run.action.prompt_template.clone();
         let execution_info = run.info.clone();
+        let halo_lines = halo_lines(&i.settings, &captured.public);
         i.cancel(None);
         i.execution.as_mut().expect("validated execution").begin(&request.id);
         i.completed = None;
@@ -633,8 +634,16 @@ fn translate(
             state.history.clone(),
             state.simulated,
             state.demo_long,
+            halo_lines,
         )
     };
+    match halo_lines {
+        Some(lines) => halo::work(&app, &lines),
+        None => halo::hide(&app),
+    }
+    // Test only (FLOWTRANSLATE_SIMULATE_WORD_MS, simulated inference): a slower simulated
+    // stream, so the real-window checks can watch the halo while the work lasts.
+    let word_ms = std::env::var("FLOWTRANSLATE_SIMULATE_WORD_MS").ok().and_then(|value| value.parse::<u64>().ok()).map_or(65, |ms| ms.clamp(1, 2_000));
     tauri::async_runtime::spawn(async move {
         let id = request.id.clone();
         let result = if demo {
@@ -665,7 +674,7 @@ fn translate(
                         );
                     }
                 }
-                tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(65))=>{}}
+                tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(word_ms))=>{}}
             }
             if cancel.is_cancelled() {
                 Err("Traduction annulée.".into())
@@ -706,6 +715,8 @@ fn translate(
         if !i.current(&id) {
             return;
         }
+        // The response arrived: the sweep fades before the result lands.
+        halo::leave(&app);
         match result {
             Ok(text) => {
                 i.completed = Some(CompletedResult {
@@ -760,13 +771,19 @@ fn translate(
     });
     Ok(())
 }
+/// The lines the halo sweeps while an action works (lot 6): under the Îlot only, for a UIA
+/// selection that still has its anchor (the watcher removes it once the selection moved).
+fn halo_lines(settings: &Settings, capture: &Capture) -> Option<Vec<Rect>> {
+    (settings.ui_version == UiVersion::Ilot && capture.anchor.is_some() && !capture.selection_rects.is_empty())
+        .then(|| capture.selection_rects.clone())
+}
 #[tauri::command]
-fn cancel_translation(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
-    state
-        .inner
-        .lock()
-        .map_err(|_| lock_error())?
-        .cancel(Some(&request_id));
+fn cancel_translation(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+    let mut i = state.inner.lock().map_err(|_| lock_error())?;
+    let working = i.current(&request_id);
+    i.cancel(Some(&request_id));
+    drop(i);
+    if working { halo::hide(&app); }
     Ok(())
 }
 fn result_for(state: &AppState, id: &str) -> Result<CompletedResult, String> {
@@ -796,7 +813,7 @@ fn schedule_auto_delivery(app: &AppHandle) {
             c.target.take()
         });
         let fg = host::foreground();
-        let ours = ["overlay", "capsule"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
+        let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
         let outcome = target.as_ref().ok_or_else(|| "Aucune sélection à remplacer; le résultat reste dans la bulle.".to_string())
             .and_then(|target| if fg != target.native_window && !ours { Err("La fenêtre source a changé; remplacement refusé.".to_string()) } else { Ok(target) })
             .and_then(|target| capture::paste(target, &result.translated_text, true));
@@ -838,7 +855,7 @@ async fn replace_result(app: AppHandle, state: State<'_, AppState>, request_id: 
             return Err("Ce résultat n’est plus actif.".into());
         }
         let fg = host::foreground();
-        let ours = ["overlay", "capsule"].iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
+        let ours = SURFACES.iter().any(|label| app.get_webview_window(label).is_some_and(|w| host::belongs_to(&w, fg)));
         let c = i.capture.as_mut().filter(|c| c.public.id == r.capture_id && c.public.can_replace)
             .ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
         let target = c.target.take().ok_or_else(|| "La sélection n’est plus disponible; utilisez Copier.".to_string())?;
@@ -855,15 +872,14 @@ fn schedule_finish_dismiss(app: AppHandle, capture_id: String, generation: u64) 
         let state = handle.state::<AppState>();
         let should_hide = state.inner.lock().map(|mut i| i.complete_pending_dismiss(&capture_id, generation)).unwrap_or(false);
         if should_hide {
-            for label in ["overlay", "capsule"] {
-                if let Some(window) = handle.get_webview_window(label) { let _ = host::hide(&window); }
-            }
+            if let Some(window) = handle.get_webview_window("overlay") { let _ = host::hide(&window); }
         }
     }).map_err(|_| "Fermeture de la traduction indisponible.".to_string())
 }
 
 fn dismiss(app: &AppHandle, state: &AppState) -> Result<(), String> {
     host::close_escape_scope();
+    halo::hide(app);
     host::set_menu_open(false, 0, 0);
     // The overlay had the keyboard (the Îlot, a click in the glass): the source gets it
     // back before the window hides, its selection untouched and nothing pasted. Hiding
@@ -1138,11 +1154,7 @@ fn overlay_dimming(app: AppHandle, state: State<'_, AppState>, dimming: bool) ->
         if !i.visible { return Ok(()); }
         i.source_window
     };
-    host::escape_scope(
-        source,
-        app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0),
-        app.get_webview_window("capsule").map(|window| host::handle(&window)).unwrap_or(0),
-    );
+    host::escape_scope(source, app.get_webview_window("overlay").map(|window| host::handle(&window)).unwrap_or(0));
     Ok(())
 }
 
@@ -1309,7 +1321,7 @@ fn position(
     height: f64,
     placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
 ) -> Result<(), String> {
-    let (capture_id, rect, capsule, scale, regions, apply_rect, apply_regions, apply_capsule) = {
+    let (capture_id, rect, scale, regions, apply_rect, apply_regions) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible {
             return Ok(());
@@ -1339,14 +1351,14 @@ fn position(
         if i.dragging {
             return Ok(());
         }
-        // Docked glass and unanchored captures rest bottom-centre on the tab; the capsule
-        // window is no longer shown. Anchored glass keeps its drag position or its anchor.
+        // Docked glass and unanchored captures rest bottom-centre on the tab. Anchored
+        // glass keeps its drag position or its anchor.
         // How far the window reaches below the glass top: the menu space reserved under
         // the pill counts when the side is chosen (the glass would otherwise be pushed up
         // over its anchor by the clamp near the bottom edge).
         let extent = h - surface.y * s;
         let mut regions = regions;
-        let result: (Rect, Option<Rect>, f64) = match (i.presentation == Presentation::Bottom || cap.anchor.is_none(), i.manual, cap.anchor) {
+        let result: (Rect, f64) = match (i.presentation == Presentation::Bottom || cap.anchor.is_none(), i.manual, cap.anchor) {
             (true, _, _) | (_, _, None) => {
                 let rect = placement::docked(work, w, h);
                 // A work area shorter than the reserved window truncates it from the top
@@ -1354,9 +1366,9 @@ fn position(
                 if rect.height < h {
                     regions = shift_regions(&regions, (rect.height - h) / s);
                 }
-                (rect, None, s)
+                (rect, s)
             }
-            (false, Some(manual), _) => (to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }), None, s),
+            (false, Some(manual), _) => (to_host(Rect { x: manual.x, y: manual.y, width: glass_w, height: glass_h }), s),
             (false, None, Some(anchor)) => {
                 // Design « 1a »: compact and enlarged glass share the anchored top-left
                 // corner; a larger glass is shifted by the clamp, never recentred.
@@ -1365,15 +1377,14 @@ fn position(
                 }
                 let (glass, side) = placement::overlay(anchor, work, glass_w, glass_h, extent, i.side);
                 i.side = Some(side);
-                (to_host(glass), None, s)
+                (to_host(glass), s)
             }
         };
         let apply_rect = i.last_overlay.as_ref().is_none_or(|last| last.0 != result.0);
         let apply_regions = i.last_overlay.as_ref().is_none_or(|last| last.1 != regions);
-        let apply_capsule = i.last_capsule.as_ref() != Some(&result.1);
-        (capture_id, result.0, result.1, result.2, regions, apply_rect, apply_regions, apply_capsule)
+        (capture_id, result.0, result.1, regions, apply_rect, apply_regions)
     };
-    finish_position(app, capture_id, rect, capsule, scale, regions, apply_rect, apply_regions, apply_capsule, placed)
+    finish_position(app, capture_id, rect, scale, regions, apply_rect, apply_regions, placed)
 }
 
 /// Moves regions by `dy` logical pixels, clipping whatever leaves the window through its top.
@@ -1393,12 +1404,10 @@ fn finish_position(
     app: &AppHandle,
     capture_id: String,
     rect: Rect,
-    capsule: Option<Rect>,
     scale: f64,
     regions: Vec<SurfaceRegion>,
     apply_rect: bool,
     apply_regions: bool,
-    apply_capsule: bool,
     placed: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
 ) -> Result<(), String> {
     let handle = app.clone();
@@ -1416,17 +1425,7 @@ fn finish_position(
             i.source_window
         };
         let result = (|| -> Result<(), String> {
-          if apply_capsule {
-            if let Some(window) = handle.get_webview_window("capsule") {
-                if let Some(capsule) = capsule { host::show(&window, capsule, &[], scale)?; }
-                else { host::hide(&window)?; }
-            } else {
-                return Err("Capsule indisponible.".into());
-            }
-          }
-          host::escape_scope(source_window,
-            handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0),
-            handle.get_webview_window("capsule").map(|window|host::handle(&window)).unwrap_or(0));
+          host::escape_scope(source_window, handle.get_webview_window("overlay").map(|window|host::handle(&window)).unwrap_or(0));
           if apply_rect || apply_regions {
             let window = handle.get_webview_window("overlay").ok_or_else(|| "Traduction indisponible.".to_string())?;
             // Folds, unfolds and menus only change the surfaces: no SetWindowPos.
@@ -1438,7 +1437,6 @@ fn finish_position(
               return Err("La capture n’est plus active.".into());
           }
           if apply_rect || apply_regions { i.last_overlay = Some((rect, regions)); }
-          if apply_capsule { i.last_capsule = Some(capsule); }
           Ok(())
         })();
         if let Some(placed) = placed { let _ = placed.send(result); }
@@ -1480,7 +1478,7 @@ fn watch_context(app: AppHandle) {
                 (i.source_window, i.source_rect, i.capture.clone(), i.size)
             };
             let fg = host::foreground();
-            let ours = ["overlay", "capsule"].iter().any(|l| {
+            let ours = SURFACES.iter().any(|l| {
                 app.get_webview_window(l)
                     .is_some_and(|w| host::belongs_to(&w, fg))
             });
@@ -1491,7 +1489,10 @@ fn watch_context(app: AppHandle) {
                 let _ = dismiss(&app, &state);
             }
             escape_was_down = down;
-            if ticks % 12 != 0 || state.demo {
+            // Every 420 ms; every 105 ms while the halo sweeps over the lines: a scroll or a
+            // move must not leave it over other text for long.
+            let period = if halo::visible() { 3 } else { 12 };
+            if ticks % period != 0 || state.demo {
                 continue;
             }
             let Some(captured) = snapshot.2 else { continue };
@@ -1506,6 +1507,7 @@ fn watch_context(app: AppHandle) {
                     .as_ref()
                     .is_some_and(|t| capture::validate_target(t).is_err());
             if moved || switched || changed {
+                halo::hide(&app);
                 let id = captured.public.id;
                 {
                     let Ok(mut i) = state.inner.lock() else {
@@ -1604,19 +1606,23 @@ pub fn run() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
-            for label in ["overlay", "capsule"] {
-                if let Some(w) = app.get_webview_window(label) {
-                    host::apply_glass(&w);
-                    host::silence_frame(&w)?;
-                    let native = host::handle(&w);
-                    w.on_window_event(move |event| {
-                        if matches!(event, tauri::WindowEvent::Focused(_)) {
-                            tauri::async_runtime::spawn_blocking(move || {
-                                let _ = host::repair_handle(native);
-                            });
-                        }
-                    });
-                }
+            if let Some(w) = app.get_webview_window("halo") {
+                // Never hit, never activated, no material: see halo.rs.
+                host::silence_frame(&w)?;
+                w.set_ignore_cursor_events(true)?;
+                host::halo_style(&w)?;
+            }
+            if let Some(w) = app.get_webview_window("overlay") {
+                host::apply_glass(&w);
+                host::silence_frame(&w)?;
+                let native = host::handle(&w);
+                w.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Focused(_)) {
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let _ = host::repair_handle(native);
+                        });
+                    }
+                });
             }
             host::start_hit_tester(app.handle().clone(), app.get_webview_window("overlay").map(|w| host::handle(&w)).unwrap_or(0), screen_changed);
             if let Some(w) = app.get_webview_window("settings") {
@@ -1804,6 +1810,20 @@ mod tests {
         assert!(i.current("new"));
         i.cancel(Some("new"));
         assert!(!i.current("new"));
+    }
+    #[test]
+    fn the_halo_sweeps_only_an_anchored_uia_selection_under_the_ilot() {
+        let line = Rect { x: 10., y: 20., width: 300., height: 18. };
+        let capture = Capture { id: "c".into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: Some(line), selection_rects: vec![line], screen: None, replay: None, execution: None, menu: None };
+        let mut settings = Settings::default();
+        settings.ui_version = UiVersion::V4;
+        assert_eq!(halo_lines(&settings, &capture), None, "the 0.4 journey has no halo");
+        settings.ui_version = UiVersion::Ilot;
+        assert_eq!(halo_lines(&settings, &capture), Some(vec![line]));
+        let moved = Capture { anchor: None, ..capture.clone() };
+        assert_eq!(halo_lines(&settings, &moved), None, "an invalidated selection is not swept");
+        let copied = Capture { origin: CaptureOrigin::Copy, source: CaptureSource::Clipboard, anchor: None, selection_rects: Vec::new(), ..capture };
+        assert_eq!(halo_lines(&settings, &copied), None, "the copy paths have no rectangles");
     }
     #[test]
     fn cancelled_token_cannot_complete() {

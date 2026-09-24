@@ -15,7 +15,6 @@ use crate::types::Rect;
 pub const MAX_LINES: usize = 64;
 
 /// Room around the lines for the glow of the sweep, in logical pixels (DA-PLAN lot 6).
-#[cfg_attr(not(test), allow(dead_code))] // the halo window (lot 6)
 pub const HALO_MARGIN: f64 = 12.;
 
 /// Finite and not empty.
@@ -110,7 +109,6 @@ fn cap(segments: Vec<Rect>) -> Vec<Rect> {
 }
 
 /// Where the halo window goes and what it draws.
-#[cfg_attr(not(test), allow(dead_code))] // the halo window (lot 6)
 #[derive(Clone, Debug, PartialEq)]
 pub struct HaloFrame {
     /// The window, in physical screen pixels, on whole pixels: the union of the lines
@@ -128,7 +126,6 @@ pub struct HaloFrame {
 /// scale: 1, 1.5, 2…). The physical origin of the screen matters only through the
 /// window's own origin, so a screen left of or above the primary one (negative
 /// coordinates) converts the same way.
-#[cfg_attr(not(test), allow(dead_code))] // the halo window (lot 6)
 pub fn halo_frame(lines: &[Rect], scale: f64, margin: f64) -> Option<HaloFrame> {
     if !(scale.is_finite() && scale > 0.) {
         return None;

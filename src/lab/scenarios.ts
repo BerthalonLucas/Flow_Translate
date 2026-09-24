@@ -7,7 +7,7 @@ export const scenarios = [
   { id: 'notice', label: 'Rien à traduire', issue: 'UI-020', expected: 'Pilule seule à 13 px, « Rien à traduire dans la fenêtre active », aucune boîte de dialogue ; disparaît d’elle-même après quatre secondes (rejouée ici toutes les trois secondes).' },
   { id: 'settings', label: 'Réglages', issue: 'UI-005', expected: 'Surface cohérente sur toute la fenêtre ; thème Windows ; aucune marge blanche parasite.' },
   { id: 'history', label: 'Historique de démonstration', issue: 'UI-005', expected: 'Anciennes traductions accessibles et lisibles. Données fictives uniquement.' },
-  { id: 'capsule', label: 'Capsule (fenêtre retirée)', issue: 'UI-002', expected: 'Remplacée par l’onglet du verre replié ; conservée ici pour mémoire.' },
+  { id: 'halo', label: 'Halo : balayage de lumière', issue: 'Îlot lot 6', expected: 'Une bande par ligne sélectionnée, rayon 3 px, dégradé violet, rose, ambre à 0,32 qui passe d’une ligne à la suivante sans repartir (1,6 s) ; voile fixe dans les mêmes couleurs en animations réduites (le rendu de référence). La vraie fenêtre halo ne prend jamais un clic.' },
 ] as const;
 export type Scenario = typeof scenarios[number]['id'];
 export function scenarioFrom(value: string | null) { return scenarios.find(item => item.id === value) ?? scenarios[0]; }
