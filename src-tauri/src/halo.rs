@@ -18,6 +18,9 @@ static VISIBLE: AtomicBool = AtomicBool::new(false);
 static MARKS: AtomicBool = AtomicBool::new(false);
 /// A `leave` is under way for the current generation: a second one sends nothing.
 static LEAVING: AtomicBool = AtomicBool::new(false);
+/// The generation whose fade `leave` started (0: none yet): its window hides by itself once the
+/// fade is over, unless a newer generation overtook it.
+static FADING: AtomicU64 = AtomicU64::new(0);
 /// The sweep fades out in 150 ms, the marks in 900 ms; the window hides once that is over.
 const LEAVE: Duration = Duration::from_millis(200);
 const LEAVE_MARKS: Duration = Duration::from_millis(950);
@@ -99,6 +102,7 @@ fn show(app: &AppHandle, lines: &[Rect], phase: HaloPhase) {
 pub fn leave(app: &AppHandle) {
     if !visible() || LEAVING.swap(true, Ordering::AcqRel) { return; }
     let generation = GENERATION.load(Ordering::Acquire);
+    FADING.store(generation, Ordering::Release);
     let delay = if MARKS.load(Ordering::Acquire) { LEAVE_MARKS } else { LEAVE };
     let _ = app.emit_to("halo", "halo", HaloEvent::empty(generation, HaloPhase::Leave));
     let handle = app.clone();
@@ -113,8 +117,22 @@ pub fn marking() -> bool {
     visible() && MARKS.load(Ordering::Acquire) && !LEAVING.load(Ordering::Acquire)
 }
 
-/// Hides at once: dismissal, a new capture, a cancelled request, a selection that moved,
-/// scrolled or changed. Never waits for the page.
+/// The overlay is dismissed: the halo hides at once, unless it is already fading out (`leave`:
+/// the marks' 900 ms at the end of Undo's countdown, which the pill's own leaving follows in the
+/// same turn). That fade ends as promised, then its window hides by itself (review of lot 9,
+/// finding 4).
+pub fn dismiss(app: &AppHandle) {
+    if !fading(&GENERATION, &FADING) { hide(app); }
+}
+
+/// Whether the current generation is fading out: `leave` started it and nothing overtook it.
+fn fading(generation: &AtomicU64, faded: &AtomicU64) -> bool {
+    let current = generation.load(Ordering::Acquire);
+    current != 0 && faded.load(Ordering::Acquire) == current
+}
+
+/// Hides at once: a new capture, a cancelled request, a selection that moved, scrolled or
+/// changed, an Undo. Never waits for the page.
 pub fn hide(app: &AppHandle) {
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     hide_window(app, generation);
@@ -129,4 +147,25 @@ fn hide_window(app: &AppHandle, generation: u64) {
             let _ = handle.emit_to("halo", "halo", HaloEvent::empty(generation, HaloPhase::Clear));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dismissal_lets_a_halo_that_already_fades_out_end_its_fade() {
+        let (generation, faded) = (AtomicU64::new(0), AtomicU64::new(0));
+        assert!(!fading(&generation, &faded), "nothing shown yet: a dismissal hides");
+        // The marks of a paste are shown (generation 3): a dismissal hides them at once.
+        generation.store(3, Ordering::Release);
+        assert!(!fading(&generation, &faded));
+        // Undo's countdown ended: `leave` fades them out (900 ms), then hides the window. The
+        // pill's dismissal that follows in the same turn leaves that fade alone.
+        faded.store(3, Ordering::Release);
+        assert!(fading(&generation, &faded));
+        // A newer generation (the next capture's sweep, a hide) is not fading: hidden at once.
+        generation.store(4, Ordering::Release);
+        assert!(!fading(&generation, &faded));
+    }
 }
