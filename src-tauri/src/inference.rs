@@ -298,7 +298,7 @@ where
                     }
                 },
                 Some(Err(error)) => return Err(if error.is_timeout() {
-                    AppError::new(ErrorKind::Timeout, unreachable_message(&profile.endpoint, ErrorKind::Timeout))
+                    AppError::new(ErrorKind::Timeout, unreachable_message(&profile.endpoint, ErrorKind::Timeout, Cause::Other))
                 } else {
                     broken("Le flux du serveur a été interrompu.")
                 }),
@@ -326,13 +326,101 @@ where
 /// A request that got no answer: nothing at the address (refused, unknown host, TLS, a
 /// connection that never opened in time) or a server that stopped answering in time.
 fn transport(endpoint: &str, error: &reqwest::Error) -> AppError {
-    let kind = if error.is_timeout() && !error.is_connect() { ErrorKind::Timeout } else { ErrorKind::Unreachable };
-    AppError::new(kind, unreachable_message(endpoint, kind))
+    if error.is_timeout() && !error.is_connect() {
+        return AppError::new(ErrorKind::Timeout, unreachable_message(endpoint, ErrorKind::Timeout, Cause::Other));
+    }
+    let cause = if error.is_timeout() { Cause::Silent } else { cause(error) };
+    AppError::new(ErrorKind::Unreachable, unreachable_message(endpoint, ErrorKind::Unreachable, cause))
+}
+
+/// Why a connection failed (25/09: an endpoint behind a firewall only said « injoignable »). Read
+/// from the errors under reqwest's; they are never shown nor logged as they are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cause {
+    /// Windows refused the server's certificate: its authority, its name or its dates.
+    Certificate,
+    /// The secure connection failed otherwise: no TLS at the address, or nothing in common.
+    Tls,
+    /// The name did not resolve.
+    Name,
+    /// Nothing listens at the address.
+    Refused,
+    /// No route to the server: the network or a firewall.
+    Network,
+    /// The connection never opened in time.
+    Silent,
+    /// The connection was cut while it opened.
+    Reset,
+    Other,
+}
+
+/// The first cause the chain names: an OS code (a socket's WSA code, schannel's SEC_E and
+/// CERT_E codes) or a TLS error, whose code std prints as « (os error N) ».
+fn cause(error: &(dyn std::error::Error + 'static)) -> Cause {
+    let mut next = Some(error);
+    while let Some(current) = next {
+        next = current.source();
+        if let Some(io) = current.downcast_ref::<std::io::Error>() {
+            if let Some(found) = io.raw_os_error().map(os_cause).filter(|found| *found != Cause::Other) {
+                return found;
+            }
+            match io.kind() {
+                std::io::ErrorKind::ConnectionRefused => return Cause::Refused,
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted => return Cause::Reset,
+                std::io::ErrorKind::TimedOut => return Cause::Silent,
+                _ => {}
+            }
+            // A wrapping io::Error hides what it wraps from `source`.
+            if let Some(inner) = io.get_ref() {
+                next = Some(inner);
+            }
+        }
+        if let Some(tls) = current.downcast_ref::<native_tls::Error>() {
+            return tls_cause(&tls.to_string());
+        }
+    }
+    Cause::Other
+}
+
+fn tls_cause(text: &str) -> Cause {
+    let code = text.rsplit_once("(os error ").and_then(|(_, tail)| tail.trim_end_matches(')').trim().parse::<i32>().ok());
+    match code.map(os_cause) {
+        Some(Cause::Certificate) => Cause::Certificate,
+        _ => Cause::Tls,
+    }
+}
+
+fn os_cause(code: i32) -> Cause {
+    match code {
+        11001..=11004 => Cause::Name,
+        10061 => Cause::Refused,
+        10051 | 10065 => Cause::Network,
+        10060 => Cause::Silent,
+        10053 | 10054 => Cause::Reset,
+        _ => match code as u32 {
+            // CERT_E_*, revocation (CRYPT_E_REVOKED, _NO_REVOCATION_CHECK, _REVOCATION_OFFLINE), a
+            // bad signature, and schannel's own certificate codes (wrong name, untrusted root,
+            // unknown, expired, wrong usage, untrusted issuing CA).
+            0x800B_0101..=0x800B_0114
+            | 0x8009_2010
+            | 0x8009_2012
+            | 0x8009_2013
+            | 0x8009_6004
+            | 0x8009_0322
+            | 0x8009_0325
+            | 0x8009_0327
+            | 0x8009_0328
+            | 0x8009_0349
+            | 0x8009_0352 => Cause::Certificate,
+            0x8009_0300..=0x8009_03FF => Cause::Tls,
+            _ => Cause::Other,
+        },
+    }
 }
 
 /// The raw reqwest text names the full URL and the transport; the glass only
-/// needs the host and what to do about it.
-fn unreachable_message(endpoint: &str, kind: ErrorKind) -> String {
+/// needs the host, the cause and what to do about it.
+fn unreachable_message(endpoint: &str, kind: ErrorKind, cause: Cause) -> String {
     let target = reqwest::Url::parse(endpoint)
         .ok()
         .and_then(|url| {
@@ -342,9 +430,18 @@ fn unreachable_message(endpoint: &str, kind: ErrorKind) -> String {
             })
         })
         .unwrap_or_else(|| "configuré".to_string());
-    match kind {
-        ErrorKind::Timeout => format!("Le serveur {target} ne répond pas."),
-        _ => format!("Serveur {target} injoignable. Démarrez-le ou changez de profil dans les Réglages."),
+    if kind == ErrorKind::Timeout {
+        return format!("Le serveur {target} ne répond pas.");
+    }
+    match cause {
+        Cause::Certificate => format!("Certificat de {target} refusé par Windows : autorité inconnue de ce poste, nom ou dates."),
+        Cause::Tls => format!("Connexion sécurisée impossible avec {target} : vérifiez que ce serveur parle bien HTTPS."),
+        Cause::Name => format!("Nom {target} introuvable : vérifiez l’adresse ou le DNS de ce poste."),
+        Cause::Refused => format!("Serveur {target} injoignable : rien n’écoute à cette adresse. Démarrez-le ou changez de profil dans les Réglages."),
+        Cause::Network => format!("Serveur {target} injoignable depuis ce poste : réseau ou pare-feu."),
+        Cause::Silent => format!("Serveur {target} injoignable : la connexion ne s’ouvre pas à temps (pare-feu ou proxy ?)."),
+        Cause::Reset => format!("Serveur {target} injoignable : la connexion a été coupée (pare-feu ou proxy ?)."),
+        Cause::Other => format!("Serveur {target} injoignable. Démarrez-le ou changez de profil dans les Réglages."),
     }
 }
 
@@ -613,6 +710,72 @@ mod tests {
         // The display failed on our side while the answer streamed.
         let ours = stream_within(profile(ok), "p".into(), "t".into(), CancellationToken::new(), Limits::default(), |_| Err(AppError::internal("Flux d’affichage indisponible."))).await;
         assert_eq!(ours.unwrap_err().kind, ErrorKind::Internal);
+    }
+
+    #[test]
+    fn a_failed_connection_names_its_cause_from_the_windows_codes() {
+        assert_eq!(os_cause(11001), Cause::Name);
+        assert_eq!(os_cause(11004), Cause::Name);
+        assert_eq!(os_cause(10061), Cause::Refused);
+        assert_eq!(os_cause(10065), Cause::Network);
+        assert_eq!(os_cause(10060), Cause::Silent);
+        assert_eq!(os_cause(10054), Cause::Reset);
+        // CERT_E_UNTRUSTEDROOT, CERT_E_CHAINING, CERT_E_EXPIRED, SEC_E_UNTRUSTED_ROOT, SEC_E_WRONG_PRINCIPAL.
+        for hresult in [0x800B_0109u32, 0x800B_010A, 0x800B_0101, 0x8009_0325, 0x8009_0322] {
+            assert_eq!(os_cause(hresult as i32), Cause::Certificate, "{hresult:#x}");
+        }
+        // SEC_E_ILLEGAL_MESSAGE, SEC_E_ALGORITHM_MISMATCH: TLS, not the certificate.
+        assert_eq!(os_cause(0x8009_0326u32 as i32), Cause::Tls);
+        assert_eq!(os_cause(0x8009_0331u32 as i32), Cause::Tls);
+        assert_eq!(os_cause(5), Cause::Other);
+        // What std prints for schannel's code, whatever the language of Windows' own words.
+        assert_eq!(tls_cause("Une chaîne de certificats a été émise par une autorité non approuvée. (os error -2146762487)"), Cause::Certificate);
+        assert_eq!(tls_cause("The message received was unexpected or badly formatted. (os error -2146893018)"), Cause::Tls);
+        assert_eq!(tls_cause("handshake failed"), Cause::Tls);
+        // The message keeps the host and never the path.
+        let message = unreachable_message("https://inference.example.test:8443/v1", ErrorKind::Unreachable, Cause::Certificate);
+        assert!(message.contains("inference.example.test:8443") && message.contains("Certificat") && !message.contains("/v1"));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_says_why() {
+        // Nothing listens: a port taken then released (Windows takes about 2 s to say so).
+        let closed = { let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); listener.local_addr().unwrap().port() };
+        let refused = check(&profile(format!("http://127.0.0.1:{closed}/v1"))).await.unwrap_err();
+        assert_eq!(refused.kind, ErrorKind::Unreachable);
+        assert!(refused.message.contains("rien n’écoute"), "{}", refused.message);
+        // A name that never resolves (.invalid is reserved for that).
+        let unknown = check(&profile("https://flowtranslate-test.invalid/v1".into())).await.unwrap_err();
+        assert_eq!(unknown.kind, ErrorKind::Unreachable);
+        assert!(unknown.message.contains("introuvable"), "{}", unknown.message);
+        // HTTPS to a server that answers plain HTTP at once: the handshake fails.
+        let plain = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = plain.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            for connection in plain.incoming() {
+                let Ok(mut connection) = connection else { break };
+                let _ = connection.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            }
+        });
+        let tls = check(&profile(format!("https://127.0.0.1:{port}/v1"))).await.unwrap_err();
+        assert_eq!(tls.kind, ErrorKind::Unreachable);
+        assert!(tls.message.contains("Connexion sécurisée impossible"), "{}", tls.message);
+    }
+
+    /// Real certificates Windows refuses and a public one it accepts (badssl.com, example.com):
+    /// needs the Internet, run by hand with `cargo test -- --ignored certificates`.
+    #[tokio::test]
+    #[ignore = "reaches badssl.com and example.com"]
+    async fn windows_refuses_bad_certificates_and_accepts_a_public_one() {
+        for host in ["self-signed.badssl.com", "untrusted-root.badssl.com", "expired.badssl.com", "wrong.host.badssl.com"] {
+            let error = check(&profile(format!("https://{host}/v1"))).await.unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Unreachable, "{host}");
+            assert!(error.message.starts_with("Certificat de"), "{host}: {}", error.message);
+        }
+        // A public certificate: TLS passes, the server then answers 404 on /v1/models.
+        let public = check(&profile("https://example.com/v1".into())).await.unwrap_err();
+        assert_ne!(public.kind, ErrorKind::Unreachable, "{}", public.message);
     }
 
     #[tokio::test]
