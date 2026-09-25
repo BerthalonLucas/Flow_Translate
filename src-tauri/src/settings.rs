@@ -255,6 +255,35 @@ pub(crate) fn replace_file(source: &Path, destination: &Path) -> Result<(), Stri
         .map_err(|_| "Impossible de finaliser les paramètres.".to_string())
 }
 
+/// « Restore default settings » (Lucas, 24/09): a fresh install's settings, its actions,
+/// shortcut, menu, appearance and result bubble included, but what sets this device up stays:
+/// the connection (its profiles and the default one), the history switch, the start with
+/// Windows and the language of the interface.
+pub fn reset(current: &Settings) -> Settings {
+    Settings {
+        mode: current.mode,
+        profiles: current.profiles.clone(),
+        connection_expanded: current.connection_expanded,
+        history_enabled: current.history_enabled,
+        autostart: current.autostart,
+        language: current.language,
+        ..Settings::default()
+    }
+}
+
+/// Windows refused the default menu chord to `reset` (another application holds Ctrl+Alt+Space,
+/// Claude desktop on Lucas's PC): the same settings with the menu on the chord it had, when it
+/// had another one, enabled. None otherwise: the refusal stands.
+pub fn keep_menu_chord(fresh: &Settings, current: &Settings) -> Option<Settings> {
+    let chord = &current.shortcut_bindings.iter().find(|b| b.kind == actions::BindingKind::Menu && b.enabled)?.shortcut;
+    let mut kept = fresh.clone();
+    let menu = kept.shortcut_bindings.iter_mut().find(|b| b.kind == actions::BindingKind::Menu)?;
+    let id = |value: &str| actions::parse_shortcut(value).ok().map(|key| key.id());
+    if id(&menu.shortcut) == id(chord) { return None; }
+    menu.shortcut = chord.clone();
+    Some(kept)
+}
+
 pub fn validate(settings: &Settings) -> Result<(), String> {
     actions::validate(settings)?;
     if !(2..=20).contains(&settings.after_replace.undo_seconds) {
@@ -329,9 +358,11 @@ mod tests {
             let migrated = store.load().unwrap();
             assert_eq!(migrated.shortcut_bindings[0].shortcut, shortcut);
             assert_eq!(migrated.shortcut_bindings[0].enabled, shortcut == "Ctrl+Alt+Y");
-            assert_eq!(migrated.default_action_id, "translate-fr");
-            // The four actions of 0.4 first, then the Îlot defaults they lacked.
-            assert_eq!(migrated.actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["translate-fr", "translate-en", "correct", "professionalize", "translate", "shorten", "email"]);
+            assert_eq!(migrated.default_action_id, "correct", "0.4's own default action was never a choice");
+            // A fresh install's five actions, then the French translation the user's own shortcut
+            // runs; the English one, as shipped and unused, is gone.
+            assert_eq!(migrated.actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["correct", "translate", "professionalize", "shorten", "email", "translate-fr"]);
+            assert_eq!(migrated.actions[..5], Settings::default().actions[..]);
             assert_eq!(migrated.shortcut_bindings.len(), 2);
             assert_eq!((migrated.shortcut_bindings[1].kind, migrated.shortcut_bindings[1].shortcut.as_str()), (actions::BindingKind::Menu, "Ctrl+Alt+Space"));
             assert_eq!(migrated.profiles["fast"].model, "custom-fast");
@@ -364,12 +395,15 @@ mod tests {
         fs::write(root.join("settings.json"), serde_json::to_vec(&old).unwrap()).unwrap();
         let store = SettingsStore::new(&root);
         let migrated = store.load().unwrap();
+        let find = |id: &str| migrated.actions.iter().find(|a| a.id == id).unwrap();
         assert_eq!(migrated.default_action_id, "translate");
-        assert_eq!(migrated.actions[0].prompt_template, "Translate the following text into English. Output only the translated result without any additional explanation:");
-        assert_eq!(migrated.actions[1].prompt_template, "Résume en une phrase :");
+        assert_eq!(find("translate").prompt_template, "Translate the following text into English. Output only the translated result without any additional explanation:");
+        assert_eq!(find("custom").prompt_template, "Résume en une phrase :");
         assert_eq!(migrated.shortcut_bindings[0].action_id, "translate");
-        // The 0.3 « translate » keeps its name and its instruction: it takes the grid's T.
-        assert_eq!((migrated.actions[0].name.as_str(), migrated.actions[0].key.as_deref()), ("Traduire", Some("T")));
+        // The 0.3 « translate » keeps its name and its instruction: it takes the grid's T, in the
+        // place of a fresh install's, and the user's own action follows the five.
+        assert_eq!((find("translate").name.as_str(), find("translate").key.as_deref()), ("Traduire", Some("T")));
+        assert_eq!(migrated.actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["correct", "translate", "professionalize", "shorten", "email", "custom"]);
         let written = fs::read_to_string(root.join("settings.json")).unwrap();
         assert!(!written.contains("{{text}}") && !written.contains("targetLanguage"));
         fs::remove_dir_all(root).unwrap();
@@ -415,7 +449,7 @@ mod tests {
         })
     }
     #[test]
-    fn a_0_4_file_gains_the_ilot_grid_and_menu_shortcut_and_keeps_everything_else() {
+    fn a_0_4_file_gains_the_ilot_and_keeps_what_the_user_changed_or_created() {
         let root = std::env::temp_dir().join(format!("flowtranslate-migration-ilot-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let old = settings_0_4(serde_json::json!([
@@ -425,24 +459,32 @@ mod tests {
         fs::write(root.join("settings.json"), serde_json::to_vec_pretty(&old).unwrap()).unwrap();
         let store = SettingsStore::new(&root);
         let migrated = store.load().unwrap();
-        // Nothing of 0.4 is renamed, rewritten or dropped; a shipped id gets its icon, and
-        // « Professionnaliser » the short name « Pro » (review of da-ilot, n°9).
+        // Lucas, 24/09: what 0.4 shipped untouched gives way to a fresh install's (« Traduire en
+        // français » and its Ctrl+Alt+T); what the user changed or created is neither renamed nor
+        // rewritten, a shipped id gets its icon, and « Professionnaliser » the short name « Pro »
+        // (review of da-ilot, n°9).
+        assert_eq!(migrated.actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["correct", "translate", "professionalize", "shorten", "email", "translate-en", "action-1726412345678"]);
         let before: Vec<ActionDefinition> = serde_json::from_value(old["actions"].clone()).unwrap();
-        let looks = [(None, Some("Languages")), (None, Some("Languages")), (None, Some("SpellCheck")), (Some("Pro"), Some("BriefcaseBusiness")), (None, None)];
-        for ((kept, original), (short, icon)) in migrated.actions.iter().zip(&before).zip(looks) {
-            assert_eq!((&kept.id, &kept.name, &kept.prompt_template), (&original.id, &original.name, &original.prompt_template));
-            assert_eq!((kept.short_name.as_deref(), kept.icon.as_deref()), (short, icon), "{}", kept.id);
+        let looks = [("correct", None, Some("SpellCheck")), ("professionalize", Some("Pro"), Some("BriefcaseBusiness")), ("translate-en", None, Some("Languages")), ("action-1726412345678", None, None)];
+        for (id, short, icon) in looks {
+            let kept = migrated.actions.iter().find(|a| a.id == id).unwrap();
+            let original = before.iter().find(|a| a.id == id).unwrap();
+            assert_eq!((&kept.name, &kept.prompt_template), (&original.name, &original.prompt_template), "{id}");
+            assert_eq!((kept.short_name.as_deref(), kept.icon.as_deref()), (short, icon), "{id}");
         }
-        assert_eq!(migrated.actions.iter().skip(5).map(|a| a.id.as_str()).collect::<Vec<_>>(), ["translate", "shorten", "email"]);
-        assert_eq!(migrated.actions[5].name, "Translate");
+        let fresh = Settings::default().actions;
+        for id in ["translate", "shorten", "email"] {
+            assert_eq!(migrated.actions.iter().find(|a| a.id == id), fresh.iter().find(|a| a.id == id));
+        }
         let key = |id: &str| migrated.actions.iter().find(|a| a.id == id).unwrap().key.clone();
         assert_eq!(["correct", "translate", "professionalize", "shorten", "email"].map(|id| key(id)), ["F", "T", "P", "S", "E"].map(|k| Some(k.to_string())));
-        assert_eq!((key("translate-fr"), key("translate-en"), key("action-1726412345678")), (None, None, None));
+        assert_eq!((key("translate-en"), key("action-1726412345678")), (None, None));
         assert_eq!(migrated.menu_action_ids, ["correct", "translate", "professionalize", "shorten", "email"]);
         let before: Vec<ShortcutBinding> = serde_json::from_value(old["shortcutBindings"].clone()).unwrap();
-        assert_eq!(migrated.shortcut_bindings[..2], before[..], "Ctrl+Alt+T still translates into French, directly");
-        assert_eq!(migrated.shortcut_bindings[2], ShortcutBinding { id: "menu".into(), kind: actions::BindingKind::Menu, shortcut: "Ctrl+Alt+Space".into(), action_id: "correct".into(), output_mode: actions::OutputMode::Replace, enabled: true });
-        assert_eq!(migrated.default_action_id, "translate-fr");
+        assert_eq!(migrated.shortcut_bindings.len(), 2, "Ctrl+Alt+T, as 0.4 shipped it, is gone");
+        assert_eq!(migrated.shortcut_bindings[0], before[1], "the user's own shortcut stays, disabled");
+        assert_eq!(migrated.shortcut_bindings[1], ShortcutBinding { id: "menu".into(), kind: actions::BindingKind::Menu, shortcut: "Ctrl+Alt+Space".into(), action_id: "correct".into(), output_mode: actions::OutputMode::Replace, enabled: true });
+        assert_eq!(migrated.default_action_id, "correct");
         assert_eq!(migrated.ui_version, crate::types::UiVersion::Ilot, "0.5.0 opens the Îlot, its menu binding included");
         assert!(migrated.history_enabled && migrated.autostart && migrated.connection_expanded);
         assert_eq!((migrated.text_size, migrated.auto_close), (crate::types::TextSize::Large, crate::types::AutoClose::Slow));
@@ -466,6 +508,54 @@ mod tests {
         assert_eq!(migrated.shortcut_bindings[0].action_id, "translate-en");
         assert_eq!(migrated.menu_action_ids.len(), 5);
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn an_untouched_0_4_file_updates_like_a_fresh_install_and_keeps_the_rest() {
+        // Lucas's own update (24/09): 0.4 as shipped, only the connection and a few choices changed.
+        let root = std::env::temp_dir().join(format!("flowtranslate-migration-ilot-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let mut old = settings_0_4(serde_json::json!([
+            {"id": "primary", "shortcut": "Ctrl+Alt+T", "actionId": "translate-fr", "outputMode": "display", "enabled": true}
+        ]));
+        old["actions"] = serde_json::to_value(actions::legacy_defaults()).unwrap();
+        fs::write(root.join("settings.json"), serde_json::to_vec(&old).unwrap()).unwrap();
+        let migrated = SettingsStore::new(&root).load().unwrap();
+        let fresh = Settings::default();
+        assert_eq!(migrated.actions, fresh.actions, "no French action beside the English ones");
+        assert_eq!(migrated.shortcut_bindings, fresh.shortcut_bindings, "no Ctrl+Alt+T showing the result");
+        assert_eq!((&migrated.menu_action_ids, migrated.default_action_id.as_str()), (&fresh.menu_action_ids, "correct"));
+        assert_eq!((migrated.text_size, migrated.auto_close), (crate::types::TextSize::Large, crate::types::AutoClose::Slow));
+        assert!(migrated.history_enabled && migrated.autostart && migrated.connection_expanded);
+        assert_eq!(migrated.profiles["quality"].model, "custom-quality");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn restoring_the_defaults_keeps_only_what_sets_this_device_up() {
+        use crate::types::{Language, Mode, TextSize, Theme, UiVersion};
+        let mut current = Settings::default();
+        current.actions.push(ActionDefinition { id: "custom".into(), name: "Résumer".into(), prompt_template: "Résume.".into(), key: None, short_name: None, icon: None });
+        current.shortcut_bindings[0].shortcut = "Ctrl+Alt+Shift+Space".into();
+        current.menu_action_ids = vec!["custom".into()];
+        current.default_action_id = "custom".into();
+        (current.text_size, current.theme, current.ui_version) = (TextSize::Large, Theme::Dark, UiVersion::V4);
+        (current.mode, current.history_enabled, current.autostart, current.language, current.connection_expanded) = (Mode::Fast, true, true, Language::Fr, true);
+        current.profiles.get_mut("fast").unwrap().api_key = "synthetic-test-key".into();
+        current.profiles.get_mut("quality").unwrap().model = "custom-quality".into();
+        let fresh = reset(&current);
+        assert_eq!(fresh, Settings {
+            mode: Mode::Fast, history_enabled: true, autostart: true, language: Language::Fr, connection_expanded: true,
+            profiles: current.profiles.clone(), ..Settings::default()
+        });
+        assert!(validate(&fresh).is_ok());
+        // Windows refused Ctrl+Alt+Space: the menu keeps its chord, everything else is restored.
+        let kept = keep_menu_chord(&fresh, &current).unwrap();
+        assert_eq!(kept.shortcut_bindings[0].shortcut, "Ctrl+Alt+Shift+Space");
+        assert_eq!(Settings { shortcut_bindings: fresh.shortcut_bindings.clone(), ..kept.clone() }, fresh);
+        // Already on the default chord (or with no menu shortcut on), the refusal stands.
+        current.shortcut_bindings[0].shortcut = "Control+Alt+Space".into();
+        assert_eq!(keep_menu_chord(&fresh, &current), None);
+        current.shortcut_bindings[0] = ShortcutBinding { shortcut: "Ctrl+Alt+Y".into(), enabled: false, ..current.shortcut_bindings[0].clone() };
+        assert_eq!(keep_menu_chord(&fresh, &current), None);
     }
     #[test]
     fn endpoint_guards() {

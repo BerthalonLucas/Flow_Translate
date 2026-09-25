@@ -153,6 +153,12 @@ body.flowtranslate-settings { height: 100vh; overflow: hidden; }
 .shortcut-notice { margin: 0; line-height: 1.4; }
 .shortcut-row .shortcut-notice { flex: 1 0 100%; }
 .shortcut-notice[data-ok] { color: var(--text-subtle); }
+.shortcut-suggestion .text-button { margin-left: -6px; }
+/* « Restore default settings »: its question wraps under the copy when the row is narrow. */
+.reset-row { flex-wrap: wrap; }
+.reset-row .setting-copy { flex: 1 1 220px; }
+.reset-confirm { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.reset-row .row-warning { flex: 1 0 100%; margin: 0; }
 .setting-sub { margin-left: 18px; }
 .range-control { display: inline-flex; align-items: center; gap: 10px; flex: none; }
 .settings-window .range-control input { width: 132px; height: 22px; padding: 0; border: 0; background: transparent; accent-color: var(--switch-on); }

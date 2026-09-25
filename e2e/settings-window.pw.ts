@@ -11,6 +11,8 @@ type Fixture = {
   focusField: (field: string) => Promise<void>;
   refuseShortcut: () => void;
   shortcutStates: (states: Record<string, string>, emitNow?: boolean) => Promise<void> | undefined;
+  current: () => Settings;
+  suggestion: (value: string | null) => void;
 };
 async function openSettings(page: Page, query = '') {
   await page.route('**/?window=settings&fixture=1*', async route => {
@@ -220,6 +222,30 @@ test('a chord another application holds is said on its row, in English and Frenc
   await expect(menu.locator('[data-warning]')).toHaveCount(0);
 });
 
+test('a taken menu chord gets a free one to take in one click, in the interface language; none free, the notice alone', async ({ page }) => {
+  // Lucas, 24/09: Ctrl+Alt+Space already taken at the first launch (Claude desktop holds it on his PC).
+  await openSettings(page, '&shortcutTaken=menu');
+  const menu = page.locator('[data-field="menuShortcut"]');
+  const use = menu.getByRole('button', { name: 'Use Ctrl+Alt+Shift+Space', exact: true });
+  await expect(use).toBeVisible();
+  await expect(menu.locator('[data-warning="taken"]')).toContainText('Another app is already using Ctrl+Alt+Space');
+  expect(await call(page, f => f.calls.filter(c => c.command === 'suggest_shortcut').length)).toBeGreaterThanOrEqual(1);
+  await page.getByRole('radio', { name: 'Français', exact: true }).click();
+  await expect(menu.getByRole('button', { name: 'Utiliser Ctrl+Alt+Shift+Space', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'English', exact: true }).click();
+  await use.click();
+  await expect.poll(() => saved(page)).toMatchObject({ shortcutBindings: [expect.objectContaining({ kind: 'menu', shortcut: 'Ctrl+Alt+Shift+Space', enabled: true })] });
+  await expect(page.getByRole('status').filter({ hasText: 'Shortcut saved.' })).toBeVisible();
+  await expect(menu.locator('[data-warning]')).toHaveCount(0);
+  await expect(use).toHaveCount(0);
+  await expect(menu.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Shift', 'Space']);
+  // Taken again, and Windows gives none of Rust's proposals.
+  await call(page, f => f.suggestion(null));
+  await call(page, f => f.shortcutStates({ menu: 'taken' }));
+  await expect(menu.locator('[data-warning="taken"]')).toContainText('Ctrl+Alt+Shift+Space');
+  await expect(menu.getByRole('button', { name: /^Use / })).toHaveCount(0);
+});
+
 test('a 0.4 file whose Ctrl+Alt+Space runs an action directly gets a menu shortcut from the Menu row', async ({ page }) => {
   await openSettings(page);
   await call(page, f => f.settings({ shortcutBindings: [{ id: 'primary', kind: 'action', shortcut: 'Ctrl+Alt+Space', actionId: 'correct', outputMode: 'display', enabled: true }] }));
@@ -318,6 +344,72 @@ test('Restore brings back the shipped instruction of current and 0.4 built-in ac
   await expect.poll(async () => (await saved(page))?.actions.find(a => a.id === 'correct')).toEqual({ ...defaultActions[0], name: 'Corriger' });
   // A current default stays: no Delete.
   await expect(correct.getByRole('button', { name: /Delete action/ })).toHaveCount(0);
+});
+
+test('Restore default settings asks first, then brings a fresh install back and keeps the connection, history, start at sign-in and language', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.setViewportSize({ width: 460, height: 420 });
+  await openSettings(page);
+  // Far from a fresh install: an own action first on the menu and by default, another chord,
+  // dark, large text, French, the fast profile, a model of one's own, history and start on.
+  const own = { id: 'action-1', name: 'Résumer', promptTemplate: 'Résume le texte.' };
+  const profiles = { fast: { endpoint: 'http://127.0.0.1:8001/v1', model: 'my-fast', apiKey: '' }, quality: { endpoint: 'http://127.0.0.1:8002/v1', model: 'my-quality', apiKey: '' } };
+  await page.evaluate(next => (window as unknown as { nativeFixture: Fixture }).nativeFixture.settings(next), {
+    actions: [...defaultActions, own], menuActionIds: ['action-1', 'correct'], defaultActionId: 'action-1',
+    shortcutBindings: [{ id: 'menu', kind: 'menu', shortcut: 'Ctrl+Alt+Shift+Space', actionId: 'correct', outputMode: 'replace', enabled: true }],
+    theme: 'dark', textSize: 'large', language: 'fr', mode: 'fast', profiles, historyEnabled: true, autostart: true,
+  } satisfies Partial<Settings>);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  const row = page.locator('[data-field="reset"]');
+  const ask = row.getByRole('button', { name: 'Rétablir…', exact: true });
+  await ask.scrollIntoViewIfNeeded();
+  await expect(row).toContainText('Chaque réglage revient à celui d’une nouvelle installation, sauf votre connexion, l’historique, la langue et le lancement à l’ouverture de session.');
+  await ask.click();
+  await expect(row).toContainText('Vos propres actions et raccourcis seront supprimés. Rétablir les réglages par défaut ?');
+  const keep = row.getByRole('button', { name: 'Garder mes réglages', exact: true });
+  await expect(keep).toBeFocused();
+  // The question fits the narrowest window, without a sideways scroll.
+  const viewport = page.locator('.settings-scroll-viewport');
+  expect(await viewport.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  for (const button of [keep, row.getByRole('button', { name: 'Rétablir les réglages par défaut', exact: true })]) {
+    const box = (await button.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(460);
+  }
+  await row.screenshot({ path: 'test-results/reset-ask-fr-dark.png' });
+  // Escape keeps them, and the window stays open.
+  await page.keyboard.press('Escape');
+  await expect(ask).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Réglages', exact: true })).toBeVisible();
+  const resets = () => call(page, f => f.calls.filter(c => c.command === 'reset_settings').length);
+  expect(await resets()).toBe(0);
+  await ask.click();
+  await row.getByRole('button', { name: 'Rétablir les réglages par défaut', exact: true }).click();
+  await expect(row.getByRole('status')).toHaveText('Réglages par défaut rétablis.');
+  expect(await resets()).toBe(1);
+  // What Rust saved, and the window shows it, still in French.
+  expect(await call(page, f => f.current())).toMatchObject({
+    actions: defaultActions, menuActionIds: defaultActions.map(action => action.id), defaultActionId: 'correct',
+    shortcutBindings: [{ id: 'menu', kind: 'menu', shortcut: 'Ctrl+Alt+Space', actionId: 'correct', outputMode: 'replace', enabled: true }],
+    theme: 'system', textSize: 'normal', uiVersion: 'ilot',
+    language: 'fr', mode: 'fast', profiles, historyEnabled: true, autostart: true,
+  });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('.grid-name').first()).toHaveText('Fix grammar');
+  await expect(page.locator('.action-card').filter({ hasText: 'Résumer' })).toHaveCount(0);
+  await expect(page.locator('[data-field="menuShortcut"] .keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Space']);
+  await expect(page.getByRole('switch', { name: 'Conserver l’historique chiffré', exact: true })).toBeChecked();
+  await expect(page.locator('.save-status')).toHaveText(/Enregistré/);
+  await row.screenshot({ path: 'test-results/reset-done-fr-light.png' });
+
+  // Windows refuses Ctrl+Alt+Space (Claude desktop holds it on Lucas's PC): the menu keeps its
+  // own chord, everything else is restored, and the row says so.
+  await call(page, f => f.settings({ shortcutBindings: [{ id: 'menu', kind: 'menu', shortcut: 'Ctrl+Alt+Shift+Space', actionId: 'correct', outputMode: 'replace', enabled: true }], textSize: 'large' }));
+  await call(page, f => f.refuseShortcut());
+  await ask.click();
+  await row.getByRole('button', { name: 'Rétablir les réglages par défaut', exact: true }).click();
+  await expect(row.getByRole('status')).toHaveText('Réglages par défaut rétablis, sauf le raccourci du menu : Windows n’a pas donné Ctrl+Alt+Space, le menu garde Ctrl+Alt+Shift+Space.');
+  expect(await call(page, f => f.current())).toMatchObject({ textSize: 'normal', shortcutBindings: [expect.objectContaining({ kind: 'menu', shortcut: 'Ctrl+Alt+Shift+Space', enabled: true })] });
+  await expect(page.locator('[data-field="menuShortcut"] .keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Shift', 'Space']);
 });
 
 test('at the minimum native size the Îlot sections scroll inside the frame, without a sideways scroll', async ({ page }) => {

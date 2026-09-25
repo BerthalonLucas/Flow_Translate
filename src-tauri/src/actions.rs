@@ -168,21 +168,50 @@ fn shipped_icon(id: &str) -> Option<&'static str> {
         _ => DEFAULTS.iter().find(|(default, ..)| *default == id).map(|(.., icon, _)| *icon),
     }
 }
-/// A settings file of 0.4 (no Îlot grid yet) gains the Îlot without losing anything: its
-/// actions, ids, names, instructions and shortcuts stay as they are (Ctrl+Alt+T keeps
-/// translating into French, directly). The default actions it lacks are added by id, the
-/// grid is the default actions it now has, each gets its letter when free (else the first
-/// free letter of its name), and the menu shortcut is added unless a binding already
-/// uses Ctrl+Alt+Space. A kept action of a shipped id gets its icon when it has none, and
-/// « Professionnaliser », still under its 0.4 name, the short name « Pro » (« Corriger »
-/// fits its tile): nothing is renamed. Returns whether anything changed.
+/// What 0.3 and 0.4 shipped, exactly as they wrote it: an action or a shortcut still equal to
+/// one of these was never touched.
+fn untouched_action(action: &ActionDefinition) -> bool { legacy_defaults().contains(action) }
+fn untouched_binding(binding: &ShortcutBinding) -> bool { legacy_bindings("Ctrl+Alt+T".into()).contains(binding) }
+/// A settings file of 0.4 (no Îlot grid yet) updates to the Îlot. What 0.4 shipped and nobody
+/// changed gives way to a fresh install's (Lucas, 24/09: the update mixed the old and the new,
+/// French actions beside English ones, Ctrl+Alt+T still showing the result): its Ctrl+Alt+T
+/// shortcut goes, « Corriger » and « Professionnaliser » become « Fix grammar » and « Make
+/// professional », and the two translations go unless a kept shortcut, or a default action the
+/// user chose (0.4's own was translate-fr), still runs them. What the user changed or created
+/// stays as it is: nothing of it is renamed, rewritten or dropped. The actions then read like a
+/// fresh install's, its five first (a kept one of the same id in its place), then the others in
+/// their order, never past 24; the default action is a fresh install's unless the user chose
+/// one. The grid is the five, each gets its letter when free (else the first free letter of its
+/// name), and the menu shortcut is added unless a kept binding already uses Ctrl+Alt+Space. A
+/// kept action of a shipped id gets its icon when it has none, and « Professionnaliser », still
+/// under its 0.4 name, the short name « Pro » (« Corriger » fits its tile). Returns whether
+/// anything changed.
 pub fn migrate_to_ilot(settings: &mut Settings) -> bool {
     let before = settings.clone();
-    for action in defaults() {
-        if settings.actions.len() >= 24 { break; }
-        if !settings.actions.iter().any(|a| a.id == action.id) {
-            settings.actions.push(ActionDefinition { key: None, ..action });
+    settings.shortcut_bindings.retain(|binding| !untouched_binding(binding));
+    let chosen = settings.default_action_id != "translate-fr";
+    let fresh = defaults();
+    let mut kept = Vec::new();
+    for action in std::mem::take(&mut settings.actions) {
+        let runs = settings.shortcut_bindings.iter().any(|b| b.action_id == action.id) || (chosen && settings.default_action_id == action.id);
+        if untouched_action(&action) && (fresh.iter().any(|f| f.id == action.id) || !runs) { continue; }
+        kept.push(action);
+    }
+    // Every kept action stays: a fresh one is added while there is room for it.
+    let mut room = 24usize.saturating_sub(kept.len());
+    let mut actions = Vec::new();
+    for action in fresh {
+        match kept.iter().position(|a| a.id == action.id) {
+            Some(n) => actions.push(kept.remove(n)),
+            None if room > 0 => { room -= 1; actions.push(ActionDefinition { key: None, ..action }); }
+            None => {}
         }
+    }
+    actions.extend(kept);
+    settings.actions = actions;
+    let has = |settings: &Settings, id: &str| settings.actions.iter().any(|a| a.id == id);
+    if (!chosen || !has(settings, &settings.default_action_id)) && has(settings, DEFAULT_ACTION_ID) {
+        settings.default_action_id = DEFAULT_ACTION_ID.into();
     }
     for action in settings.actions.iter_mut() {
         if action.icon.is_none() { action.icon = shipped_icon(&action.id).map(String::from); }
@@ -471,20 +500,58 @@ mod tests {
     }
     #[test]
     fn the_ilot_migration_gives_a_letter_when_free_else_the_first_free_letter_of_the_name() {
-        let mut settings = Settings { actions: legacy_defaults(), shortcut_bindings: legacy_bindings("Ctrl+Alt+T".into()), default_action_id: "translate-fr".into(), menu_action_ids: Vec::new(), ..Settings::default() };
+        // « Corriger » kept (its instruction changed), the French translation too (its shortcut moved to Ctrl+Alt+Y).
+        let mut settings = Settings { actions: legacy_defaults(), shortcut_bindings: legacy_bindings("Ctrl+Alt+Y".into()), default_action_id: "translate-fr".into(), menu_action_ids: Vec::new(), ..Settings::default() };
+        settings.actions[2].prompt_template = "Corrige.".into();
         settings.actions.push(ActionDefinition { id: "custom".into(), name: "Résumer".into(), prompt_template: "Résume.".into(), key: Some("F".into()), short_name: None, icon: None });
         assert!(migrate_to_ilot(&mut settings));
         let key = |id: &str| settings.actions.iter().find(|a| a.id == id).and_then(|a| a.key.clone());
         assert_eq!(key("correct").as_deref(), Some("C"), "F is the custom action's: « Corriger » gives C");
         assert_eq!((key("translate").as_deref(), key("professionalize").as_deref(), key("shorten").as_deref(), key("email").as_deref()), (Some("T"), Some("P"), Some("S"), Some("E")));
+        assert!(settings.actions.iter().any(|a| a.id == "translate-fr"));
         assert_eq!((key("translate-fr"), key("custom").as_deref()), (None, Some("F")), "no letter outside the grid, a letter kept");
         assert!(validate(&settings).is_ok());
         assert!(!migrate_to_ilot(&mut settings), "idempotent");
     }
     #[test]
+    fn an_untouched_0_4_setup_updates_to_a_fresh_install() {
+        // Lucas, 24/09: what 0.4 shipped and nobody changed leaves nothing beside the new, neither
+        // its French actions nor Ctrl+Alt+T showing the result.
+        let mut settings = Settings { actions: legacy_defaults(), shortcut_bindings: legacy_bindings("Ctrl+Alt+T".into()), default_action_id: "translate-fr".into(), menu_action_ids: Vec::new(), ..Settings::default() };
+        assert!(migrate_to_ilot(&mut settings));
+        let fresh = Settings::default();
+        assert_eq!(settings.actions, fresh.actions);
+        assert_eq!(settings.shortcut_bindings, fresh.shortcut_bindings);
+        assert_eq!((settings.default_action_id.as_str(), &settings.menu_action_ids), (fresh.default_action_id.as_str(), &fresh.menu_action_ids));
+        assert!(!migrate_to_ilot(&mut settings), "idempotent");
+    }
+    #[test]
+    fn an_untouched_translation_stays_while_a_kept_shortcut_or_a_chosen_default_runs_it() {
+        let legacy = |bindings: Vec<ShortcutBinding>, default: &str| Settings { actions: legacy_defaults(), shortcut_bindings: bindings, default_action_id: default.into(), menu_action_ids: Vec::new(), ..Settings::default() };
+        let ids = |settings: &Settings| settings.actions.iter().map(|a| a.id.clone()).collect::<Vec<_>>();
+        // Ctrl+Alt+T moved to Ctrl+Alt+Y: the user's shortcut stays, and the French translation it runs.
+        let mut moved = legacy(legacy_bindings("Ctrl+Alt+Y".into()), "translate-fr");
+        assert!(migrate_to_ilot(&mut moved));
+        assert_eq!(ids(&moved), ["correct", "translate", "professionalize", "shorten", "email", "translate-fr"]);
+        assert_eq!(moved.shortcut_bindings.iter().map(|b| b.shortcut.as_str()).collect::<Vec<_>>(), ["Ctrl+Alt+Y", "Ctrl+Alt+Space"]);
+        assert_eq!(moved.default_action_id, "correct", "0.4's own default action was never a choice");
+        // The English translation, chosen as the default action, stays the default.
+        let mut chosen = legacy(legacy_bindings("Ctrl+Alt+T".into()), "translate-en");
+        assert!(migrate_to_ilot(&mut chosen));
+        assert_eq!(ids(&chosen), ["correct", "translate", "professionalize", "shorten", "email", "translate-en"]);
+        assert_eq!(chosen.default_action_id, "translate-en");
+        assert_eq!(chosen.shortcut_bindings, default_bindings(), "Ctrl+Alt+T, untouched, gives way to the menu");
+        assert!(validate(&moved).is_ok() && validate(&chosen).is_ok());
+    }
+    #[test]
     fn the_ilot_migration_gives_the_shipped_icons_and_pro_only_to_an_untouched_name() {
-        // Review n°9: the 0.4 tiles « Corriger » and « Professionnaliser » had no icon.
-        let legacy = || Settings { actions: legacy_defaults(), shortcut_bindings: legacy_bindings("Ctrl+Alt+T".into()), default_action_id: "translate-fr".into(), menu_action_ids: Vec::new(), ..Settings::default() };
+        // Review n°9: the 0.4 tiles « Corriger » and « Professionnaliser » had no icon. Kept here
+        // (their instructions changed), they keep their names.
+        let legacy = || {
+            let mut actions = legacy_defaults();
+            for action in &mut actions { action.prompt_template.push_str(" Keep it short."); }
+            Settings { actions, shortcut_bindings: legacy_bindings("Ctrl+Alt+T".into()), default_action_id: "translate-fr".into(), menu_action_ids: Vec::new(), ..Settings::default() }
+        };
         let mut settings = legacy();
         settings.actions.push(ActionDefinition { id: "custom".into(), name: "Résumer".into(), prompt_template: "Résume.".into(), key: None, short_name: None, icon: None });
         assert!(migrate_to_ilot(&mut settings));
@@ -493,7 +560,7 @@ mod tests {
         assert_eq!(["correct", "professionalize", "translate-fr", "translate-en", "translate", "shorten", "email"].map(icon),
             ["SpellCheck", "BriefcaseBusiness", "Languages", "Languages", "Languages", "FoldVertical", "Mail"].map(|i| Some(i.to_string())));
         assert_eq!(icon("custom"), None, "a user's action keeps its own look");
-        for original in legacy_defaults() {
+        for original in legacy().actions {
             let kept = find(&settings, &original.id);
             assert_eq!((&kept.name, &kept.prompt_template), (&original.name, &original.prompt_template), "nothing renamed or rewritten");
         }

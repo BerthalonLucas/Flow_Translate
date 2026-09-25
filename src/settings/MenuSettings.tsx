@@ -1,3 +1,4 @@
+import { bridge } from '../bridge';
 import { useT } from '../i18n';
 import type { Settings } from '../types';
 import { ShortcutRecorder } from './ShortcutRecorder';
@@ -25,7 +26,7 @@ export function MenuSettings({ settings, persist, record, busy, registrations }:
     <div className="setting-row shortcut-row" data-field="menuShortcut">
       <div className="setting-copy"><strong>{t('settings.menuShortcut')}</strong><small>{help}</small></div>
       <ShortcutRecorder shortcut={binding?.shortcut ?? ''} enabled={binding?.enabled ?? false} label={t('settings.menuShortcutField')} busy={busy} record={shortcut => record(binding?.id ?? null, shortcut)}
-        registration={binding && registrations?.(binding)} />
+        registration={binding && registrations?.(binding)} suggest={bridge.suggestShortcut} />
     </div>
     <div className="setting-row">
       <div className="setting-copy"><strong>{t('settings.defaultAction')}</strong><small>{t(ilot ? 'settings.defaultActionHelp' : 'settings.defaultActionHelpV4')}</small></div>

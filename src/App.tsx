@@ -19,6 +19,7 @@ import { AfterReplaceSettings } from './settings/AfterReplace';
 import { describeRefusal } from './settings/messages';
 import { fieldFromLocation, isProfileField, resolveField, revealField } from './settings/fields';
 import { useRegistrations } from './settings/registrations';
+import { ResetSettings } from './settings/ResetSettings';
 import type { AutoClose, Capture, HistoryEntry, Indicator, Language, Mode, MotionPreset, Settings, SettingsFocus, ShortcutBinding, TextSize, Theme } from './types';
 
 const defaultCapture: Capture = { id: 'demo-selection', text: 'Could you send the updated proposal before Thursday?', source: 'selection', canReplace: true, anchor: { x: 820, y: 410, width: 350, height: 24 } };
@@ -160,6 +161,32 @@ export function SettingsWindow() {
       setRecording(false);
     }
   };
+  // « Restore default settings »: an edit still waiting gives way, then Rust saves a fresh
+  // install's settings (keeping this device's setup, settings::reset) and the window adopts them.
+  // Refused, nothing changed: the edit that waited is saved as it would have been.
+  const resetToDefaults = async (): Promise<Settings> => {
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = 0;
+    setSaveStatus('saving');
+    inFlight.current += 1;
+    try {
+      const pending = saveQueue.current.then(() => bridge.resetSettings());
+      saveQueue.current = pending.catch(() => undefined);
+      const saved = await pending;
+      adopt(saved);
+      setSaveError(null);
+      setSaveStatus('just-saved');
+      window.clearTimeout(settledTimer.current);
+      settledTimer.current = window.setTimeout(() => setSaveStatus(status => status === 'just-saved' ? 'saved' : status), 3000);
+      return saved;
+    } catch (error) {
+      if (latest.current && latest.current !== synced.current) void commit(latest.current);
+      else setSaveStatus('saved');
+      throw error;
+    } finally {
+      inFlight.current -= 1;
+    }
+  };
   const closeSettings = async () => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = 0;
@@ -245,6 +272,7 @@ export function SettingsWindow() {
         </div>}
         <div className="setting-row"><div className="setting-copy"><strong>{t('settings.autostart')}</strong><small>{t('settings.autostartHelp')}</small></div>
           <SettingSwitch label={t('settings.autostart')} checked={settings.autostart} onCheckedChange={checked => update('autostart', checked)} /></div>
+        <ResetSettings reset={resetToDefaults} />
       </section>
     </div></ScrollArea.Viewport><ScrollArea.Scrollbar className="settings-scrollbar" orientation="vertical"><ScrollArea.Thumb className="settings-scroll-thumb" /></ScrollArea.Scrollbar></ScrollArea.Root>
     <footer>

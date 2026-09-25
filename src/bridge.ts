@@ -1,4 +1,5 @@
 import { defaultActionId, defaultActions, defaultBindings, defaultMenuActionIds, instructionActionId, instructionActionName, instructionError } from './actionDefaults';
+import { resetFrom } from './settings/reset';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import type { Capture, ConnectionStatus, ExecutionInfo, HighlightResult, HistoryEntry, Mode, OverlayGeometry, PillTarget, Rect, Refusal, Screen, Settings, SettingsField, ShortcutConflict, ShortcutStatus, StreamEvent, SystemMotion, TextRange, TranslationRequest, UndoOutcome } from './types';
@@ -45,6 +46,9 @@ async function command<T>(name: string, args?: Record<string, unknown>): Promise
   if (native) return tauriInvoke<T>(name, args);
   if (name === 'get_settings') return structuredClone(demoSettings) as T;
   if (name === 'save_settings') { demoSettings = structuredClone(args?.settings as Settings); emit('settings-changed', demoSettings); return undefined as T; }
+  if (name === 'reset_settings') { demoSettings = resetFrom(defaultSettings, demoSettings); emit('settings-changed', demoSettings); return structuredClone(demoSettings) as T; }
+  // The preview registers every chord: its proposal is Rust's first.
+  if (name === 'suggest_shortcut') return 'Ctrl+Alt+Shift+Space' as T;
   if (name === 'capture_text') return structuredClone(demoCapture) as T;
   if (name === 'frontend_ready') return null as T;
   if (name === 'check_connection') { await new Promise(resolve => window.setTimeout(resolve, 38)); return { connected: demoScenario !== 'error', message: demoScenario === 'error' ? 'Démo : serveur indisponible.' : 'Démo : connexion simulée.' } as T; }
@@ -190,6 +194,11 @@ export const bridge = {
   demoWorkArea: (screen: Screen) => { if (!native) emit('work-area', screen); },
   // Lot 10: the state of every binding (a chord another application holds is 'taken').
   shortcutStatus: () => command<ShortcutStatus[]>('shortcut_status'),
+  // Lucas, 24/09: a chord for the menu that Windows gives now, when another application holds
+  // its own (null: none of Rust's proposals is free); « Restore default settings », answering
+  // what Rust saved.
+  suggestShortcut: () => command<string | null>('suggest_shortcut'),
+  resetSettings: () => command<Settings>('reset_settings'),
   // Lot 9, after a paste under the Îlot (docs/BRIDGE.md « the result »): where the pill goes for a
   // pill of this size; moving the window by (dx, dy) logical pixels at a moment nothing animates;
   // the changed words marked in the halo until clearHighlight.
