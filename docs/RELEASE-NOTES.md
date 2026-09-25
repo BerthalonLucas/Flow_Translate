@@ -1,12 +1,4 @@
-<!-- Brouillon de l’entrée 0.5.0 (lot 14). Le lot 9 (Annuler, mots changés, pilule sous le
-nouveau texte) et la correction de la fermeture spontanée de l’Îlot sont livrés et décrits
-ci-dessous. Volontairement absents : l’essai Acrylic (réglage caché `glassMaterial`, désactivé,
-en attente de la décision de Lucas, docs/ACRYLIC-TRIAL.md) et le « point à chaque sélection »
-(reporté, décision 5). Retours de Lucas du 24/09 déjà intégrés : survol de la seule ✦, grille
-ouverte à droite quand il y a la place, mise à jour propre, « Rétablir les réglages par défaut »,
-raccourci déjà pris. La mise en valeur du texte (choix de Lucas du 25/09) est livrée. La ligne
-« Validation » reste à écrire avec les vérifications réellement faites. -->
-# FlowTranslate 0.5.0 — l’Îlot, un menu à côté de la sélection — septembre 2026
+# FlowTranslate 0.5.0 — l’Îlot, un menu à côté de la sélection — 25 septembre 2026
 
 - **Un raccourci, un menu.** `Ctrl+Alt+Espace` ouvre l’Îlot juste sous le texte sélectionné, au-dessus s’il manque la place en bas. Au repos, il ne montre que la dernière action utilisée dans cette application et une pastille ✦ ; Tab, ↓ ou la souris posée sur la ✦ déplie une grille de six tuiles, à droite de la bulle quand l’écran en a la place : Fix grammar, Translate (français → anglais, le reste → français), Make professional, Shorten, Write email et Ask. Entrée relance la dernière action, une lettre lance la sienne (F, T, P, S, E), les flèches parcourent la grille, Échap revient d’un cran puis ferme. Deux appuis rapides relancent la dernière action sans passer par le menu.
 - **Consigne libre.** Espace, « / », la pastille ✦ ou une lettre sans action ouvrent un champ : on écrit ce qu’on veut (« plus sympa, prêt à envoyer »), le texte est réécrit selon la consigne. La consigne n’est ni enregistrée, ni journalisée.
@@ -18,6 +10,8 @@ raccourci déjà pris. La mise en valeur du texte (choix de Lucas du 25/09) est 
 - **Mise à jour depuis la 0.4.** Ce que la 0.4 avait livré et que personne n’a modifié laisse la place à la 0.5.0 : « Corriger » et « Professionnaliser » deviennent Fix grammar et Make professional, les deux traductions et `Ctrl+Alt+T` s’en vont, sauf si un raccourci gardé ou l’action par défaut choisie s’en sert encore. Ce que vous avez modifié ou créé est gardé tel quel. Le raccourci du menu est ajouté s’il est libre ; les raccourcis directs gardés continuent de marcher, avec la nouvelle pilule. L’interface passe en anglais : Réglages › Appearance › Language pour revenir au français.
 
 À savoir : `Ctrl+Alt+Espace` peut déjà être tenu par une autre application ; FlowTranslate ouvre alors ses Réglages au démarrage, le dit sous le raccourci du menu et propose un raccourci libre (`Ctrl+Alt+Maj+Espace` d’abord) à prendre d’un clic. Dans VS Code, sans sélection lisible par UI Automation, l’Îlot s’ouvre en bas de l’écran, sans mise en valeur du texte.
+
+Validation : `cargo test` (capture à trois niveaux, couleur lue sous le texte, fin des mots changés à la touche, au clic ou à la molette, migration depuis la 0.4, réinitialisation), Vitest et Playwright (chaque phase du halo et sa forme réduite, Annuler, Réglages), relancés par GitHub Actions ; sonde native sur l’exe release, en clair et en sombre. En vraie fenêtre, inférence simulée, dans Chrome en clair et en sombre : halo du menu et du travail, vague, lueur irisée gardée après le départ de la pilule puis effacée à la touche, au clic, à la molette et au bout de sa durée ; Annuler et mots changés ; 150 ouvertures du menu sur 150 sans fermeture intempestive ; erreur d’un serveur réellement éteint ; migration d’une 0.4 et « Rétablir les réglages par défaut ». Aucune nouvelle mesure d’inférence réelle n’est revendiquée : Lucas a essayé l’installateur de la CI avec le serveur General le 24/09, avant la mise en valeur du texte.
 
 # FlowTranslate 0.4.0 — chaque action marche vraiment — 15 septembre 2026
 
