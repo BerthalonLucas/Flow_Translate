@@ -99,7 +99,7 @@ describe('ilotOutcome', () => {
 });
 
 describe('effectiveAfterReplace', () => {
-  const after: AfterReplace = { check: true, undo: true, undoSeconds: 8, changedWords: true };
+  const after: AfterReplace = { check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 };
   it('keeps Undo only while Rust offers it for this replacement', () => {
     expect(effectiveAfterReplace(after, false)).toEqual({ ...after, undo: false });
     expect(effectiveAfterReplace(after, true)).toEqual(after);

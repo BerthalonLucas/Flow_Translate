@@ -9,9 +9,10 @@ export type Replay = { requestId: string; translatedText: string; mode: Mode };
 // origin: how Rust obtained the text (uia selection, synthetic copy, fresh user copy, tray replay, demo); shown nowhere.
 export type CaptureOrigin = 'uia' | 'copy' | 'fresh' | 'replay' | 'demo';
 // menu: a `menu` shortcut under the Îlot (uiVersion 'ilot'): no execution until `choose_action`, the frontend opens the menu.
-// The halo window (lot 6): the lines of the selection in logical pixels relative to the window (width × height); work draws them after 250 ms, leave fades them, clear removes them.
-export type HaloPhase = 'work' | 'leave' | 'clear' | 'marks';
-export type HaloEvent = { generation: number; phase: HaloPhase; lines: Rect[]; width: number; height: number };
+// The halo window (lot 6, « mise en valeur »): logical pixels relative to the window (width × height). menu: the selection at three levels (textBox, full lines, lines = exact text), still; work: the reflection over the exact text and the aurora around the text box, after 250 ms unless a menu was shown; marks: a wave over the new text (whole), then the changed words (lines), held; leave fades, clear removes. tone and ground come from the colour read under the text (null: the app's theme).
+export type HaloPhase = 'menu' | 'work' | 'marks' | 'leave' | 'clear';
+export type HaloTone = 'light' | 'dark';
+export type HaloEvent = { generation: number; phase: HaloPhase; lines: Rect[]; full?: Rect[]; textBox?: Rect | null; whole?: Rect[]; tone?: HaloTone | null; ground?: [number, number, number] | null; width: number; height: number };
 // selectionRects: the lines of a UI Automation selection, physical screen pixels like anchor (lot 5); Rust places from them, the frontend never does.
 export type Capture = { id: string; text: string; source: 'selection' | 'clipboard'; origin?: CaptureOrigin; canReplace: boolean; anchor: Rect | null; selectionRects?: Rect[]; screen?: Screen; replay?: Replay; execution?: ExecutionInfo; menu?: MenuInfo };
 // lastActionId: the last action chosen in the source application (null: none remembered). Never any text.
@@ -45,8 +46,8 @@ export type UndoStrategy = 'keystroke' | 'repaste';
 export type PillPlacement = 'below' | 'margin';
 // Hidden trial of lot 12 (phase B): real Windows Acrylic instead of the painted glass.
 export type GlassMaterial = 'painted' | 'acrylic';
-// undoSeconds: 2 to 20.
-export type AfterReplace = { check: boolean; undo: boolean; undoSeconds: number; changedWords: boolean };
+// undoSeconds: 2 to 20. changedWordsSeconds: 5 to 120, the longest the marks stay without an action in the text.
+export type AfterReplace = { check: boolean; undo: boolean; undoSeconds: number; changedWords: boolean; changedWordsSeconds: number };
 // 0.4.0: no target language any more; each action's instruction names its language.
 export type Settings = { mode: Mode; actions: ActionDefinition[]; shortcutBindings: ShortcutBinding[]; defaultActionId: string; historyEnabled: boolean; autostart: boolean; connectionExpanded: boolean; textSize: TextSize; autoClose: AutoClose; uiVersion: UiVersion;
   language: Language; theme: Theme; motion: MotionPreference; motionPreset: MotionPreset; indicator: Indicator; afterReplace: AfterReplace;

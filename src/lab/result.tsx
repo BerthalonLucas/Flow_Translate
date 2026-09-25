@@ -46,7 +46,7 @@ function PillFixture({ scenario, params }: { scenario: ResultScenario; params: U
   const mode: Mode | undefined = params.get('mode') === 'fast' ? 'fast' : params.get('mode') === 'quality' ? 'quality' : undefined;
   const [after, setAfter] = useState<AfterReplace>({
     check: params.get('check') !== '0', undo: params.get('undo') !== '0',
-    undoSeconds: Math.min(20, Math.max(2, Number(params.get('seconds') ?? 8) || 8)), changedWords: true,
+    undoSeconds: Math.min(20, Math.max(2, Number(params.get('seconds') ?? 8) || 8)), changedWords: true, changedWordsSeconds: 60,
   });
   const [kind, setKind] = useState<ErrorCode>(params.get('kind') ? errorCodeOf(params.get('kind')) : scenarioKind[scenario] ?? 'unauthorized');
   const failing = scenario !== 'result-done';

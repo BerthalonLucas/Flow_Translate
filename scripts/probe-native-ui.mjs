@@ -275,8 +275,14 @@ try {
     expect(Math.abs(reserved.width - reserve.width * dpr), 'the window is the Îlot reserve (width)').toBeLessThanOrEqual(1);
     expect(Math.abs(reserved.height - reserve.height * dpr), 'the window is the Îlot reserve (height)').toBeLessThanOrEqual(1);
     expect(menuWin.noActivate, 'the menu window stays activatable before the choice').toBe(false);
-    // No halo before any work.
-    expect(await nativeVisible('halo'), 'no halo while the menu waits').toBe(false);
+    // While the menu waits, the halo shows the selection at three levels (« mise en valeur »,
+    // Lucas 25/09): never hit, never activated, over the demo lines.
+    await expect.poll(() => nativeVisible('halo'), { message: 'the halo shows the selection while the menu waits' }).toBe(true);
+    const menuHalo = await hwndOf('halo');
+    result.menuHalo = { x: menuHalo.x, y: menuHalo.y, width: menuHalo.width, height: menuHalo.height, exStyles: menuHalo.exStyles };
+    expect(menuHalo.exStyles, 'the menu halo lets every click through').toEqual(['TRANSPARENT', 'LAYERED']);
+    expect(menuHalo.noActivate && menuHalo.toolWindow, 'the menu halo is never activated and has no taskbar entry').toBe(true);
+    expect(menuHalo.x <= demoLines.left && menuHalo.y <= demoLines.top && menuHalo.x + menuHalo.width >= demoLines.right && menuHalo.y + menuHalo.height >= demoLines.bottom, 'the menu halo covers the demo selection lines').toBe(true);
     if (index === 0) {
       await page.screenshot({ path: resolve(output, 'webview-ilot-compact.png') });
       if (locked) result.frameSilent = 'not checked (session locked: the screen cannot be captured)';
@@ -341,7 +347,7 @@ try {
     expect(result.morphToPill, 'menu → pill: the window never moves nor resizes').toEqual([`${reserved.x},${reserved.y},${reserved.width}x${reserved.height}`]);
     await expect(stage, 'the work lasts long enough for the checks (FLOWTRANSLATE_SIMULATE_WORD_MS)').toHaveAttribute('data-stage', 'working');
     // After the choice the overlay can no longer be activated (a click on the pill keeps the
-    // source's focus); the halo sweeps the lines under it, never hit, never activated.
+    // source's focus); the halo works over the lines under it, never hit, never activated.
     const workWin = await ilotWindow('working pill', reserved);
     expect(workWin.noActivate, 'the pill window carries WS_EX_NOACTIVATE after the choice').toBe(true);
     await expect.poll(() => nativeVisible('halo'), { message: 'the halo window shows while the action works' }).toBe(true);
@@ -393,7 +399,7 @@ try {
   // A direct capture after the Îlot: the choice's no-activate bit is lowered, the bubble as before.
   await bubbleCycle(3, false);
   report.status = 'passed';
-  console.log(`PASS: bubble ×4 (3 before, 1 after the Îlot): frameless HWND without region, cursor let through in the halo and taken on the glass, frame silent under WM_NCACTIVATE (${typeof report.frameSilent === 'string' ? report.frameSilent : `mean diff ${report.frameSilent.meanDiff}`}), menus without a resize, halo gone after each response, DOM close and native windows hidden. Îlot ×2 (grid, compact): reserved window frameless and fixed through every morph, region following compact, grid, pill and outcome shapes, halo window only while working and let through, overlay no-activate after the choice, close hides both. Theme ${report.theme}. Desktop composition not established.`);
+  console.log(`PASS: bubble ×4 (3 before, 1 after the Îlot): frameless HWND without region, cursor let through in the halo and taken on the glass, frame silent under WM_NCACTIVATE (${typeof report.frameSilent === 'string' ? report.frameSilent : `mean diff ${report.frameSilent.meanDiff}`}), menus without a resize, halo gone after each response, DOM close and native windows hidden. Îlot ×2 (grid, compact): reserved window frameless and fixed through every morph, region following compact, grid, pill and outcome shapes, halo window from the menu to the response and let through, overlay no-activate after the choice, close hides both. Theme ${report.theme}. Desktop composition not established.`);
 } catch (error) {
   report.status = 'failed';
   report.error = String(error.message);

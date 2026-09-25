@@ -1,9 +1,9 @@
 use crate::error::{AppError, ErrorKind};
 use crate::selection_lines;
-use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetCheck, TargetIdentity};
+use crate::types::{Capture, CaptureOrigin, CaptureSource, HaloLevels, Rect, StoredCapture, TargetCheck, TargetIdentity};
 use arboard::Clipboard;
-use uiautomation::{patterns::UITextPattern, variants::SafeArray, UIAutomation, UIElement};
-use uiautomation::{patterns::UIValuePattern, types::TextAttribute};
+use uiautomation::{patterns::{UITextPattern, UITextRange}, variants::SafeArray, UIAutomation, UIElement};
+use uiautomation::{patterns::UIValuePattern, types::{TextAttribute, TextPatternRangeEndpoint, TextUnit}};
 use uuid::Uuid;
 use std::time::{Duration, Instant};
 
@@ -83,6 +83,33 @@ pub(crate) fn range_rects(range: &uiautomation::patterns::UITextRange) -> Vec<Re
         .unwrap_or_default()
 }
 
+/// The halo's other two levels (Lucas, 25/09), physical: the text box (the focused element's
+/// bounds, clipped to its window) and the whole lines the selection touches, from the start of
+/// its first line to the end of its last, merged per line like the selection. Empty when the
+/// provider cannot answer (no line unit, no bounds): the halo then draws the selection alone.
+pub(crate) fn selection_levels(element: &UIElement, window: Option<Rect>) -> (Option<Rect>, Vec<Rect>) {
+    let text_box = element
+        .get_bounding_rectangle()
+        .ok()
+        .map(|r| Rect { x: f64::from(r.get_left()), y: f64::from(r.get_top()), width: f64::from(r.get_right() - r.get_left()), height: f64::from(r.get_bottom() - r.get_top()) })
+        .filter(selection_lines::drawable)
+        .and_then(|b| match window { Some(w) => selection_lines::clip(&b, &w), None => Some(b) });
+    let full = (|| {
+        let range = element.get_pattern::<UITextPattern>().ok()?.get_selection().ok()?.into_iter().next()?;
+        // Real copies (ITextRangeProvider::Clone): the derived Clone would share the range.
+        let first = UITextRange::from(unsafe { range.as_ref().Clone() }.ok()?);
+        let last = UITextRange::from(unsafe { range.as_ref().Clone() }.ok()?);
+        first.move_endpoint_by_range(TextPatternRangeEndpoint::End, &range, TextPatternRangeEndpoint::Start).ok()?;
+        last.move_endpoint_by_range(TextPatternRangeEndpoint::Start, &range, TextPatternRangeEndpoint::End).ok()?;
+        first.expand_to_enclosing_unit(TextUnit::Line).ok()?;
+        last.expand_to_enclosing_unit(TextUnit::Line).ok()?;
+        first.move_endpoint_by_range(TextPatternRangeEndpoint::End, &last, TextPatternRangeEndpoint::End).ok()?;
+        Some(selection_lines::lines(&range_rects(&first), window))
+    })()
+    .unwrap_or_default();
+    (text_box, full)
+}
+
 /// The anchor of a capture: the last visible rectangle as UI Automation gives it (none
 /// when that one is unusable). Physical; the placement and `validate_target` compare it.
 pub(crate) fn anchor_of(rects: &[Rect]) -> Option<Rect> {
@@ -156,10 +183,18 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
             execution: None,
             menu: None,
         };
+        // A text box around the two lines and their whole width: the three levels without
+        // UI Automation. No ground: the halo follows the app's theme.
+        let levels = HaloLevels {
+            text_box: Some(Rect { x: 620.0, y: 380.0, width: 420.0, height: 84.0 }),
+            full_lines: vec![Rect { x: 640.0, y: 396.0, width: 380.0, height: 24.0 }, Rect { x: 640.0, y: 420.0, width: 380.0, height: 24.0 }],
+            ground: None,
+        };
         return Ok(StoredCapture {
             public,
             target: None,
             invalidated: false,
+            levels,
         });
     }
     let source_class = crate::host::window_class(source_window);
@@ -170,7 +205,13 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 Ok((text, rects, selection_len, range_editable)) => {
                     ensure_source_unchanged(source_window)?;
                     let anchor = anchor_of(&rects);
-                    let selection_rects = selection_lines::lines(&rects, crate::host::window_rect(source_window));
+                    let window = crate::host::window_rect(source_window);
+                    let selection_rects = selection_lines::lines(&rects, window);
+                    // Before any of our windows shows over the text: its box, its whole lines
+                    // and the colour under it (Lucas, 25/09).
+                    let (text_box, full_lines) = selection_levels(&element, window);
+                    let ground = crate::ground::under(&selection_rects, text_box, window);
+                    let levels = HaloLevels { text_box, full_lines, ground };
                     let runtime_id = element.get_runtime_id().map_err(|_| {
                         AppError::internal("Impossible d’identifier le contrôle source.")
                     })?;
@@ -206,7 +247,7 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         check: TargetCheck::Uia,
                     });
                     ensure_source_unchanged(source_window)?;
-                    return Ok(StoredCapture { public, target, invalidated: false });
+                    return Ok(StoredCapture { public, target, invalidated: false, levels });
                 }
                 Err(message) if message.contains("6 000") => return Err(AppError::new(ErrorKind::TooLong, message)),
                 Err(_) => {}
@@ -270,7 +311,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         execution: None,
         menu: None,
     };
-    Ok(StoredCapture { public, target, invalidated: false })
+    Ok(StoredCapture { public, target, invalidated: false, levels: HaloLevels::default() })
 }
 
 /// Sends the copy chord to the source window and reads what it copied, then puts the

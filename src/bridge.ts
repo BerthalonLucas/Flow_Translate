@@ -9,7 +9,7 @@ type EventName = 'capture' | 'translation' | 'settings-changed' | 'target-invali
 type Handler<T> = (payload: T) => void;
 
 const defaultSettings: Settings = {
-  mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'ilot', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
+  mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: 'ilot', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'tencent/Hy-MT2-1.8B', apiKey: '' }, quality: { endpoint: '', model: 'tencent/Hy-MT2-7B-FP8', apiKey: '' } }
 };
 
@@ -201,11 +201,11 @@ export const bridge = {
   resetSettings: () => command<Settings>('reset_settings'),
   // Lot 9, after a paste under the Îlot (docs/BRIDGE.md « the result »): where the pill goes for a
   // pill of this size; moving the window by (dx, dy) logical pixels at a moment nothing animates;
-  // the changed words marked in the halo until clearHighlight.
+  // the changed words marked in the halo until the user's next action in the text (Rust ends
+  // them itself, whatever Undo or the pill do).
   resultPill: (requestId: string, width: number, height: number) => command<PillTarget>('result_pill', { requestId, width, height }),
   moveOverlay: (captureId: string, dx: number, dy: number) => command<void>('move_overlay', { captureId, dx, dy }),
   highlightChanges: (requestId: string, ranges: TextRange[]) => command<HighlightResult>('highlight_changes', { requestId, ranges }),
-  clearHighlight: (requestId: string) => command<void>('clear_highlight', { requestId }),
   // Lot 9: undo a pasted result, once, after revalidation (`undo_result` → UndoOutcome). Read its
   // status: a resolved promise may be a refusal (`refused`: nothing was sent; `failed`: sent, the
   // original did not read back); a rejection is a French string (the result no longer current).

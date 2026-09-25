@@ -251,8 +251,8 @@ test('error never enables copy of a partial or absent result', async ({ page }) 
 });
 
 // The capsule window is retired (DA-PLAN §4.2, lot 6); its small native window is now the
-// halo, sized by Rust to the lines + 12 px: the page fits it, stays transparent and never
-// takes the pointer.
+// halo, sized by Rust to what it draws + its margin: the page fits it, stays transparent and
+// never takes the pointer.
 test('halo fits its native viewport without overflow, transparent and never under the pointer', async ({ page }) => {
   await page.setViewportSize({ width: 236, height: 48 });
   await page.route('**/?window=halo&fixture=1', async route => {
@@ -262,8 +262,9 @@ test('halo fits its native viewport without overflow, transparent and never unde
   await page.goto('/?window=halo&fixture=1');
   await expect(page.locator('html')).toHaveAttribute('data-halo-ready', 'true');
   await page.evaluate(() => (window as unknown as { nativeFixture: { halo: (event: unknown) => Promise<void> } }).nativeFixture.halo({ generation: 1, phase: 'work', lines: [{ x: 12, y: 12, width: 212, height: 24 }], width: 236, height: 48 }));
-  const line = page.locator('.halo-line');
-  expect(await line.boundingBox()).toEqual({ x: 12, y: 12, width: 212, height: 24 });
+  // The reflection's run, 1 px wider on each side (the lab's margin).
+  const line = page.locator('.halo-veil');
+  expect(await line.boundingBox()).toEqual({ x: 11, y: 12, width: 214, height: 24 });
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(page.locator('.halo')).toHaveCSS('pointer-events', 'none');
   expect(await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.scrollHeight])).toEqual([236, 48]);

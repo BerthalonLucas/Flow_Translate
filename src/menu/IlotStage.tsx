@@ -65,10 +65,11 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *             under the pointer, on the focus, while Undo is on its way and while the pill is out
  *             of sight (place, below); at its end the Îlot leaves. A retried result the Îlot
  *             pasted itself has no Undo (Rust's own only).
- *   marks     lot 9: the changed words (src/result/highlight.ts, afterReplace.changedWords) asked
- *             once per replacement with `highlight_changes` while Undo is offered, cleared once
- *             with `clear_highlight` at the countdown's end (Rust clears them itself on Undo, a
- *             withdrawal or a dismissal).
+ *   marks     lot 9, « mise en valeur » (Lucas 25/09): the changed words (src/result/highlight.ts,
+ *             afterReplace.changedWords) asked once per replacement with `highlight_changes`
+ *             after Rust's own paste, Undo offered or not. Rust ends them at the user's next
+ *             action in the text or after afterReplace.changedWordsSeconds: neither the
+ *             countdown, nor Undo's withdrawal, nor the Îlot leaving takes them.
  *   place     lot 9: after Rust's own paste (anchored), the pill goes where Rust puts it, never over
  *             the new text: `result_pill` for the size of the check's pill, at the start of its
  *             shape (again for a wider shape later: an Undo's error). In the window, on the same
@@ -428,30 +429,23 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   const cut = state.undoLost === 'typed' || state.undoLost === 'caret_moved';
   useEffect(() => { if (cut && clock) clock.clock.limit(checkOnlyMs, performance.now()); }, [cut, clock]);
 
-  // The changed words, marked by the halo while Undo is offered: asked once per replacement,
-  // never any text in the request (ranges of the result only), cleared once at the countdown's end.
-  const marks = useRef<{ requestId: string; live: boolean } | null>(null);
+  // The changed words, marked by the halo after Rust's own paste: asked once per replacement,
+  // never any text in the request (ranges of the result only), unless the user's own Ctrl+Z
+  // already undid it. Rust ends them by itself.
+  const marked = useRef<string | null>(null);
   useEffect(() => {
     const capture = state.capture;
-    if (!rustPasted || !state.undoable || !requestId || marks.current?.requestId === requestId || closingRef.current || !capture?.execution) return;
+    if (!rustPasted || state.undoLost === 'undo_key' || !requestId || marked.current === requestId || closingRef.current || !capture?.execution) return;
+    marked.current = requestId;
     const { ranges } = changedRanges(capture.text, state.result, { actionId: capture.execution.actionId, enabled: settings?.afterReplace?.changedWords !== false });
-    marks.current = { requestId, live: ranges.length > 0 };
     if (ranges.length) void bridge.highlightChanges(requestId, ranges).catch(() => undefined);
-  }, [rustPasted, state.undoable, state.capture, state.result, requestId, settings]);
-  // Withdrawn or used, Undo takes the marks with it (Rust fades them itself).
-  useEffect(() => { if (!state.undoable && !busy && marks.current) marks.current.live = false; }, [state.undoable, busy]);
-  const expire = useCallback(() => {
-    const current = marks.current;
-    if (current?.live) { current.live = false; void bridge.clearHighlight(current.requestId).catch(() => undefined); }
-    leave();
-  }, [leave]);
+  }, [rustPasted, state.undoLost, state.capture, state.result, requestId, settings]);
 
   // Undo, once per replacement. A resolved answer may be a refusal: its status decides.
   const undoAsked = useRef<string | null>(null);
   const askUndo = () => {
     if (!requestId || !rustPasted || !state.undoable || undoAsked.current === requestId || closingRef.current) return;
     undoAsked.current = requestId;
-    if (marks.current) marks.current.live = false;
     setUndo({ status: 'pending' });
     bridge.undoResult(requestId).then(answer => {
       if (!alive.current) return;
@@ -630,7 +624,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
     : outcome.stage === 'error' ? { stage: 'error', error: outcome.code, source: outcome.source, mode: state.mode, model: settings?.profiles[state.mode]?.model }
     : null;
   const content = stage && resultContent(stage, {
-    onExpire: outcome.stage === 'done' ? expire : leave, onDismiss: leave, onAction, onUndo: askUndo,
+    onExpire: leave, onDismiss: leave, onAction, onUndo: askUndo,
   });
   // Nothing to show once chosen (cancelled, or pasted with the check turned off): the surface
   // leaves after the lab's 60 ms (Simulator.jsx:154), keeping its last content while it goes

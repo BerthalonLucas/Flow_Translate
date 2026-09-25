@@ -63,7 +63,7 @@ async function pasteThrough(page: Page, id: string, { lastActionId = null, text 
 }
 test.describe.configure({ timeout: 45_000 });
 
-test('after Rust’s paste: the check, then Undo and its ring; the changed words asked once, word by word; the time stands still under the pointer, then the marks clear once and the Îlot leaves', async ({ page }) => {
+test('after Rust’s paste: the check, then Undo and its ring; the changed words asked once, word by word; the time stands still under the pointer, then the Îlot leaves and the marks stay Rust’s', async ({ page }) => {
   await page.clock.install();
   await openIlot(page);
   const text = 'Their going too the store', result = 'They are going to the store';
@@ -88,10 +88,9 @@ test('after Rust’s paste: the check, then Undo and its ring; the changed words
   await expect(page.locator('.result-row')).not.toHaveAttribute('data-paused', 'true');
   await page.clock.runFor(3900);
   expect(await calls(page, 'dismiss_overlay')).toHaveLength(0);
-  expect(await calls(page, 'clear_highlight')).toHaveLength(0);
   await page.clock.runFor(200);
-  // The marks leave with the pill: cleared once, then the Îlot leaves.
-  await expect.poll(() => calls(page, 'clear_highlight')).toEqual([{ requestId }]);
+  // The Îlot leaves at its countdown's end; the marks are not its to end (Rust ends them at the
+  // user's next action in the text, or after their own time).
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   await expect(stage(page)).toHaveAttribute('data-closing', 'true');
   // The exit itself is not awaited here: Playwright's clock fakes performance.now(), not
@@ -99,7 +98,7 @@ test('after Rust’s paste: the check, then Undo and its ring; the changed words
   // checked in e2e/ilot-result.pw.ts with a short clock).
   await page.clock.resume();
   await page.waitForTimeout(300);
-  expect(await calls(page, 'clear_highlight')).toHaveLength(1);
+  expect(await calls(page, 'highlight_changes')).toEqual([{ requestId, ranges: expected.ranges }]);
   expect(await calls(page, 'undo_result')).toHaveLength(0);
 });
 
@@ -120,8 +119,8 @@ test('Undo: one click asks undo_result once, the button waits meanwhile; « Undo
   expect(await sameSurface(page)).toBe(true);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   expect(await calls(page, 'undo_result')).toHaveLength(1);
-  // Rust hides the marks itself on Undo; nothing is pasted, copied or cleared by the front.
-  for (const command of ['replace_result', 'copy_result', 'clear_highlight']) expect(await calls(page, command), command).toHaveLength(0);
+  // Rust hides the marks itself on Undo; nothing is pasted or copied by the front.
+  for (const command of ['replace_result', 'copy_result']) expect(await calls(page, command), command).toHaveLength(0);
 });
 
 test('Undo refused, failed or rejected: the pill says why in Undo’s words, ✕ only, and nothing else is ever pasted', async ({ page }) => {
@@ -152,7 +151,7 @@ test('Undo refused, failed or rejected: the pill says why in Undo’s words, ✕
     await expect(page.locator('[data-ilot]')).toHaveCount(0);
   }
   expect(await calls(page, 'undo_result')).toHaveLength(cases.length);
-  for (const command of ['replace_result', 'copy_result', 'clear_highlight']) expect(await calls(page, command), command).toHaveLength(0);
+  for (const command of ['replace_result', 'copy_result']) expect(await calls(page, command), command).toHaveLength(0);
 });
 
 test('undo-state withdraws Undo: the button leaves while the pill keeps its corner, the check stays drawn; a stale withdrawal changes nothing', async ({ page }) => {
@@ -194,7 +193,7 @@ test('undo-state withdraws Undo: the button leaves while the pill keeps its corn
   expect(await calls(page, 'undo_result')).toHaveLength(0);
 });
 
-test('undo-state for a key or the caret: the check alone leaves within the lab’s 1.1 s, and the marks are Rust’s to fade: no clear_highlight', async ({ page }) => {
+test('undo-state for a key or the caret: the check alone leaves within the lab’s 1.1 s, and the marks are Rust’s: asked once per paste, never ended by the front', async ({ page }) => {
   await page.clock.install();
   await openIlot(page);
   // The caret moved 3 s into Undo's 8 s: 1.1 s more, not 5.
@@ -222,7 +221,7 @@ test('undo-state for a key or the caret: the check alone leaves within the lab�
   await page.clock.runFor(200);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(2);
   await page.clock.resume();
-  expect(await calls(page, 'clear_highlight')).toHaveLength(0);
+  expect(await calls(page, 'highlight_changes')).toHaveLength(2);
   expect(await calls(page, 'undo_result')).toHaveLength(0);
 });
 
@@ -242,8 +241,8 @@ test('the user’s own Ctrl+Z in the source (undo-state undo_key): « Undone »,
   await page.clock.runFor(200);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   await page.clock.resume();
-  // Rust fades its own marks, and nothing was asked of it: no undo_result, no clear_highlight.
-  for (const command of ['undo_result', 'clear_highlight', 'replace_result']) expect(await calls(page, command), command).toHaveLength(0);
+  // Rust ends its own marks (the Ctrl+Z was a key in the text), and nothing was asked of it.
+  for (const command of ['undo_result', 'replace_result']) expect(await calls(page, command), command).toHaveLength(0);
 });
 
 test('undo-state before result-delivery is kept: Undo is never offered (the check alone, 1.1 s), and a Ctrl+Z seen first reads as Undone', async ({ page }) => {
@@ -262,22 +261,24 @@ test('undo-state before result-delivery is kept: Undo is never offered (the chec
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   await page.clock.resume();
   await expect(page.locator('[data-ilot]')).toHaveCount(0);
-  // No Undo, so no marks either.
-  expect(await calls(page, 'highlight_changes')).toHaveLength(0);
+  // The marks are not Undo's (Lucas, 25/09): asked all the same.
+  expect(await calls(page, 'highlight_changes')).toHaveLength(1);
 
   // The user's own Ctrl+Z, seen before the delivery: « Undone » straight away.
   await pasteThrough(page, 'early-ctrl-z', {}, () => on(page, f => f.undoState('undo_key')), 'undone');
   await expect(page.locator('.shape-layer:not(.is-leaving) [data-result-content="undone"]')).toHaveText('Undone');
   await expect(undoButton(page)).toHaveCount(0);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(2);
-  for (const command of ['undo_result', 'highlight_changes', 'clear_highlight']) expect(await calls(page, command), command).toHaveLength(0);
+  expect(await calls(page, 'undo_result')).toHaveLength(0);
+  // The paste already undone: no marks asked for text that is gone.
+  expect(await calls(page, 'highlight_changes')).toHaveLength(1);
 });
 
 test('After replacing: changed words off, Undo off, the check off, a shorter Undo, and a block for Translate', async ({ page }) => {
   await page.clock.install();
   await openIlot(page);
   // Changed words off: Undo, no marks.
-  await on(page, f => f.settings({ afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: false } }));
+  await on(page, f => f.settings({ afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: false, changedWordsSeconds: 60 } }));
   await pasteThrough(page, 'no-marks');
   await expect(undoButton(page)).toBeVisible();
   await page.clock.runFor(500);
@@ -286,18 +287,19 @@ test('After replacing: changed words off, Undo off, the check off, a shorter Und
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(1);
   await expect(page.locator('[data-ilot]')).toHaveCount(0);
 
-  // Undo off: Rust says it is not undoable; the check alone, no marks.
-  await on(page, f => f.settings({ afterReplace: { check: true, undo: false, undoSeconds: 8, changedWords: true } }));
-  await pasteThrough(page, 'no-undo', { undoable: false });
+  // Undo off: Rust says it is not undoable; the check alone, and the marks all the same (they
+  // are not Undo's, Lucas 25/09).
+  await on(page, f => f.settings({ afterReplace: { check: true, undo: false, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 } }));
+  const noUndo = await pasteThrough(page, 'no-undo', { undoable: false });
   await expect(page.locator('[data-result-content="done"]')).toHaveClass(/is-check-only/);
   await expect(undoButton(page)).toHaveCount(0);
   await page.clock.runFor(1200);
   await expect.poll(() => calls(page, 'dismiss_overlay')).toHaveLength(2);
-  expect(await calls(page, 'highlight_changes')).toHaveLength(0);
+  expect(await calls(page, 'highlight_changes')).toEqual([expect.objectContaining({ requestId: noUndo })]);
   await expect(page.locator('[data-ilot]')).toHaveCount(0);
 
   // The check off: Undo alone; three seconds.
-  await on(page, f => f.settings({ afterReplace: { check: false, undo: true, undoSeconds: 3, changedWords: true } }));
+  await on(page, f => f.settings({ afterReplace: { check: false, undo: true, undoSeconds: 3, changedWords: true, changedWordsSeconds: 60 } }));
   await pasteThrough(page, 'undo-only', {}, async () => { await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50)); });
   await expect(page.locator('[data-result-content="done"]')).toHaveClass(/is-undo-only/);
   await expect(page.locator('.result-check')).toHaveCount(0);
@@ -309,7 +311,7 @@ test('After replacing: changed words off, Undo off, the check off, a shorter Und
   await expect(page.locator('[data-ilot]')).toHaveCount(0);
 
   // Translate marks the whole new text as one block.
-  await on(page, f => f.settings({ afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true } }));
+  await on(page, f => f.settings({ afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 } }));
   const text = 'Pourriez-vous envoyer la proposition ?', result = 'Could you send the proposal?';
   const requestId = await pasteThrough(page, 'block', { lastActionId: 'translate', text, result });
   await expect.poll(async () => (await calls(page, 'highlight_changes')).filter(args => args.requestId === requestId)).toEqual([{ requestId, ranges: [{ start: 0, end: result.length }] }]);

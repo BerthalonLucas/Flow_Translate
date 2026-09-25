@@ -357,7 +357,7 @@ test('the check after a paste stays 1.1 s on the simulated clock, without Undo w
   await expect.poll(() => calls(page, 'complete_overlay_dismiss')).toEqual([{ captureId: 'check' }]);
 
   // settings.afterReplace.check = false: no check at all, the Îlot leaves after the lab's 60 ms.
-  await on(page, f => f.settings({ afterReplace: { check: false, undo: true, undoSeconds: 8, changedWords: true } }));
+  await on(page, f => f.settings({ afterReplace: { check: false, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 } }));
   await chooseAndWork(page, 'no-check');
   await on(page, f => f.done('Synthetic result'));
   const checkSeen = page.evaluate(() => new Promise<boolean>(resolve => {
