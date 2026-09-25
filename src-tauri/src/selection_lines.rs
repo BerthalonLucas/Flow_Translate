@@ -44,6 +44,11 @@ fn intersection(a: &Rect, b: &Rect) -> Option<Rect> {
     drawable(&r).then_some(r)
 }
 
+/// `rect` cut to `window`, when something of it is left.
+pub fn clip(rect: &Rect, window: &Rect) -> Option<Rect> {
+    intersection(rect, window)
+}
+
 /// The bounding box of rectangles (None when there are none).
 pub fn bounds(rects: &[Rect]) -> Option<Rect> {
     rects.iter().copied().reduce(|a, b| union(&a, &b))

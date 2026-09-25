@@ -191,6 +191,95 @@ pub fn ends_undo(vk:u32,extra:usize)->bool{
     extra!=OUR_KEYS&&!matches!(vk,0x10..=0x12|0x14|0x1B|0x5B|0x5C|0x90|0x91|0xA0..=0xA5)
 }
 
+/// The marks of a paste (« mise en valeur », Lucas 25/09) last until the user's next action:
+/// a key that is not ours, a click or the wheel anywhere but on our pill. Keys come through
+/// the keyboard hook; clicks and the wheel through a mouse hook that only lives while the
+/// marks show, on its own thread (a low-level mouse hook sees every move: none stays
+/// installed for nothing). The action is reported once per arming.
+static MARKS_WATCH:AtomicBool=AtomicBool::new(false);
+static MARKS_OVERLAY:AtomicIsize=AtomicIsize::new(0);
+static MARKS_ENDED:OnceLock<std::sync::mpsc::SyncSender<()>>=OnceLock::new();
+/// The mouse hook's thread: its id while it pumps, `MOUSE_STARTING` while it starts or stops.
+static MOUSE_THREAD:AtomicU32=AtomicU32::new(0);
+const MOUSE_STARTING:u32=u32::MAX;
+
+/// Whether a key down ends the marks: not one of ours, not a lone modifier or lock key.
+/// Escape counts, unlike for Undo: the user acts in the text's window.
+pub fn ends_marks(vk:u32,extra:usize)->bool{
+    extra!=OUR_KEYS&&!matches!(vk,0x10..=0x12|0x14|0x5B|0x5C|0x90|0x91|0xA0..=0xA5)
+}
+
+/// Whether a low-level mouse message ends the marks: a button pressed, the wheel turned.
+pub fn ends_marks_mouse(message:u32)->bool{
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN,WM_MBUTTONDOWN,WM_MOUSEHWHEEL,WM_MOUSEWHEEL,WM_RBUTTONDOWN,WM_XBUTTONDOWN};
+    [WM_LBUTTONDOWN,WM_RBUTTONDOWN,WM_MBUTTONDOWN,WM_XBUTTONDOWN,WM_MOUSEWHEEL,WM_MOUSEHWHEEL].contains(&message)
+}
+
+/// Where the marks' end is reported: `on_action` runs on its own thread.
+pub fn install_marks_watch(on_action:impl Fn()+Send+'static)->Result<(),String>{
+    let (sender,receiver)=std::sync::mpsc::sync_channel::<()>(1);
+    let _=MARKS_ENDED.set(sender);
+    std::thread::Builder::new().name("marks-watch".into()).spawn(move||{for ()in receiver{on_action();}})
+        .map(|_|()).map_err(|_|"La fin des marques est indisponible.".to_string())
+}
+
+/// The marks show: their watch starts, the keys at once, the mouse once its thread runs.
+/// `overlay`: our pill, whose clicks leave the marks alone.
+pub fn arm_marks_watch(overlay:isize){
+    MARKS_OVERLAY.store(overlay,Ordering::Relaxed);
+    MARKS_WATCH.store(true,Ordering::Release);
+    if MOUSE_THREAD.compare_exchange(0,MOUSE_STARTING,Ordering::AcqRel,Ordering::Acquire).is_ok()
+        &&std::thread::Builder::new().name("marks-mouse".into()).spawn(watch_mouse).is_err(){
+        MOUSE_THREAD.store(0,Ordering::Release);
+    }
+}
+
+/// The marks left or hid: nothing is reported any more and the mouse hook goes away.
+pub fn disarm_marks_watch(){
+    use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW,WM_QUIT};
+    MARKS_WATCH.store(false,Ordering::Release);
+    let thread=MOUSE_THREAD.load(Ordering::Acquire);
+    if thread!=0&&thread!=MOUSE_STARTING{unsafe{let _=PostThreadMessageW(thread,WM_QUIT,WPARAM(0),LPARAM(0));}}
+}
+
+fn marks_action(){
+    if MARKS_WATCH.swap(false,Ordering::AcqRel){if let Some(ended)=MARKS_ENDED.get(){let _=ended.try_send(());}}
+}
+
+/// The mouse hook's thread: installs the hook, pumps until `disarm_marks_watch` posts
+/// WM_QUIT, removes it. Armed again meanwhile, it starts over rather than leave the marks
+/// without their mouse. The hook itself stays minimal: one comparison, and for a press or
+/// the wheel, the window under the pointer (our thread owns no window: nothing is sent).
+fn watch_mouse(){
+    use windows::Win32::{Foundation::HINSTANCE,System::Threading::GetCurrentThreadId,UI::WindowsAndMessaging::{CallNextHookEx,GetAncestor,GetMessageW,PeekMessageW,SetWindowsHookExW,UnhookWindowsHookEx,WindowFromPoint,GA_ROOT,MSG,MSLLHOOKSTRUCT,PM_NOREMOVE,WH_MOUSE_LL}};
+    unsafe extern "system" fn mouse(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&MARKS_WATCH.load(Ordering::Acquire)&&ends_marks_mouse(wparam.0 as u32){
+            let point=unsafe{(*(lparam.0 as *const MSLLHOOKSTRUCT)).pt};
+            let overlay=MARKS_OVERLAY.load(Ordering::Relaxed);
+            if overlay==0||unsafe{GetAncestor(WindowFromPoint(point),GA_ROOT)}.0 as isize!=overlay{marks_action();}
+        }
+        unsafe{CallNextHookEx(None,code,wparam,lparam)}
+    }
+    unsafe{
+        let thread=GetCurrentThreadId();
+        let mut message=MSG::default();
+        // The queue exists before the id is published: a WM_QUIT posted right then is kept.
+        let _=PeekMessageW(&mut message,None,0,0,PM_NOREMOVE);
+        let module=GetModuleHandleW(None).ok().map(|module|HINSTANCE(module.0));
+        loop{
+            let Ok(hook)=SetWindowsHookExW(WH_MOUSE_LL,Some(mouse),module,0) else{MOUSE_THREAD.store(0,Ordering::Release);return};
+            MOUSE_THREAD.store(thread,Ordering::Release);
+            if MARKS_WATCH.load(Ordering::Acquire){while GetMessageW(&mut message,None,0,0).0>0{}}
+            let _=UnhookWindowsHookEx(hook);
+            MOUSE_THREAD.store(MOUSE_STARTING,Ordering::Release);
+            if MARKS_WATCH.load(Ordering::Acquire){continue;}
+            MOUSE_THREAD.store(0,Ordering::Release);
+            // Armed again right then: start over, unless that arming started a thread itself.
+            if !(MARKS_WATCH.load(Ordering::Acquire)&&MOUSE_THREAD.compare_exchange(0,MOUSE_STARTING,Ordering::AcqRel,Ordering::Acquire).is_ok()){return;}
+        }
+    }
+}
+
 pub fn escape_scope(source:isize,overlay:isize){
     SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
 }
@@ -338,6 +427,11 @@ pub fn executable_name(path:&str)->Option<String>{
 pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static,on_typed:impl Fn(Typed)+Send+'static)->Result<(),String>{
     use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,WH_KEYBOARD_LL,WM_KEYDOWN,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
     unsafe extern "system" fn keyboard(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&MARKS_WATCH.load(Ordering::Acquire){
+            let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let message=wparam.0 as u32;
+            if (message==WM_KEYDOWN||message==WM_SYSKEYDOWN)&&ends_marks(key.vkCode,key.dwExtraInfo){marks_action();}
+        }
         if code>=0&&UNDO_WATCH.load(Ordering::Acquire){
             let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
             let message=wparam.0 as u32;
@@ -1093,6 +1187,19 @@ mod tests {
         // Our own chords, lone modifiers, lock keys and Escape never do.
         assert!(!ends_undo(0x56, OUR_KEYS));
         for vk in [0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91, 0x1B] { assert!(!ends_undo(vk, 0), "{vk:#x}"); }
+    }
+
+    #[test]
+    fn the_marks_end_at_the_users_next_key_click_or_wheel() {
+        // Any key that writes or moves, Escape included, another tool's too.
+        for vk in [0x41, 0x5A, 0x0D, 0x08, 0x25, 0x20, 0x1B, 0x21] { assert!(ends_marks(vk, 0), "{vk:#x}"); }
+        assert!(ends_marks(0x41, 0x1234));
+        // Our own paste, lone modifiers and lock keys never do.
+        assert!(!ends_marks(0x56, OUR_KEYS));
+        for vk in [0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91] { assert!(!ends_marks(vk, 0), "{vk:#x}"); }
+        // A press of any button and the wheel end them; a move or a release does not.
+        for message in [0x0201, 0x0204, 0x0207, 0x020B, 0x020A, 0x020E] { assert!(ends_marks_mouse(message), "{message:#x}"); }
+        for message in [0x0200, 0x0202, 0x0205, 0x0208, 0x020C] { assert!(!ends_marks_mouse(message), "{message:#x}"); }
     }
 
     #[test]

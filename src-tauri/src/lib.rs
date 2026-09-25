@@ -7,6 +7,7 @@ mod clipboard_guard;
 mod crypto;
 mod demo_menu;
 mod error;
+mod ground;
 use error::{AppError, ErrorKind, Refusal};
 mod halo;
 mod history;
@@ -112,6 +113,8 @@ struct Inner {
     /// The replacement the Îlot's pill stands under (lot 9), until the next capture or the
     /// dismissal.
     applied: Option<Applied>,
+    /// Where the marks of the last replacement stand, while they show: they outlive the pill.
+    marks: Option<Marked>,
     /// How far `move_overlay` moved the anchored window (physical pixels), kept by `position`.
     shift: (f64, f64),
     /// Some while a menu capture is being taken (review n°4 and n°7): the menu keys the hook
@@ -134,8 +137,21 @@ struct Applied {
     /// The replaced selection's lines and anchor, for that estimate.
     old_lines: Vec<Rect>,
     anchor: Option<Rect>,
+    /// The colour under the replaced selection, read at its capture: the marks' tone.
+    ground: Option<[u8; 3]>,
     /// Undo is still offered: once per replacement, withdrawn by a key in the source.
     undo: bool,
+}
+/// The marks of a replacement (« mise en valeur », Lucas 25/09): their halo's generation and
+/// the new text they stand on. They end at the user's next action in the text (`host`'s marks
+/// watch) or after their time, whatever Undo or the pill do; the context watcher hides them
+/// once that text moved, scrolled or reflowed, or another window came in front.
+#[derive(Clone)]
+struct Marked {
+    generation: u64,
+    window: isize,
+    window_rect: Option<Rect>,
+    located: pasted::Located,
 }
 // Glass position chosen by a drag of the anchored overlay (screen pixels of region zero).
 #[derive(Clone, Copy, Debug)]
@@ -180,6 +196,7 @@ impl Inner {
             notice_generation: 0,
             last_result: None,
             applied: None,
+            marks: None,
             shift: (0., 0.),
             held_keys: None,
         }
@@ -567,12 +584,15 @@ fn store_capture(
     backdrop::hide(app);
     host::disarm_undo_watch();
     let is_menu = menu.is_some();
+    let menu_scene;
     let ready = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         i.cancel(None);
         i.retire_result();
         i.notice_generation = i.notice_generation.wrapping_add(1);
         i.side = None;
+        // The menu shows its selection at three levels while it waits (Lucas, 25/09).
+        menu_scene = if is_menu { halo_scene(&i.settings, &captured) } else { None };
         i.capture = Some(captured);
         i.menu = menu;
         i.execution = execution;
@@ -589,6 +609,7 @@ fn store_capture(
         i.presentation = Presentation::Anchored;
         i.regions.clear();
         i.applied = None;
+        i.marks = None;
         i.shift = (0., 0.);
         i.pending_dismiss = None;
         i.dismiss_generation = i.dismiss_generation.wrapping_add(1);
@@ -601,6 +622,7 @@ fn store_capture(
     };
     host::set_menu_open(is_menu, source, overlay);
     position(app, state, 280., 90., None)?;
+    if let Some(scene) = menu_scene { halo::menu(app, scene); }
     let fallback_app = app.clone();
     let fallback_id = public.id.clone();
     tauri::async_runtime::spawn(async move {
@@ -695,7 +717,7 @@ fn replay_last(app: &AppHandle) -> Result<(), String> {
         menu: None,
     };
     let capture_id = public.id.clone();
-    store_capture(app, &state, StoredCapture { public, target: None, invalidated: false }, host::foreground(), None, None)?;
+    store_capture(app, &state, StoredCapture { public, target: None, invalidated: false, levels: HaloLevels::default() }, host::foreground(), None, None)?;
     let mut i = state.inner.lock().map_err(|_| lock_error())?;
     if i.capture.as_ref().is_some_and(|c| c.public.id == capture_id) {
         i.completed = Some(CompletedResult { capture_id, ..result });
@@ -930,7 +952,7 @@ fn translate(
     if request.text.is_empty() || request.text.chars().count() > 6000 {
         return Err("La traduction accepte de 1 à 6 000 caractères.".into());
     }
-    let (profile, instruction, execution_info, cancel, inner, history, demo, demo_long, halo_lines) = {
+    let (profile, instruction, execution_info, cancel, inner, history, demo, demo_long, halo_scene) = {
         let mut i = state.inner.lock().map_err(|_| lock_error())?;
         let captured = i
             .capture
@@ -955,7 +977,7 @@ fn translate(
         actions::validate_template(&run.action.prompt_template)?;
         let instruction = run.action.prompt_template.clone();
         let execution_info = run.info.clone();
-        let halo_lines = halo_lines(&i.settings, &captured.public);
+        let halo_scene = halo_scene(&i.settings, captured);
         i.cancel(None);
         i.execution.as_mut().expect("validated execution").begin(&request.id);
         i.completed = None;
@@ -973,11 +995,11 @@ fn translate(
             state.history.clone(),
             state.simulated,
             state.demo_long,
-            halo_lines,
+            halo_scene,
         )
     };
-    match halo_lines {
-        Some(lines) => halo::work(&app, &lines),
+    match halo_scene {
+        Some(scene) => halo::work(&app, scene),
         None => halo::hide(&app),
     }
     // Test only (FLOWTRANSLATE_SIMULATE_WORD_MS, simulated inference): a slower simulated
@@ -1115,11 +1137,19 @@ fn translate(
     });
     Ok(())
 }
-/// The lines the halo sweeps while an action works (lot 6): under the Îlot only, for a UIA
-/// selection that still has its anchor (the watcher removes it once the selection moved).
-fn halo_lines(settings: &Settings, capture: &Capture) -> Option<Vec<Rect>> {
-    (settings.ui_version == UiVersion::Ilot && capture.anchor.is_some() && !capture.selection_rects.is_empty())
-        .then(|| capture.selection_rects.clone())
+/// What the halo shows of a selection while the menu waits and while an action works (lot 6,
+/// « mise en valeur »): under the Îlot only, for a UIA selection that still has its anchor (the
+/// watcher removes it once the selection moved): its exact text, its whole lines, its text box
+/// and the ground under it, as the capture read them.
+fn halo_scene(settings: &Settings, captured: &StoredCapture) -> Option<halo::Scene> {
+    let capture = &captured.public;
+    (settings.ui_version == UiVersion::Ilot && capture.anchor.is_some() && !capture.selection_rects.is_empty()).then(|| halo::Scene {
+        lines: capture.selection_rects.clone(),
+        full: captured.levels.full_lines.clone(),
+        text_box: captured.levels.text_box,
+        whole: Vec::new(),
+        ground: captured.levels.ground,
+    })
 }
 #[tauri::command]
 fn cancel_translation(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
@@ -1169,8 +1199,8 @@ fn schedule_auto_delivery(app: &AppHandle) {
         let applied = match (&outcome, &target) {
             (Ok(_), Some(target)) if i.settings.ui_version == UiVersion::Ilot => {
                 let located = locate_pasted(&result.translated_text, target.native_window);
-                let old = i.capture.as_ref().filter(|c| c.public.id == result.capture_id).map(|c| (c.public.selection_rects.clone(), c.public.anchor));
-                let (old_lines, anchor) = old.unwrap_or_default();
+                let old = i.capture.as_ref().filter(|c| c.public.id == result.capture_id).map(|c| (c.public.selection_rects.clone(), c.public.anchor, c.levels.ground));
+                let (old_lines, anchor, ground) = old.unwrap_or_default();
                 Some(Applied {
                     request_id: result.request_id.clone(),
                     window: target.native_window,
@@ -1183,6 +1213,7 @@ fn schedule_auto_delivery(app: &AppHandle) {
                     located,
                     old_lines,
                     anchor,
+                    ground,
                 })
             }
             _ => None,
@@ -1302,41 +1333,40 @@ async fn move_overlay(app: AppHandle, state: State<'_, AppState>, capture_id: St
 
 /// Marks the changed words of the replacement (lot 9) in the halo: `ranges` are UTF-16
 /// offsets of the result (JavaScript string indices), end excluded, at most 64. Each is found
-/// in the pasted text by UI Automation and checked by its text; the marks hold until
-/// `clear_highlight`, a key in the source, Undo or the dismissal. Answers how many ranges
-/// were found and how many lines are drawn (0: nothing shown).
+/// in the pasted text by UI Automation and checked by its text. A wave passes over the new
+/// text, then the marks hold until the user's next action in the text (a key, a click, the
+/// wheel), `afterReplace.changedWordsSeconds` at most, whatever Undo or the pill do (Lucas,
+/// 25/09); the text moving, scrolling or reflowing, Undo and the next capture hide them.
+/// Answers how many ranges were found and how many lines are drawn (0: nothing shown).
 #[tauri::command]
 async fn highlight_changes(app: AppHandle, state: State<'_, AppState>, request_id: String, ranges: Vec<TextRange>) -> Result<HighlightResult, String> {
     if ranges.len() > 64 { return Err("Trop de plages.".into()); }
-    let (located, value, window) = {
+    let (located, value, window, window_rect, ground, seconds) = {
         let i = state.inner.lock().map_err(|_| lock_error())?;
         if !i.visible || i.pending_dismiss.is_some() { return Err("Ce résultat n’est plus actif.".into()); }
         let applied = i.applied.as_ref().filter(|a| a.request_id == request_id).ok_or("Ce résultat n’est plus actif.")?;
-        let Some(located) = applied.located.clone().filter(|_| applied.undo) else { return Ok(HighlightResult { ranges: 0, lines: 0 }) };
-        (located, applied.pasted.clone(), applied.window)
+        let Some(located) = applied.located.clone() else { return Ok(HighlightResult { ranges: 0, lines: 0 }) };
+        (located, applied.pasted.clone(), applied.window, applied.window_rect, applied.ground, i.settings.after_replace.changed_words_seconds)
     };
     let pairs: Vec<(usize, usize)> = ranges.iter().map(|r| (r.start, r.end)).collect();
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (resolved, lines) = pasted::changed_lines(&located, &value, &pairs, window);
         let state = handle.state::<AppState>();
-        let current = state.inner.lock().is_ok_and(|i| i.visible && i.applied.as_ref().is_some_and(|a| a.request_id == request_id && a.undo));
+        // Held while the marks show: no capture or dismissal commits in between.
+        let Ok(mut i) = state.inner.lock() else { return HighlightResult { ranges: resolved, lines: 0 } };
+        let current = i.visible && i.applied.as_ref().is_some_and(|a| a.request_id == request_id && a.located.is_some());
         if !current || lines.is_empty() { return HighlightResult { ranges: resolved, lines: 0 }; }
-        halo::marks(&handle, &lines);
+        let scene = halo::Scene { lines: lines.clone(), whole: located.lines.clone(), ground, ..halo::Scene::default() };
+        let Some(generation) = halo::marks(&handle, scene, seconds) else { return HighlightResult { ranges: resolved, lines: 0 } };
+        i.marks = Some(Marked { generation, window, window_rect, located });
         HighlightResult { ranges: resolved, lines: lines.len() }
     }).await.map_err(|_| "Surlignage interrompu.".to_string())
 }
 
-/// The pill's Undo is over (its countdown ended): the marks fade out in 900 ms.
-#[tauri::command]
-fn clear_highlight(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<(), String> {
-    let current = state.inner.lock().map_err(|_| lock_error())?.applied.as_ref().is_some_and(|a| a.request_id == request_id);
-    if current && halo::marking() { halo::leave(&app); }
-    Ok(())
-}
-
-/// Undo withdrawn (lot 9): `undo-state` tells the frontend why, the marks fade. `request`
-/// None: whatever replacement is current (the keyboard hook does not know it).
+/// Undo withdrawn (lot 9): `undo-state` tells the frontend why. The marks are not Undo's: they
+/// end by themselves. `request` None: whatever replacement is current (the keyboard hook does
+/// not know it).
 fn lose_undo(app: &AppHandle, request: Option<&str>, reason: UndoLoss, forget_text: bool) {
     let state = app.state::<AppState>();
     let lost = {
@@ -1348,7 +1378,6 @@ fn lose_undo(app: &AppHandle, request: Option<&str>, reason: UndoLoss, forget_te
         was.then(|| applied.request_id.clone())
     };
     host::disarm_undo_watch();
-    if halo::marking() { halo::leave(app); }
     if let Some(request_id) = lost {
         let _ = app.emit_to("overlay", "undo-state", UndoState { request_id, available: false, reason });
     }
@@ -2088,6 +2117,29 @@ fn capture_error(app: &AppHandle, error: &AppError, notify: bool) {
         show_notice(app, &error.message, Some(error.kind));
     }
 }
+/// The marks after the pill left (« mise en valeur », Lucas 25/09): gone at once when their
+/// text no longer stands where they do (the window moved, another one in front, the text
+/// scrolled or reflowed), faded when the caret left it. Forgotten once they ended.
+fn watch_marks(app: &AppHandle, state: &AppState, marks: &Marked) {
+    let forget = || {
+        if let Ok(mut i) = state.inner.lock() {
+            if i.marks.as_ref().is_some_and(|m| m.generation == marks.generation) { i.marks = None; }
+        }
+    };
+    if halo::ended(marks.generation) { return forget(); }
+    let fg = host::foreground();
+    let ours = SURFACES.iter().any(|l| app.get_webview_window(l).is_some_and(|w| host::belongs_to(&w, fg)));
+    if host::window_rect(marks.window) != marks.window_rect || switched_away(fg, marks.window, ours) {
+        halo::hide(app);
+        return forget();
+    }
+    if fg != marks.window { return; }
+    match pasted::relocate(&marks.located) {
+        Some(rects) if same_rects(&rects, &marks.located.rects) => {}
+        Some(_) => { halo::hide(app); forget(); }
+        None => { halo::leave(app); forget(); }
+    }
+}
 fn watch_context(app: AppHandle) {
     std::thread::spawn(move || {
         let mut ticks = 0u32;
@@ -2108,9 +2160,13 @@ fn watch_context(app: AppHandle) {
                 if !i.visible {
                     escape_was_down = false;
                     suspected = None;
+                    // The pill left, the marks stay (Lucas, 25/09): still watched, every 105 ms.
+                    let marks = i.marks.clone();
+                    drop(i);
+                    if let Some(marks) = marks.filter(|_| ticks % 3 == 0 && !state.demo) { watch_marks(&app, &state, &marks); }
                     continue;
                 }
-                let applied = i.applied.as_ref().map(|a| (a.request_id.clone(), a.window, a.window_rect, a.located.clone(), a.undo));
+                let applied = i.applied.as_ref().map(|a| (a.request_id.clone(), a.window, a.window_rect, a.located.clone()));
                 (i.source_window, i.source_rect, i.capture.clone(), i.size, applied)
             };
             let fg = host::foreground();
@@ -2143,11 +2199,11 @@ fn watch_context(app: AppHandle) {
             if (ticks % period != 0 && suspected.is_none()) || state.demo {
                 continue;
             }
-            if let Some((request_id, window, window_rect, located, undo)) = snapshot.4 {
+            if let Some((request_id, window, window_rect, located)) = snapshot.4 {
                 // The caret after the pasted text is normal and keeps the pill; the window
                 // moving, another application in front, or the text scrolling or reflowing
                 // (its rectangles changed) hide pill and marks. The text no longer before the
-                // caret (a click elsewhere): Undo is withdrawn, the pill stays.
+                // caret (a click elsewhere): Undo is withdrawn, the pill stays, the marks fade.
                 suspected = None;
                 let moved = host::window_rect(window) != window_rect;
                 let switched = switched_away(fg, window, ours);
@@ -2161,10 +2217,11 @@ fn watch_context(app: AppHandle) {
                     match pasted::relocate(&located) {
                         Some(rects) if same_rects(&rects, &located.rects) => {}
                         Some(_) => { halo::hide(&app); let _ = dismiss(&app, &state); }
-                        None => lose_undo(&app, Some(&request_id), UndoLoss::CaretMoved, true),
+                        None => {
+                            lose_undo(&app, Some(&request_id), UndoLoss::CaretMoved, true);
+                            if halo::marking() { halo::leave(&app); }
+                        }
                     }
-                } else if !undo && halo::marking() {
-                    halo::leave(&app);
                 }
                 continue;
             }
@@ -2343,6 +2400,11 @@ pub fn run() {
                 let reason = if key == host::Typed::UndoKey { UndoLoss::UndoKey } else { UndoLoss::Typed };
                 lose_undo(&typed, None, reason, false);
             })?;
+            // The user's next action in the text (« mise en valeur », Lucas 25/09): the marks go.
+            let acted = app.handle().clone();
+            host::install_marks_watch(move || {
+                if halo::marking() { halo::leave(&acted); } else { host::disarm_marks_watch(); }
+            })?;
             watch_context(app.handle().clone());
             system_theme::watch(app.handle().clone());
             system_motion::watch(app.handle().clone());
@@ -2372,7 +2434,6 @@ pub fn run() {
             result_pill,
             move_overlay,
             highlight_changes,
-            clear_highlight,
             undo_result,
             dismiss_overlay,
             complete_overlay_dismiss,
@@ -2418,7 +2479,7 @@ mod tests {
         assert!(!i.execution.as_mut().unwrap().claim_delivery("retry"));
     }
     fn menu_capture(i: &mut Inner, id: &str) {
-        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None, invalidated: false });
+        i.capture = Some(StoredCapture { public: Capture { id: id.into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: None, selection_rects: Vec::new(), screen: None, replay: None, execution: None, menu: Some(MenuInfo { last_action_id: None }) }, target: None, invalidated: false, levels: HaloLevels::default() });
         i.menu = Some(MenuSession { capture_id: id.into(), settings: i.settings.clone(), process: None, last_action_id: None, chosen: false, invalidated: false });
         i.execution = None;
         i.visible = true;
@@ -2728,18 +2789,29 @@ mod tests {
         assert!(!i.current("new"));
     }
     #[test]
-    fn the_halo_sweeps_only_an_anchored_uia_selection_under_the_ilot() {
+    fn the_halo_shows_only_an_anchored_uia_selection_under_the_ilot_at_its_three_levels() {
         let line = Rect { x: 10., y: 20., width: 300., height: 18. };
+        let full = Rect { x: 4., y: 20., width: 420., height: 18. };
+        let text_box = Rect { x: 0., y: 0., width: 500., height: 200. };
         let capture = Capture { id: "c".into(), text: "Texte".into(), source: CaptureSource::Selection, origin: CaptureOrigin::Uia, can_replace: true, anchor: Some(line), selection_rects: vec![line], screen: None, replay: None, execution: None, menu: None };
+        let levels = HaloLevels { text_box: Some(text_box), full_lines: vec![full], ground: Some([255, 255, 255]) };
+        let stored = |public: Capture| StoredCapture { public, target: None, invalidated: false, levels: levels.clone() };
         let mut settings = Settings::default();
         settings.ui_version = UiVersion::V4;
-        assert_eq!(halo_lines(&settings, &capture), None, "the 0.4 journey has no halo");
+        assert_eq!(halo_scene(&settings, &stored(capture.clone())), None, "the 0.4 journey has no halo");
         settings.ui_version = UiVersion::Ilot;
-        assert_eq!(halo_lines(&settings, &capture), Some(vec![line]));
+        let scene = halo_scene(&settings, &stored(capture.clone())).expect("a scene");
+        assert_eq!((scene.lines, scene.full, scene.text_box, scene.ground), (vec![line], vec![full], Some(text_box), Some([255, 255, 255])));
+        assert!(scene.whole.is_empty(), "the new text only comes with the marks");
+        // Without its other levels (a field that answers no line, a ground that could not be
+        // read), the exact text alone.
+        let bare = StoredCapture { public: capture.clone(), target: None, invalidated: false, levels: HaloLevels::default() };
+        let scene = halo_scene(&settings, &bare).expect("a scene");
+        assert_eq!((scene.lines, scene.full.len(), scene.text_box, scene.ground), (vec![line], 0, None, None));
         let moved = Capture { anchor: None, ..capture.clone() };
-        assert_eq!(halo_lines(&settings, &moved), None, "an invalidated selection is not swept");
+        assert_eq!(halo_scene(&settings, &stored(moved)), None, "an invalidated selection is not shown");
         let copied = Capture { origin: CaptureOrigin::Copy, source: CaptureSource::Clipboard, anchor: None, selection_rects: Vec::new(), ..capture };
-        assert_eq!(halo_lines(&settings, &copied), None, "the copy paths have no rectangles");
+        assert_eq!(halo_scene(&settings, &stored(copied)), None, "the copy paths have no rectangles");
     }
     #[test]
     fn cancelled_token_cannot_complete() {

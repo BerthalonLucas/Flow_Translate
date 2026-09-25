@@ -289,6 +289,9 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
     if !(2..=20).contains(&settings.after_replace.undo_seconds) {
         return Err("La durée d’annulation doit être comprise entre 2 et 20 secondes.".into());
     }
+    if !(5..=120).contains(&settings.after_replace.changed_words_seconds) {
+        return Err("La durée des mots changés doit être comprise entre 5 et 120 secondes.".into());
+    }
     for required in ["fast", "quality"] {
         let profile = settings
             .profiles
@@ -556,6 +559,21 @@ mod tests {
         assert_eq!(keep_menu_chord(&fresh, &current), None);
         current.shortcut_bindings[0] = ShortcutBinding { shortcut: "Ctrl+Alt+Y".into(), enabled: false, ..current.shortcut_bindings[0].clone() };
         assert_eq!(keep_menu_chord(&fresh, &current), None);
+    }
+    #[test]
+    fn the_after_replace_durations_stay_in_their_bounds() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.after_replace.changed_words_seconds, 60, "the marks last a minute at most by default");
+        assert!(validate(&settings).is_ok());
+        for (undo, words, valid) in [(2, 5, true), (20, 120, true), (1, 60, false), (21, 60, false), (8, 4, false), (8, 121, false)] {
+            settings.after_replace.undo_seconds = undo;
+            settings.after_replace.changed_words_seconds = words;
+            assert_eq!(validate(&settings).is_ok(), valid, "{undo} s, {words} s");
+        }
+        // A file written before the marks had their own duration gets the default.
+        let raw = serde_json::json!({ "check": true, "undo": false, "undoSeconds": 8, "changedWords": true });
+        let after: crate::types::AfterReplace = serde_json::from_value(raw).unwrap();
+        assert_eq!((after.undo, after.changed_words_seconds), (false, 60));
     }
     #[test]
     fn endpoint_guards() {

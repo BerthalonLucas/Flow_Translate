@@ -90,7 +90,8 @@ pub enum GlassMaterial {
 }
 
 /// What follows a replacement: the drawn check, Undo with its countdown, the changed
-/// words highlighted while Undo lasts. Each can be switched off.
+/// words highlighted until the user's next action in the text, `changed_words_seconds` at
+/// most (Lucas, 25/09: independent of Undo). Each can be switched off.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AfterReplace {
@@ -98,11 +99,12 @@ pub struct AfterReplace {
     pub undo: bool,
     pub undo_seconds: u32,
     pub changed_words: bool,
+    pub changed_words_seconds: u32,
 }
 
 impl Default for AfterReplace {
     fn default() -> Self {
-        Self { check: true, undo: true, undo_seconds: 8, changed_words: true }
+        Self { check: true, undo: true, undo_seconds: 8, changed_words: true, changed_words_seconds: 60 }
     }
 }
 
@@ -646,6 +648,21 @@ pub struct StoredCapture {
     /// The context watcher dropped the target (the selection moved, changed or left): a
     /// paste then fails as `target_changed`, not as a field that cannot be written.
     pub invalidated: bool,
+    /// The halo's other levels and the ground under the text (UI Automation captures only).
+    pub levels: HaloLevels,
+}
+
+/// The text box and the whole lines around a UI Automation selection, and the colour under
+/// its text (« mise en valeur », Lucas 25/09): the halo's three levels, and its light or dark
+/// drawing. Physical screen pixels, Rust only: never emitted as such, never logged.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HaloLevels {
+    /// The focused element's bounds, clipped to its window.
+    pub text_box: Option<Rect>,
+    /// From the start of the selection's first line to the end of its last, one per line.
+    pub full_lines: Vec<Rect>,
+    /// The colour most points just around the lines agree on.
+    pub ground: Option<[u8; 3]>,
 }
 
 #[derive(Clone, Debug)]
