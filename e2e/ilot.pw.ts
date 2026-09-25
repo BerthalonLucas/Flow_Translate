@@ -192,9 +192,13 @@ test('Escape goes back one step, then closes', async ({ page }) => {
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'compact');
 });
 
-test('everything works with the mouse: resting 450 ms unfolds the grid, tiles and items click', async ({ page }) => {
+test('everything works with the mouse: resting 450 ms on the ✦ unfolds the grid, tiles and items click', async ({ page }) => {
   await open(page);
-  await page.locator('.ilot-row').hover();
+  // The last action's side never unfolds it (Lucas, 24/09), only the ✦.
+  await page.locator('[data-item="last"]').hover();
+  await page.waitForTimeout(700);
+  expect(await mode(page)).toBe('compact');
+  await page.locator('[data-item="ask"]').hover();
   await page.waitForTimeout(250);
   expect(await mode(page)).toBe('compact');
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'grid', { timeout: 1000 });
@@ -211,7 +215,8 @@ test('everything works with the mouse: resting 450 ms unfolds the grid, tiles an
   await page.locator('[data-item="ask"]').click();
   await expect(page.getByRole('textbox')).toBeFocused();
   await page.keyboard.press('Escape');
-  await page.locator('.ilot-row').hover();
+  await page.mouse.move(0, 0);
+  await page.locator('[data-item="ask"]').hover();
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'grid', { timeout: 1000 });
   await page.locator('[data-tile="ask"]').click();
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'prompt');

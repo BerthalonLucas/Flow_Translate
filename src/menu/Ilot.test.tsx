@@ -169,6 +169,36 @@ describe('Ilot', () => {
     expect(document.activeElement).toBe(present().querySelector('input'));
   });
 
+  // Lucas, 24/09: the pointer unfolds the grid from the ✦ only, never from the last action.
+  it('unfolds the grid after 450 ms on the ✦ only; the last action and a pointer that leaves never do', async () => {
+    const { mode, present } = await mount();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pointer = (element: Element, on: boolean) => act(async () => {
+        element.dispatchEvent(new MouseEvent(on ? 'mouseover' : 'mouseout', { bubbles: true, relatedTarget: document.body }));
+      });
+      const advance = (ms: number) => act(async () => { vi.advanceTimersByTime(ms); });
+      const last = present().querySelector('[data-item="last"]')!;
+      const ask = present().querySelector('[data-item="ask"]')!;
+      await pointer(last, true);
+      await advance(1000);
+      expect(mode()).toBe('compact');
+      await pointer(last, false);
+      await pointer(ask, true);
+      await advance(300);
+      await pointer(ask, false);
+      await advance(1000);
+      expect(mode()).toBe('compact');
+      await pointer(ask, true);
+      await advance(449);
+      expect(mode()).toBe('compact');
+      await advance(1);
+      expect(mode()).toBe('grid');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('becomes the pill on the same surface, ignores the menu keys there, and starts over compact', async () => {
     const { press, mode, render } = await mount({ initialMode: 'grid' });
     const surface = host!.querySelector('[data-ilot-shape]');

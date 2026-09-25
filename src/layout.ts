@@ -83,10 +83,12 @@ export function bottomReserve(screen: Pick<Screen, 'width' | 'height'>, preset: 
 //             the strip's right edge and grows away from the selection, by at most 84 px: the
 //             reserve keeps that room on both sides, since the side is only known once Rust placed
 //             the window (ilotSide). The error pill, up to 117 px wider than the strip, grows left
-//             like every shape; the reserve keeps those 117 px on the strip's left, and as many on
-//             its right, where the pill slides when the work area's left edge is closer than its
-//             width (ilotShift). Rust clamps the strip only: the transparent reserve around it may
-//             leave the work area. 581 × 264.
+//             like every shape; the reserve keeps those 117 px on the strip's left. On its right it
+//             keeps 251 px: the menu opens right of the compact bubble when the work area has room
+//             there (ilotMenuShift), the field (283) growing from the narrowest compact (32); the
+//             error pill slides there too, by 117 px at most, when the work area's left edge is
+//             closer than its width (ilotShift). Rust clamps the strip only: the transparent
+//             reserve around it may leave the work area. 715 × 264.
 //   bottom    no anchor (clipboard): the box rests on the window's bottom edge, centred, and
 //             grows up; Rust docks the window bottom-centre. 464 × 152.
 // Lot 9: after Rust's own paste the pill leaves the strip's corner for the place Rust gives it
@@ -100,13 +102,28 @@ export type IlotShapeBox = { width: number; height: number; shift?: number; dy?:
 // The strip Rust clamps: the menu's widest shape.
 export const ilotStrip = Math.max(ilotMetrics.prompt.width, ilotMetrics.grid.width);
 export const ilotBox = { width: Math.max(ilotStrip, ilotMetrics.error.maxWidth), height: ilotMetrics.grid.height };
-// What the widest shape overhangs the strip by: the reserve's room on each side of the strip.
+// What the widest shape overhangs the strip by: the reserve's room on the strip's left, and the
+// error pill's slide on its right.
 const ilotSpare = ilotBox.width - ilotStrip;
+// The reserve's room on the strip's right: the menu opening right (ilotMenuShift), its widest
+// shape from the narrowest compact, or the error pill's slide.
+const ilotRightSpare = Math.max(ilotSpare, ilotStrip - ilotMetrics.compactMinWidth);
 const ilotGrowth = ilotBox.height - ilotMetrics.compactHeight;
 export function ilotReserve(presentation: Presentation): { width: number; height: number; frame: HitRegion } {
   if (presentation === 'bottom') return { width: ilotBox.width + 2 * halo.x, height: halo.top + ilotBox.height + halo.bottomForm, frame: { x: halo.x, y: halo.top, width: ilotBox.width, height: ilotBox.height, radius: 0 } };
   const y = halo.top + ilotGrowth;
-  return { width: ilotStrip + 2 * (ilotSpare + halo.x), height: y + ilotMetrics.compactHeight + ilotGrowth + halo.bottom, frame: { x: halo.x + ilotSpare, y, width: ilotStrip, height: ilotMetrics.compactHeight, radius: 0 } };
+  return { width: halo.x + ilotSpare + ilotStrip + ilotRightSpare + halo.x, height: y + ilotMetrics.compactHeight + ilotGrowth + halo.bottom, frame: { x: halo.x + ilotSpare, y, width: ilotStrip, height: ilotMetrics.compactHeight, radius: 0 } };
+}
+// Lucas, 24/09: the menu opens right of where the compact bubble was when the work area has room
+// there for its widest shape (the field), else left from the strip's corner as before, near the
+// screen's right edge. Opening right, a menu shape keeps the compact's left edge: its corner sits
+// right of the strip's by what it outgrows the compact, on the shape's own spring. null: it opens
+// left (ilotShift), also while the compact's width or the room is unknown (the browser preview).
+export function ilotMenuShift(width: number, compactWidth: number | null, room: IlotRoom | null): number | null {
+  if (!room || !compactWidth) return null;
+  const reach = ilotStrip - compactWidth;
+  if (reach > ilotRightSpare || room.right < reach) return null;
+  return Math.max(0, width - compactWidth);
 }
 // The room around the strip's right edge (the corner facing the selection's end) inside the work
 // area, logical pixels: `left` to its left edge, `right` to its right edge. From where Rust put the
@@ -120,15 +137,15 @@ export function ilotRoom(windowX: number, scale: number, work: Pick<Rect, 'x' | 
 // (0 before; ilotPlace, placeX), then a slide so the shape stays in the work area: nothing while it
 // fits left of its corner (always at the strip's corner, up to the strip's width: Rust clamped the
 // strip), else what it overhangs, whole pixels. Whatever the place, the corner never goes past the
-// reserve's spare nor the work area's right edge, and the shape's left edge keeps the halo's room
-// in the window: its shadow is never cut. Unknown room: no slide (the browser preview, a screen the
+// reserve's room right of the strip nor the work area's right edge, and the shape's left edge
+// keeps the halo's room in the window: its shadow is never cut. Unknown room: no slide (the browser preview, a screen the
 // point is not on).
 export function ilotShift(width: number, room: IlotRoom | null, x = 0): number {
   const at = room && { left: room.left + x, right: room.right - x };
   const overhang = at ? Math.ceil(width - at.left) : 0;
-  const slide = at && overhang > 0 ? Math.max(0, Math.min(overhang, ilotSpare - x, Math.floor(at.right))) : 0;
+  const slide = at && overhang > 0 ? Math.max(0, Math.min(overhang, ilotRightSpare - x, Math.floor(at.right))) : 0;
   const corner = ilotReserve('anchored').frame.x + ilotStrip;
-  const high = room ? Math.min(ilotSpare, Math.floor(room.right)) : ilotSpare;
+  const high = room ? Math.min(ilotRightSpare, Math.floor(room.right)) : ilotRightSpare;
   return Math.max(width - corner + halo.x, Math.min(x + slide, high));
 }
 // Lot 9: where the pill goes after Rust's paste, from `result_pill` (its top-left corner in the

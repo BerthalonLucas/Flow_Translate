@@ -22,6 +22,7 @@ type Fixture = {
   releaseChoice: () => void;
   invalidate: (anchorLost?: boolean, captureId?: string) => Promise<void>;
   windowAt: (x: number, y: number) => void;
+  workAreaAt: (x: number, y: number, width: number, height: number) => void;
   holdPosition: () => void;
   releasePosition: () => void;
   menuKey: (key: string, shiftKey?: boolean, captureId?: string) => Promise<void>;
@@ -121,7 +122,7 @@ test('Îlot: the pointer unfolds the grid and picks a tile once, even clicked tw
   await openIlot(page);
   await on(page, f => f.captureMenu('mouse', 'shorten'));
   await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Shorten');
-  await page.locator('[data-item="last"]').hover();
+  await page.locator('[data-item="ask"]').hover();
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'grid');
   await page.locator('[data-tile="email"]').dblclick();
   await expect.poll(() => chosen(page, 'mouse')).toEqual([{ captureId: 'mouse', actionId: 'email' }]);
@@ -488,7 +489,11 @@ test('Îlot window: reserved once below the selection, the region follows each s
   expect(first.regions).toEqual([{ x: 149, y: 104, width: 283, height: 32, radius: 16 }]);
   // The Îlot hangs from the strip Rust anchors, its entrance origin on the selection's side.
   const compact = await box(page);
-  expect(compact.x + compact.width).toBeCloseTo(reserve.frame.x + reserve.frame.width, 0);
+  const corner = reserve.frame.x + reserve.frame.width;
+  // A painted box as the region counts it: its corner's shift from the strip's (the menu opens
+  // right of the compact bubble here, the work area 1400 px wide on the right).
+  const shapeOf = (painted: { x: number; width: number; height: number }) => ({ width: painted.width, height: painted.height, shift: Math.round(painted.x + painted.width - corner) });
+  expect(compact.x + compact.width).toBeCloseTo(corner, 0);
   expect(compact.y).toBeCloseTo(reserve.frame.y, 0);
   await expect(page.locator('[data-ilot]')).toHaveCSS('transform-origin', `${compact.width}px 0px`);
   expect((await geometries(page, 'regions')).at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', compact)]);
@@ -504,8 +509,8 @@ test('Îlot window: reserved once below the selection, the region follows each s
     const to = await box(page);
     const added = (await geometries(page, 'regions')).slice(before);
     published.push(...added);
-    expect(added[0].regions).toEqual([ilotRegion('anchored', 'below', from, to)]);
-    expect(added.at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', to)]);
+    expect(added[0].regions).toEqual([ilotRegion('anchored', 'below', shapeOf(from), shapeOf(to))]);
+    expect(added.at(-1)?.regions).toEqual([ilotRegion('anchored', 'below', shapeOf(to))]);
     expect(added.length).toBeLessThanOrEqual(2);
     // Every painted frame of the spring lies inside the region Rust holds at that frame.
     expect(frames.length).toBeGreaterThan(10);
@@ -537,7 +542,8 @@ test('Îlot window: above the selection it grows up from the strip; without an a
   await page.keyboard.press('Tab');
   await settled(page);
   const grid = await box(page);
-  const left = reserve.frame.x + reserve.frame.width - 218;
+  // Opened right of the compact bubble (the work area 1283 px wide on its right): its left edge.
+  const left = compact.x;
   expect(grid).toEqual({ x: left, y: 20, width: 218, height: 116 });
   expect((await geometries(page, 'above')).at(-1)?.regions).toEqual([{ x: left, y: 20, width: 218, height: 116, radius: 16 }]);
 
@@ -554,6 +560,47 @@ test('Îlot window: above the selection it grows up from the strip; without an a
   // centre (the screen Rust placed it on).
   expect((await calls(page, 'plugin:window|inner_position')).length - positionsBefore).toBe(1);
   expect(await calls(page, 'plugin:window|monitor_from_point')).toEqual([{ x: 460, y: 309 }]);
+});
+
+// Lucas, 24/09: the menu opens right of where the compact bubble was when the work area holds its
+// widest shape there, left near the screen's right edge.
+test('Îlot: the menu opens right of the compact bubble when there is room, its left edge still on every frame; near the right edge, left', async ({ page }) => {
+  await openIlot(page);
+  await on(page, f => f.captureMenu('right', 'correct'));
+  await settled(page);
+  const reserve = ilotReserve('anchored');
+  const corner = reserve.frame.x + reserve.frame.width;
+  const compact = await box(page);
+  expect(compact.x + compact.width).toBeCloseTo(corner, 0);
+  for (const [key, width] of [['Tab', 218], ['Space', 283]] as const) {
+    const frames = await follow(page, 'right', () => page.keyboard.press(key));
+    await settled(page);
+    const open = await box(page);
+    expect(open.width).toBe(width);
+    expect(open.x).toBeCloseTo(compact.x, 0);
+    // The corner moves on the shape's own spring: the left edge never moves.
+    expect(frames.length).toBeGreaterThan(10);
+    for (const frame of frames) expect(Math.abs(frame.shape.x - compact.x), JSON.stringify(frame)).toBeLessThan(0.5);
+  }
+  await page.keyboard.press('Escape');
+  await settled(page);
+  expect(await box(page)).toEqual(compact);
+  // Chosen from the grid: the pill goes back to the strip's corner, on the selection's end.
+  await page.keyboard.press('Tab');
+  await settled(page);
+  await page.keyboard.press('Enter');
+  await settled(page, 'pill');
+  const pill = await box(page);
+  expect(pill.x + pill.width).toBeCloseTo(corner, 0);
+
+  // The selection's end 80 px from the work area's right edge: the grid opens left, as before.
+  await on(page, f => { f.workAreaAt(0, 0, 600, 1040); return f.captureMenu('left', 'correct'); });
+  await settled(page);
+  await page.keyboard.press('Tab');
+  await settled(page);
+  const grid = await box(page);
+  expect(grid.width).toBe(218);
+  expect(grid.x + grid.width).toBeCloseTo(corner, 0);
 });
 
 test('Îlot: under v4 nothing changes, the menu capture shows no Îlot and a direct capture keeps its spinner pill', async ({ page }) => {

@@ -221,6 +221,7 @@ try {
       const hit = await pointCursor(point.x, point.y);
       // A point taken outside the shape fails at once; before failing, the report says whether the
       // shape's region came late (the point lets the cursor through 0.25 to 2 s later) or never.
+      // The Îlot's mode then tells a region left behind from a shape that really grew there.
       let later = '';
       if (hit.root.hwnd === win.hwnd) {
         const retries = [];
@@ -228,9 +229,11 @@ try {
           await page.waitForTimeout(wait - (retries.at(-1)?.wait ?? 0));
           retries.push({ wait, taken: (await pointCursor(point.x, point.y)).root.hwnd === win.hwnd });
         }
-        (report.regionRetries ??= []).push({ step, x: Math.round(x), y: Math.round(y), retries });
+        const mode = await page.evaluate(() => document.querySelector('.ilot-stage [data-ilot]')?.getAttribute('data-mode') ?? null);
+        (report.regionRetries ??= []).push({ step, x: Math.round(x), y: Math.round(y), mode, retries });
         const through = retries.find(retry => !retry.taken);
-        later = through ? ` (region late: let through after ${through.wait} ms)` : ' (region never published: still taken after 2 s)';
+        later = through ? ` (region late: let through after ${through.wait} ms` : ' (region never published: still taken after 2 s';
+        later += mode ? `; Îlot ${mode})` : ')';
       }
       expect(hit.root.hwnd, `${step}: the cursor passes through at ${Math.round(x)},${Math.round(y)} outside the shape${later}`).not.toBe(win.hwnd);
       through.push({ x: Math.round(x), y: Math.round(y), root: hit.root.hwnd });
@@ -245,12 +248,16 @@ try {
     return { box, through, inside: { x: center.x, y: center.y } };
   };
   // Parks the real cursor in a transparent corner of the reserve: outside every shape, so it
-  // neither unfolds the grid nor holds a pill.
-  const park = async win => pointCursor(win.x + 2, win.y + 2);
+  // neither unfolds the grid nor holds a pill. DevTools' own pointer goes there too: a DevTools
+  // click leaves it on what it clicked, and Chromium hovers whatever appears under it later (the
+  // next capture's ✦ where the last ✕ was, 25/09), which no real cursor there would do.
+  const parkDevTools = () => page.mouse.move(2, 2);
+  const park = async win => { await parkDevTools(); return pointCursor(win.x + 2, win.y + 2); };
 
   const ilotCycle = async (index, viaGrid) => {
     const result = { cycle: index + 1, path: viaGrid ? 'compact → grid → tile' : 'compact → last action', closed: false };
     report.ilot.push(result);
+    await parkDevTools();
     const capture = await invoke('demo_menu_capture');
     expect(capture.menu, 'the demo menu capture carries its menu').toBeTruthy();
     await expect(stage).toHaveAttribute('data-capture-id', capture.id);
@@ -285,27 +292,30 @@ try {
         await ilotWindow('menu after WM_NCACTIVATE', reserved);
       }
     }
-    // The compact region from outside: a real cursor resting on the shape unfolds the grid after
-    // 450 ms, which only the grid path wants.
+    // The compact region from outside: a real cursor resting on its ✦ unfolds the grid after
+    // 450 ms, which only the grid path wants (its last action never does, Lucas 24/09).
     result.compact = await expectRegion('compact', menuWin, compact, [], { inside: false });
     if (viaGrid) {
-      // Now the real cursor rests on the compact state: the shape takes it, and the grid unfolds
-      // from that real hover when the WebView sees the pointer; otherwise (a locked session, no
-      // mouse move after the pass-through was lifted) a DevTools hover unfolds it.
+      // Now the real cursor comes onto the compact state's ✦ (its 26 px button, 3 px from the right
+      // edge) in two moves, as a real pointer arrives in many: the first lands under the window
+      // before the hit tester lifts the pass-through (every 8 ms), the second on the WebView, whose
+      // hover unfolds the grid after 450 ms. A locked session moves no cursor (nor a WebView that
+      // still saw no move): a DevTools hover unfolds it then.
       let watchGrid = watchOverlay(2400);
-      const center = toScreen(menuWin, dpr, compact.x + compact.width / 2, compact.y + compact.height / 2);
+      const center = toScreen(menuWin, dpr, compact.x + compact.width - 16, compact.y + compact.height / 2);
       const inside = await pointCursor(center.x, center.y);
       expect(inside.root.hwnd, 'compact: the shape takes the cursor').toBe(menuWin.hwnd);
       expect(exStylesOf(menuWin.hwnd), 'compact: pass-through cleared on the shape').toEqual([]);
       result.compact.inside = { x: center.x, y: center.y };
+      if (!locked) await pointCursor(center.x + 1, center.y);
       try {
         await expect(page.locator('.ilot-stage [data-ilot]')).toHaveAttribute('data-mode', 'grid', { timeout: 1200 });
-        result.gridOpenedBy = 'real cursor resting on the compact state';
+        result.gridOpenedBy = 'real cursor on the ✦';
       } catch {
         result.beforeHover = await watchGrid;
         expect(result.beforeHover, 'compact under the real cursor: the window never moves nor resizes').toEqual([`${reserved.x},${reserved.y},${reserved.width}x${reserved.height}`]);
         watchGrid = watchOverlay(2000);
-        await page.locator('.ilot-row').hover();
+        await page.locator('.ilot-stage [data-item="ask"]').hover();
         await expect(page.locator('.ilot-stage [data-ilot]')).toHaveAttribute('data-mode', 'grid');
         result.gridOpenedBy = 'DevTools hover (the real cursor did not unfold it)';
       }

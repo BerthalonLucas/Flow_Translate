@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bottomReserve, countWords, decideForm, decidePlacement, frameSide, ilotBox, ilotFits, ilotPlace, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, placeX, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
+import { bottomReserve, countWords, decideForm, decidePlacement, frameSide, ilotBox, ilotFits, ilotMenuShift, ilotPlace, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, placeX, readerMetrics, readingBudget, remainingAfterLeave, shortMetrics } from './layout';
 import { ilotMetrics } from './menu/metrics';
 
 describe('reading forms (2026-09-14)', () => {
@@ -69,10 +69,11 @@ describe('Îlot window (lot 7)', () => {
   it('reserves the largest shape and its growth on both sides of the strip Rust anchors', () => {
     // The strip Rust clamps into the work area stays the menu's widest shape, the field (283): the
     // Îlot leaves the selection's end only within 283 px of the work area's left edge. The error
-    // pill of lot 10 (400) overhangs it by 117 px, kept on both sides of the strip, then 32 of
-    // halo: 32 + 117 + 283 + 117 + 32 wide; 20 + 84 + 32 + 84 + 44 high.
+    // pill of lot 10 (400) overhangs it by 117 px on its left; on its right the reserve keeps 251
+    // px, the menu opening right (the field from the ✦ alone, 283 − 32), which also holds the error
+    // pill's slide; then 32 of halo: 32 + 117 + 283 + 251 + 32 wide; 20 + 84 + 32 + 84 + 44 high.
     expect(ilotStrip).toBe(283);
-    expect(ilotReserve('anchored')).toEqual({ width: 581, height: 264, frame: { x: 149, y: 104, width: 283, height: 32, radius: 0 } });
+    expect(ilotReserve('anchored')).toEqual({ width: 715, height: 264, frame: { x: 149, y: 104, width: 283, height: 32, radius: 0 } });
     // No anchor: the 400 × 116 box on the bottom halo of the band (16).
     expect(ilotReserve('bottom')).toEqual({ width: 464, height: 152, frame: { x: 32, y: 20, width: 400, height: 116, radius: 0 } });
     // Every shape fits the box: the field, the grid, the error pill at its widest.
@@ -119,8 +120,10 @@ describe('Îlot window (lot 7)', () => {
     // At 150 %, a work area starting at x = -1920 (a screen on the left): logical pixels.
     expect(ilotRoom(-1920 - 149 * 1.5 + 30, 1.5, { x: -1920, width: 1920 })).toEqual({ left: 303, right: 977 });
     expect(ilotShift(350, ilotRoom(-1920 - 149 * 1.5 + 30, 1.5, { x: -1920, width: 1920 }))).toBe(47);
-    // Never past the reserve's spare nor the work area's right edge; unknown room: no slide.
-    expect(ilotShift(500, clamped)).toBe(117);
+    // Never past the reserve's room right of the strip (251) nor the work area's right edge;
+    // unknown room: no slide.
+    expect(ilotShift(500, clamped)).toBe(217);
+    expect(ilotShift(600, clamped)).toBe(251);
     expect(ilotShift(400, { left: 283, right: 50.5 })).toBe(50);
     expect(ilotShift(400, null)).toBe(0);
   });
@@ -138,11 +141,11 @@ describe('Îlot window (lot 7)', () => {
     expect([placeX(margin, 60), placeX(margin, 240)]).toEqual([-10, 170]);
     expect(placeX(null, 240)).toBe(0);
     expect(ilotFits({ x: 362, y: 122 }, pill)).toBe(true);
-    for (const target of [{ x: -1, y: 122 }, { x: 472, y: 122 }, { x: 362, y: 237 }, { x: 362, y: -2 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
-    // The shadow's room kept (the halo: 32 px each side, 20 above, 44 below in the 581 × 264
+    for (const target of [{ x: -1, y: 122 }, { x: 606, y: 122 }, { x: 362, y: 237 }, { x: 362, y: -2 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
+    // The shadow's room kept (the halo: 32 px each side, 20 above, 44 below in the 715 × 264
     // window): a pill any closer to an edge would have its shadow cut by the window.
-    for (const target of [{ x: 32, y: 20 }, { x: 439, y: 192 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(true);
-    for (const target of [{ x: 31, y: 122 }, { x: 440, y: 122 }, { x: 362, y: 19 }, { x: 362, y: 193 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
+    for (const target of [{ x: 32, y: 20 }, { x: 573, y: 192 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(true);
+    for (const target of [{ x: 31, y: 122 }, { x: 574, y: 122 }, { x: 362, y: 19 }, { x: 362, y: 193 }]) expect(ilotFits(target, pill), JSON.stringify(target)).toBe(false);
     // At 125 or 150 % Rust's logical pixels are fractional: the place is whole pixels.
     expect(ilotPlace({ x: 362.4, y: 121.6, side: 'below' }, pill, 'below')).toEqual({ x: 40, y: 18, width: 110, keepLeft: false });
     expect(ilotPlace({ x: 327.6, y: 77.5, side: 'above' }, pill, 'above')).toEqual({ x: 6, y: -30, width: 110, keepLeft: false });
@@ -158,11 +161,12 @@ describe('Îlot window (lot 7)', () => {
     expect(ilotShift(110, clamped, -100)).toBe(-100);
     expect(ilotShift(250, clamped, -100)).toBe(-33);
     expect(ilotShift(400, clamped, -100)).toBe(117);
-    // Whatever the place, the shape stays in the window with its shadow's room (32 to 549, the
-    // strip's corner at 432): its left edge at 32 at least, its corner 117 right of the strip's at
+    // Whatever the place, the shape stays in the window with its shadow's room (32 to 683, the
+    // strip's corner at 432): its left edge at 32 at least, its corner 251 right of the strip's at
     // most. Before the review of lot 9 the bounds were the window's own edges (−172 and 149).
     expect(ilotShift(260, null, -300)).toBe(-140);
-    expect(ilotShift(110, null, 200)).toBe(117);
+    expect(ilotShift(110, null, 200)).toBe(200);
+    expect(ilotShift(110, null, 300)).toBe(251);
     // Nor past the work area's right edge (30 px right of the strip's corner): a shape placed in
     // the margin, 60 px right of it, stops there.
     expect(ilotShift(260, { left: 600, right: 30 }, 60)).toBe(30);
@@ -178,8 +182,26 @@ describe('Îlot window (lot 7)', () => {
     // Never outside the window.
     expect(ilotRegion('anchored', 'below', { width: 110, height: 28, dy: 150 })).toEqual({ x: 322, y: 254, width: 110, height: 10, radius: 5 });
   });
+  // Lucas, 24/09: the menu opens right of the compact bubble when the work area has room there.
+  it('opens the menu right of the compact bubble when the work area holds its widest shape there, keeping its left edge', () => {
+    // A compact of 110: the field (283) reaches 173 px right of the strip's corner.
+    const room = (right: number) => ({ left: 900, right });
+    expect([110, 218, 283].map(width => ilotMenuShift(width, 110, room(173)))).toEqual([0, 108, 173]);
+    // Its left edge stays the compact's (432 − 110 = 322) and each shape stays in the window.
+    expect(ilotRegion('anchored', 'below', { width: 218, height: 116, shift: 108 })).toEqual({ x: 322, y: 104, width: 218, height: 116, radius: 16 });
+    expect(ilotRegion('anchored', 'below', { width: 110, height: 32, shift: 0 }, { width: 283, height: 34, shift: 173 })).toEqual({ x: 322, y: 104, width: 283, height: 34, radius: 16 });
+    // Too little room on the right (near the screen's right edge): it opens left, as before.
+    expect(ilotMenuShift(218, 110, room(172.5))).toBeNull();
+    // The ✦ alone (32): the field reaches 251 px, the reserve's room on the right.
+    expect(ilotMenuShift(283, 32, room(251))).toBe(251);
+    expect(ilotRegion('anchored', 'below', { width: 283, height: 34, shift: 251 }).x + 283).toBe(ilotReserve('anchored').width - 32);
+    expect(ilotMenuShift(283, 31, room(900))).toBeNull();
+    // Unknown compact or room (the browser preview): left.
+    expect(ilotMenuShift(218, null, room(900))).toBeNull();
+    expect(ilotMenuShift(218, 110, null)).toBeNull();
+  });
   it('covers a slid shape, and both positions while it slides', () => {
-    // The error pill at 117 px right of the corner: from 149 to 549 in the 581 px window.
+    // The error pill at 117 px right of the corner: from 149 to 549 in the 715 px window.
     expect(ilotRegion('anchored', 'below', { width: 400, height: 30, shift: 117 })).toEqual({ x: 149, y: 104, width: 400, height: 30, radius: 15 });
     // The work pill at the corner turning into that pill: the box that holds both.
     expect(ilotRegion('anchored', 'below', { width: 44, height: 28, shift: 0 }, { width: 350, height: 30, shift: 67 })).toEqual({ x: 149, y: 104, width: 350, height: 30, radius: 14 });

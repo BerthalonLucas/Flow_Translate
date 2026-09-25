@@ -237,7 +237,8 @@ En plus des écarts du §4.2 :
 - les valeurs du labo priment sur le §9 arrondi ;
 - Animations : « suivre Windows » par défaut ;
 - l’Îlot est le parcours par défaut aussi pour un fichier 0.4 ;
-- réserve de fenêtre ancrée de 581×264, pour une pilule d’erreur jusqu’à 400 px ;
+- réserve de fenêtre ancrée de 581×264, pour une pilule d’erreur jusqu’à 400 px (715×264 depuis le
+  25/09, pour l’ouverture du menu à droite) ;
 - Ctrl+Z de l’utilisateur → « Undone » 0,9 s puis départ ; frappe ou curseur déplacé → départ en
   1,1 s au plus, comme le labo ;
 - animations réduites : coche immédiate, anneau d’un cran par seconde, voile fixe à la place du
