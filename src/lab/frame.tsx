@@ -1,7 +1,7 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SettingsWindow } from '../App';
-import { HaloLines } from '../halo/HaloWindow';
+import { HaloScene } from '../halo/HaloWindow';
 import { GlassOverlay } from '../GlassOverlay';
 import { useTranslation } from '../useTranslation';
 import { bridge } from '../bridge';
@@ -14,7 +14,7 @@ import { MotionPreferences } from '../motion/MotionPreferences';
 import { applyMotion } from '../motion/preference';
 import { applyMotionPreset } from '../motion/tokens';
 import { indicatorOf } from '../loaders/pill';
-import type { MotionPreference, MotionPreset, Rect } from '../types';
+import type { HaloEvent, MotionPreference, MotionPreset, Rect } from '../types';
 import '../styles.css';
 import '../glass.css';
 
@@ -55,18 +55,32 @@ function OverlayFixture() {
   return <div className="standalone-demo" data-preview-background={theme} data-lab-phase={controller.state.phase}><GlassOverlay controller={controller}/></div>;
 }
 
-// The halo over three lines of demonstration text: the rectangles of the lines as the page
-// lays them out (what UI Automation gives Rust in the real window), drawn by the halo itself.
+// The halo over three lines of demonstration text, with the rectangles the page lays out
+// (what UI Automation gives Rust in the real window): the text box, the whole lines, the
+// selection (from « send » to « and the »), the changed words. phase=menu|work|marks (work by
+// default), drawn by the halo itself in the frame's theme.
 function HaloFixture() {
   const text = useRef<HTMLDivElement>(null);
-  const [lines, setLines] = useState<Rect[]>([]);
+  const [run, setRun] = useState<HaloEvent | null>(null);
   useEffect(() => {
-    const spans = [...(text.current?.querySelectorAll('span') ?? [])];
-    setLines(spans.map(span => { const box = span.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; }));
+    const root = text.current;
+    if (!root) return;
+    const rect = (node: Element): Rect => { const box = node.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };
+    const rects = (selector: string): Rect[] => [...root.querySelectorAll(selector)].map(rect);
+    const textBox = rect(root);
+    const phase = params.get('phase') === 'menu' || params.get('phase') === 'marks' ? params.get('phase') as 'menu' | 'marks' : 'work';
+    const base = { generation: 1, tone: theme, ground: null, width: innerWidth, height: innerHeight } as const;
+    setRun(phase === 'marks'
+      ? { ...base, phase, lines: rects('.lab-word'), whole: rects('.lab-line'), full: [], textBox: null }
+      : { ...base, phase, lines: rects('.lab-exact'), full: rects('.lab-line'), textBox, whole: [] });
   }, []);
   return <div className="standalone-demo" data-preview-background={theme}>
-    <div ref={text} style={{ font: '18px/28px "Segoe UI", sans-serif', color: 'var(--text)' }}><span>Could you send the updated proposal</span><br/><span>before Thursday, with the delivery timeline</span><br/><span>and the payment terms?</span></div>
-    {lines.length > 0 && <HaloLines lines={lines} state="shown"/>}
+    <div ref={text} className="lab-field" style={{ font: '18px/28px "Segoe UI", sans-serif', color: 'var(--text)', padding: '14px 18px', width: 460 }}>
+      <span className="lab-line">Could you <span className="lab-exact">send the <span className="lab-word">revised</span> proposal</span></span><br/>
+      <span className="lab-line"><span className="lab-exact">before Thursday, with the <span className="lab-word">delivery</span> timeline</span></span><br/>
+      <span className="lab-line"><span className="lab-exact">and the</span> payment terms?</span>
+    </div>
+    {run && <HaloScene run={run} state="shown"/>}
   </div>;
 }
 

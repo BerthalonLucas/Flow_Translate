@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sweepPositions, sweepStrip } from './geometry';
+import { inset, pad, sweepPositions, sweepStrip } from './geometry';
 
 describe('halo sweep strip', () => {
   it('lays the lines end to end in reading order', () => {
@@ -35,5 +35,16 @@ describe('halo sweep strip', () => {
 
   it('draws nothing without lines', () => {
     expect(sweepStrip([])).toEqual({ lines: [], total: 0 });
+  });
+});
+
+describe('halo margins', () => {
+  it('grows a line as the lab does, and shrinks the text box inside the field', () => {
+    const line = { x: 10, y: 20, width: 100, height: 18 };
+    expect(pad(line, 3, 1)).toEqual({ x: 7, y: 19, width: 106, height: 20 });
+    expect(pad(line, 2)).toEqual({ x: 8, y: 20, width: 104, height: 18 });
+    expect(inset({ x: 0, y: 0, width: 300, height: 120 }, 3)).toEqual({ x: 3, y: 3, width: 294, height: 114 });
+    // A box thinner than its inset is empty, never negative.
+    expect(inset({ x: 0, y: 0, width: 4, height: 40 }, 3)).toEqual({ x: 3, y: 3, width: 0, height: 34 });
   });
 });

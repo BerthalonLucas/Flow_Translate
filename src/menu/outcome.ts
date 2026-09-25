@@ -93,6 +93,6 @@ export function ilotOutcome(state: State, { chosen, paste, undo = null }: { chos
 // with `undoable`: the pasted text found and afterReplace.undo on; withdrawn by `undo-state`);
 // otherwise the check stays alone, 1.1 s (design-lab/src/Simulator.jsx:155).
 export function effectiveAfterReplace(after: AfterReplace | undefined, undoAvailable: boolean): AfterReplace {
-  const base = after ?? { check: true, undo: true, undoSeconds: 8, changedWords: true };
+  const base = after ?? { check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 };
   return undoAvailable ? base : { ...base, undo: false };
 }

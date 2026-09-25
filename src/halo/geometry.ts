@@ -22,3 +22,14 @@ export function sweepStrip(lines: readonly Rect[]): { lines: SweepLine[]; total:
 export function sweepPositions(total: number, offset: number): { from: number; to: number } {
   return { from: -2.4 * total - offset, to: 0.4 * total - offset };
 }
+
+// The lab's own margins (design-lab/mise-en-valeur.html): a rectangle grown by `dx`, `dy` on
+// each side (the bands, the tint, the veil, the wave, the marks), or shrunk by `n` (the text
+// box's line and aurora stay inside the field).
+export function pad(rect: Rect, dx: number, dy = 0): Rect {
+  return { x: rect.x - dx, y: rect.y - dy, width: rect.width + 2 * dx, height: rect.height + 2 * dy };
+}
+
+export function inset(rect: Rect, n: number): Rect {
+  return { x: rect.x + n, y: rect.y + n, width: Math.max(0, rect.width - 2 * n), height: Math.max(0, rect.height - 2 * n) };
+}

@@ -104,9 +104,9 @@ describe('Countdown', () => {
 describe('result timing', () => {
   it('keeps Undo 2 to 20 s (8 by default), the check alone 1.1 s, nothing otherwise', () => {
     expect([1, 2, 8, 8.4, 20, 25, Number.NaN].map(undoMs)).toEqual([2000, 2000, 8000, 8000, 20000, 20000, 8000]);
-    expect(resultTiming({ check: true, undo: true, undoSeconds: 8, changedWords: true })).toEqual({ check: true, undo: true, durationMs: 8000 });
-    expect(resultTiming({ check: false, undo: true, undoSeconds: 3, changedWords: true })).toEqual({ check: false, undo: true, durationMs: 3000 });
-    expect(resultTiming({ check: true, undo: false, undoSeconds: 8, changedWords: true })).toEqual({ check: true, undo: false, durationMs: 1100 });
-    expect(resultTiming({ check: false, undo: false, undoSeconds: 8, changedWords: true }).durationMs).toBe(0);
+    expect(resultTiming({ check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 })).toEqual({ check: true, undo: true, durationMs: 8000 });
+    expect(resultTiming({ check: false, undo: true, undoSeconds: 3, changedWords: true, changedWordsSeconds: 60 })).toEqual({ check: false, undo: true, durationMs: 3000 });
+    expect(resultTiming({ check: true, undo: false, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 })).toEqual({ check: true, undo: false, durationMs: 1100 });
+    expect(resultTiming({ check: false, undo: false, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 }).durationMs).toBe(0);
   });
 });

@@ -3,10 +3,13 @@ import { useT } from '../i18n';
 import type { AfterReplace, PillPlacement, Settings, UndoStrategy } from '../types';
 
 export const undoRange = { min: 2, max: 20 } as const;
+// The longest the changed words stay without an action in the text (Rust accepts 5 to 120 s).
+export const changedWordsChoices = [15, 30, 60, 120] as const;
 type Props = { settings: Settings; persist: (settings: Settings, immediate: boolean) => void };
 // « After replacing » (lot 9's settings, docs/DA-PLAN.md): the check, Undo with its time and
 // its method (decision 2: Ctrl+Z in the app by default, or the original pasted back), the
-// changed words, and where the pill rests (never over the new text).
+// changed words with the longest they stay (until the next action in the text, Lucas 25/09),
+// and where the pill rests (never over the new text).
 export function AfterReplaceSettings({ settings, persist }: Props) {
   const t = useT();
   const after = settings.afterReplace;
@@ -30,6 +33,8 @@ export function AfterReplaceSettings({ settings, persist }: Props) {
     </>}
     <div className="setting-row"><div className="setting-copy"><strong>{t('after.changedWords')}</strong><small>{t('after.changedWordsHelp')}</small></div>
       <SettingSwitch label={t('after.changedWords')} checked={after.changedWords} onCheckedChange={changedWords => set({ changedWords })} /></div>
+    {after.changedWords && <div className="setting-row setting-sub"><div className="setting-copy"><strong>{t('after.changedWordsSeconds')}</strong><small>{t('after.changedWordsSecondsHelp')}</small></div>
+      <Segmented<string> label={t('after.changedWordsSeconds')} value={String(after.changedWordsSeconds)} options={changedWordsChoices.map(count => ({ value: String(count), label: count < 60 ? t('after.seconds', { count }) : t('after.minutes', { count: count / 60 }) }))} onChange={value => set({ changedWordsSeconds: Number(value) })} /></div>}
     <div className="setting-row"><div className="setting-copy"><strong>{t('after.placement')}</strong><small>{t('after.placementHelp')}</small></div>
       <Segmented<PillPlacement> label={t('after.placement')} value={settings.pillPlacement} options={[{ value: 'below', label: t('after.placementBelow') }, { value: 'margin', label: t('after.placementMargin') }]} onChange={pillPlacement => persist({ ...settings, pillPlacement }, true)} /></div>
   </section>;

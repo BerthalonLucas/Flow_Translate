@@ -226,7 +226,7 @@ describe('ErrorContent', () => {
 });
 
 describe('resultContent', () => {
-  const after = (patch: Partial<AfterReplace> = {}): AfterReplace => ({ check: true, undo: true, undoSeconds: 8, changedWords: true, ...patch });
+  const after = (patch: Partial<AfterReplace> = {}): AfterReplace => ({ check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60, ...patch });
   it('keys each stage, sizes the work pill, and leaves the others to their content', () => {
     expect(resultContent({ stage: 'working', indicator: 'perle' })).toMatchObject({ key: 'working', size: { width: 44, height: 28 } });
     expect(resultContent({ stage: 'working', indicator: 'ruban' })).toMatchObject({ key: 'working', size: { width: 52, height: 28 } });
