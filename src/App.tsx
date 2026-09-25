@@ -195,6 +195,16 @@ export function SettingsWindow() {
   };
   const check = async (mode: Mode) => {
     setConnections(previous => ({ ...previous, [mode]: { state: 'checking' } }));
+    // Rust checks the saved profile: an address typed less than 300 ms ago, or a save not
+    // confirmed yet, is saved first; a refused save is said, never checked with the old address.
+    if (saveTimer.current !== 0 || (latest.current && latest.current !== synced.current)) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = 0;
+      if (latest.current && !await commit(latest.current)) {
+        setConnections(previous => ({ ...previous, [mode]: { state: 'unknown', message: tNow('settings.checkUnsaved') } }));
+        return;
+      }
+    }
     const started = performance.now();
     try {
       const result = await bridge.checkConnection(mode);
@@ -258,7 +268,7 @@ export function SettingsWindow() {
           <div className="profile-heading"><strong>{t(modeKey(mode))}</strong><span className="connection-state" data-state={connections[mode].state} role="status"><i aria-hidden="true" />{statusLine(mode)}</span><button className="text-button" onClick={() => void check(mode)} disabled={connections[mode].state === 'checking'}>{t('settings.check')}</button></div>
           <div className="field-grid"><label data-field={`${mode}.endpoint`}>{t('settings.endpoint')}<input type="url" placeholder={mode === 'quality' ? 'http://127.0.0.1:8002/v1' : 'http://127.0.0.1:8001/v1'} value={settings.profiles[mode].endpoint} onChange={e => profile(mode, 'endpoint', e.target.value)} /></label><label data-field={`${mode}.model`}>{t('settings.model')}<input value={settings.profiles[mode].model} onChange={e => profile(mode, 'model', e.target.value)} /></label></div>
           <div className="secret" data-field={`${mode}.apiKey`}><label>{t('settings.apiKey')}<input type="password" autoComplete="new-password" placeholder={t('settings.apiKeyPlaceholder')} value={settings.profiles[mode].apiKey} onChange={e => profile(mode, 'apiKey', e.target.value)} /></label><small aria-hidden="true">{t('settings.apiKeyProtected')}</small></div>
-          {connections[mode].state === 'error' && connections[mode].message && <p className="row-warning">{connections[mode].message}</p>}
+          {(connections[mode].state === 'error' || connections[mode].state === 'unknown') && connections[mode].message && <p className="row-warning">{connections[mode].message}</p>}
         </div>)}</div>
         {!bridge.native && settings.connectionExpanded && <small className="preview-note">{t('settings.previewConnection')}</small>}
       </section>

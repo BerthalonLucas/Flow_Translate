@@ -285,6 +285,33 @@ test('IPC fixture: settings recover from load failure', async ({ page }) => {
   await expect(page.getByLabel('Default profile')).toBeVisible();
 });
 
+test('IPC fixture: Check saves an address typed just before it, and never checks the old one when the save is refused', async ({ page }) => {
+  await openSettingsFixture(page);
+  await page.getByRole('button', { name: 'Connection', exact: true }).click();
+  const quality = page.locator('.profile').first();
+  await expect(quality).toContainText('Quality');
+  // Typed then checked at once, well within the 300 ms pause: saved first, then checked.
+  await quality.getByLabel('Address', { exact: true }).fill('https://inference.example.test/v1');
+  await quality.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(quality.getByRole('status')).toHaveText('Connection failed');
+  let calls = await page.evaluate(() => window.nativeFixture.calls);
+  const saved = calls.findIndex(call => call.command === 'save_settings' && (call.args?.settings as { profiles: Record<string, { endpoint: string }> } | undefined)?.profiles.quality.endpoint === 'https://inference.example.test/v1');
+  const checked = calls.findIndex(call => call.command === 'check_connection');
+  expect(saved).toBeGreaterThan(-1);
+  expect(checked).toBeGreaterThan(saved);
+  // A remote address in plain HTTP is refused by the save: no check against the saved address.
+  await quality.getByLabel('Address', { exact: true }).fill('http://inference.example.test/v1');
+  await quality.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(quality.getByRole('status')).toHaveText('Not checked');
+  await expect(quality).toContainText('Not checked: this change couldn’t be saved (see below).');
+  calls = await page.evaluate(() => window.nativeFixture.calls);
+  expect(calls.filter(call => call.command === 'check_connection')).toHaveLength(1);
+  await expect(page.locator('.save-status')).toContainText('Not saved');
+  // Typing again clears the warning until the next check.
+  await quality.getByLabel('Address', { exact: true }).fill('https://inference.example.test/v1');
+  await expect(quality.locator('.row-warning')).toHaveCount(0);
+});
+
 test('IPC fixture: choices save immediately, checks never save, typing saves after a pause, close without translation', async ({ page }) => {
   await openSettingsFixture(page);
   expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'check_connection'))).toBe(false);
