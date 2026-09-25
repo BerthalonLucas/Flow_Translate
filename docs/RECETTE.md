@@ -48,17 +48,31 @@ regroupées plus bas, reste à dérouler, notamment dans le Bloc-notes, Word et 
 - [ ] Raccourci déjà pris (UI-029). Sur le poste de Lucas, Claude desktop tient `Ctrl+Alt+Espace`.
   Au démarrage, les Réglages s’ouvrent, avec sous la ligne Menu › Shortcut : « Another app is
   already using Ctrl+Alt+Space… » (en français : « Une autre application utilise déjà… »).
-  Ce n’est qu’un avertissement : l’enregistreur reste libre. Enregistrer une autre combinaison
-  (les preuves de la passe ont utilisé `Ctrl+Alt+Maj+Espace`) ou libérer le raccourci dans
+  Ce n’est qu’un avertissement : l’enregistreur reste libre. Dessous, « Use Ctrl+Alt+Shift+Space »
+  (retour du 24/09 : le premier raccourci libre parmi `Ctrl+Alt+Maj+Espace`, `Alt+Maj+Espace`,
+  `Ctrl+Alt+Origine`) le prend d’un clic : « Shortcut saved. », l’avertissement disparaît, le
+  raccourci ouvre l’Îlot. Sinon, enregistrer une autre combinaison ou libérer le raccourci dans
   Claude desktop, puis faire toute la recette avec cette combinaison. *Preuve* : capture de la
-  ligne, combinaison retenue.
+  ligne avec la proposition, combinaison retenue.
 - [ ] Mise à jour depuis une 0.4 installée (pour un exécutable de test : copier le
   `settings.json` d’une 0.4 dans le dossier jetable avant le premier lancement) → l’Îlot est
-  le parcours par défaut. Actions,
-  consignes et raccourcis directs gardés, aucun renommé (« Corriger » reste « Corriger »).
-  Liaison du menu ajoutée sur `Ctrl+Alt+Espace`, sauf si une liaison utilise déjà cette
-  combinaison. Interface en anglais, fichier 0.4 compris : repasser en français dans
-  Appearance › Language. *Preuve* : capture des sections Menu et Actions.
+  le parcours par défaut. Retour du 24/09, plus de mélange : une 0.4 jamais modifiée donne
+  exactement les cinq actions anglaises d’une installation neuve, sans « Traduire en français »
+  ni `Ctrl+Alt+T` en « Afficher le résultat ». Une action modifiée ou créée est gardée telle
+  quelle (une consigne de « Corriger » changée : « Corriger » reste « Corriger ») ; une traduction
+  de la 0.4 reste si un raccourci gardé la lance. Liaison du menu ajoutée sur `Ctrl+Alt+Espace`,
+  sauf si une liaison gardée utilise déjà cette combinaison. Interface en anglais, fichier 0.4
+  compris : repasser en français dans Appearance › Language. *Preuve* : capture des sections
+  Menu et Actions.
+- [ ] Rétablir les réglages par défaut (retour du 24/09). Sur cet appareil › Default settings ›
+  « Restore… » → la question en place, « Keep my settings » a le focus, Échap garde tout. « Restore
+  default settings » → « Default settings restored. » ; actions, raccourci du menu
+  (`Ctrl+Alt+Espace`), grille, apparence et bulle comme à l’installation ; connexion (adresses,
+  modèles, clés), historique, lancement à l’ouverture de session et langue inchangés ; l’Îlot
+  repart sur l’action par défaut dans chaque application. Sur le poste de Lucas (`Ctrl+Alt+Espace`
+  tenu par Claude desktop) : « …sauf le raccourci du menu : Windows n’a pas donné Ctrl+Alt+Space,
+  le menu garde … », et le menu s’ouvre toujours. *Preuve* : captures avant et après des
+  sections Menu, Actions et Connexion (clé masquée).
 
 ### Parcours par application
 
