@@ -38,6 +38,12 @@ en sombre (docs/DA-RAPPORT.md) : collage, pilule sous le texte sans le couvrir, 
 mots changés, Annuler qui rend l’original, frappe qui retire Annuler. Le reste de ses lignes,
 regroupées plus bas, reste à dérouler, notamment dans le Bloc-notes, Word et Outlook.
 
+**Mise en valeur du texte (25/09/2026, choix de Lucas).** Le halo montre la sélection dès le
+menu (zone de texte, lignes entières, texte exact), l’aurore et le reflet pendant le travail,
+puis la vague et la lueur irisée des mots changés, gardée jusqu’à la prochaine action dans le
+texte. Clair ou sombre d’après la couleur lue sous le texte. Les lignes 4 et 6 ci-dessous et la
+section « Annuler, mots changés et place de la pilule » en tiennent compte.
+
 ### Avant de commencer
 
 - Poste de Lucas au 24/09/2026. Installés : Chrome, Teams, Bloc-notes, VS Code. Absents : Word,
@@ -86,9 +92,11 @@ Sur une phrase, puis sur un paragraphe de plusieurs lignes :
    s’écrit sans perte, Entrée l’envoie.
 3. **Échap** : de la grille ou du champ, retour à l’état compact ; de l’état compact, l’Îlot se
    ferme, la source reprend le focus avec sa sélection, rien n’est collé.
-4. **Balayage** : 250 ms après le choix, une lumière parcourt les seules lignes sélectionnées ;
-   un clic dessus atteint l’application. Sans rectangles (VS Code), pas de balayage : pilule
-   seule.
+4. **Mise en valeur** : dès l’ouverture du menu, la zone de texte est cernée, les lignes
+   entières ont une bande pâle et le texte exact un calque. Au choix, sans délai, une aurore
+   tourne autour de la zone de texte et un reflet passe sur les lettres sélectionnées ; un clic
+   dessus atteint l’application. Sur fond sombre (thème sombre de l’application), les effets
+   prennent leur version sombre. Sans rectangles (VS Code), rien : pilule seule.
 5. **Résultat** : texte remplacé, la pilule sous le nouveau texte avec la coche et Annuler (8 s
    par défaut), puis plus rien. Sentinelle intacte.
 6. **Annuler et mots changés** : voir plus bas.
@@ -241,24 +249,29 @@ replacing › How to undo sur « Ctrl+Z » (défaut, option A), puis sur « Past
 - [ ] Après le collage, la pilule se pose 8 px sous la dernière ligne du nouveau texte, son bord
   droit sur la fin de cette ligne, sans toucher aucune ligne. En bas de l’écran, au-dessus de la
   première ligne. Avec Pill position « In the margin », à droite de la ligne la plus large.
-- [ ] Mots changés surlignés en bleu pâle tant qu’Annuler est offert, puis effacés en fondu ;
-  Translate, Write email et la consigne libre surlignent le bloc entier. Highlight changed
-  words coupé → aucun surlignage.
+- [ ] Après le collage, une vague de lumière parcourt le nouveau texte, puis les mots changés
+  gardent une lueur irisée (plus profonde sur fond clair), visible sans cacher le texte, en
+  clair comme en sombre. Translate, Write email et la consigne libre marquent le bloc entier.
+  Highlight changed words coupé → aucune lueur.
+- [ ] La lueur reste après la fin du compte à rebours d’Annuler et après le départ de la
+  pilule, avec Undo coupé aussi ; elle part en fondu à la prochaine touche, au prochain clic
+  (ailleurs que sur la pilule) ou à la molette, et au plus tard après Highlight time (1 min par
+  défaut ; 15 s pour l’essai).
 - [ ] Annuler dans les 8 s (réglable de 2 à 20 s, pause au survol) → l’original revient à
   l’identique (accents, espaces insécables, retours à la ligne) et la pilule affiche
   « Undone ». En « Ctrl+Z », la mise en forme de Word revient aussi. En « Paste original »,
   l’original est recollé en texte brut : dans Word, il prend la mise en forme du point
   d’insertion (limite connue, une mise en forme mixte ne revient pas) ; la sentinelle est
   intacte.
-- [ ] Option A, une lettre tapée dans la source après le collage → Annuler disparaît et le
-  surlignage s’efface. Le Ctrl+Z de l’utilisateur annule le collage lui-même et retire aussi
+- [ ] Option A, une lettre tapée dans la source après le collage → Annuler disparaît et la
+  lueur s’efface. Le Ctrl+Z de l’utilisateur annule le collage lui-même et retire aussi
   Annuler.
-- [ ] Un clic ailleurs dans le texte → Annuler disparaît, la pilule reste. Un défilement ou un
-  déplacement de la fenêtre → pilule et surlignage disparaissent.
+- [ ] Un clic ailleurs dans le texte → Annuler disparaît, la pilule reste, la lueur s’efface. Un
+  défilement ou un déplacement de la fenêtre, pilule partie ou non → la lueur disparaît aussitôt.
 - [ ] Texte collé modifié puis Annuler → refus propre, rien n’est modifié.
 - [ ] Word : texte dans un tableau, puis dans une liste à puces → la pilule reste hors du texte.
   Si le texte collé n’est pas retrouvé (correction automatique de Word, par exemple), ni
-  surlignage ni Annuler : c’est attendu, à noter avec l’application.
+  lueur ni Annuler : c’est attendu, à noter avec l’application.
 - [ ] Outlook : corps d’un nouveau message puis d’une réponse, thème clair et sombre → mêmes
   points.
 
