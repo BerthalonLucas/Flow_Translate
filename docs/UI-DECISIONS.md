@@ -82,3 +82,13 @@ La passe autonome qui implémente docs/DA-PLAN.md sur la branche `da-ilot` ne do
 11. Isolation des tests : lancé depuis `src-tauri\target\release\`, l’exécutable de test partagerait sinon le dossier de données de l’app installée de Lucas (`%APPDATA%\com.flowtranslate.desktop` : `settings.json` et historique). La variable d’environnement `FLOWTRANSLATE_DATA_DIR` redirige ce dossier ; tous les lancements de test de cette passe l’utilisent.
 12. Matière sombre de la phase A : le labo n’a pas de préréglage sombre opaque ; la valeur retenue (fond `rgb(28 30 34 / .86)`) vient du plan (§9) et reste à valider par Lucas sur capture. En clair, la phase A reprend le préréglage « Clair sans transparence » du labo (`opaque-light` de `design-lab/src/data.js`).
 13. La nouvelle fenêtre native qui dessine le balayage et le surlignage s’appelle `halo`, comme dans le plan ; la constante de marge d’ombre de `src/layout.ts`, qui s’appelait aussi `halo`, est renommée pour éviter la confusion.
+
+# Retours de Lucas sur la 0.5.0 d’essai — 24 septembre 2026
+
+Essai de l’installateur 0.5.0 d’essai avec le vrai serveur. Verdict : « c’est vraiment bien ». À faire avant la sortie 0.5.0 :
+
+- Survol de la bulle compacte : seule sa zone de droite, la ✦, déplie la grille (après 450 ms). La zone de gauche, la dernière action, ne réagit pas au survol.
+- Sens d’ouverture : la grille s’ouvre à droite de là où était la bulle quand il y a la place, à gauche près du bord de l’écran (aujourd’hui toujours à gauche).
+- Mise à jour depuis la 0.4 : ne plus mêler l’ancien et le nouveau (actions en français et en anglais, `Ctrl+Alt+T` en « Afficher le résultat », menu sur un raccourci déjà pris). Les actions livrées jamais modifiées sont remplacées ; un bouton « Rétablir les réglages par défaut ».
+- Raccourci du menu déjà pris : en proposer un autre au premier lancement.
+- Mise en valeur du texte, chantier à part entière : la sélection montrée à trois niveaux (zone de texte, lignes, texte exact) ; des effets « à la Apple Intelligence » dessinés par-dessus le texte ; les mots changés surlignés jusqu’à la prochaine action dans le texte (frappe, clic, défilement), 60 s au plus, durée réglable, sans dépendre d’Annuler ; jolis en clair et en sombre sans cacher le texte. Prototypes montrés à Lucas avant de coder.

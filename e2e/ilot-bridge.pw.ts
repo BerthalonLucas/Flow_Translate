@@ -121,7 +121,7 @@ test('Îlot: the pointer unfolds the grid and picks a tile once, even clicked tw
   await openIlot(page);
   await on(page, f => f.captureMenu('mouse', 'shorten'));
   await expect(page.locator('[data-item="last"]')).toHaveAttribute('aria-description', 'Shorten');
-  await page.locator('[data-item="last"]').hover();
+  await page.locator('[data-item="ask"]').hover();
   await expect(page.locator('[data-ilot]')).toHaveAttribute('data-mode', 'grid');
   await page.locator('[data-tile="email"]').dblclick();
   await expect.poll(() => chosen(page, 'mouse')).toEqual([{ captureId: 'mouse', actionId: 'email' }]);

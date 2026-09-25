@@ -188,7 +188,8 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
     target?.focus({ preventScroll: true });
   }, [keyboard, shape, mode, safeHot, compactHot, context.last]);
 
-  // menus.jsx:81: a pointer resting on the compact state unfolds the grid after 450 ms.
+  // menus.jsx:81: a pointer resting on the compact state unfolds the grid after 450 ms, on its
+  // right part only, the ✦ (Lucas, 24/09): the last action's side never unfolds it.
   const hover = useRef(0);
   const stopHover = () => window.clearTimeout(hover.current);
   useEffect(() => stopHover, []);
@@ -230,9 +231,7 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
   else {
     const last = context.last;
     const focusable = last ? compactHot : 'ask';
-    content = <div role="menu" aria-label={t('ilot.menu')} aria-orientation="horizontal" className="ilot-row"
-      onMouseEnter={() => { stopHover(); hover.current = window.setTimeout(() => setMode(current => current === 'compact' ? 'grid' : current), ilotMetrics.hoverMs); }}
-      onMouseLeave={stopHover}>
+    content = <div role="menu" aria-label={t('ilot.menu')} aria-orientation="horizontal" className="ilot-row">
       {last && <button role="menuitem" type="button" tabIndex={focusable === 'last' ? 0 : -1} className="ilot-btn is-default" data-item="last"
         ref={element => { compactItems.current.last = element; }} aria-keyshortcuts={['Enter', letterOf(last, context.letters)].filter(Boolean).join(' ')} aria-description={last.name}
         onClick={() => onChoose(last.id)}>
@@ -241,7 +240,8 @@ export function Ilot({ actions, knownActions, lastActionId, onChoose, onInstruct
       {last && <span className="ilot-sep" aria-hidden="true" />}
       <button role="menuitem" type="button" tabIndex={focusable === 'ask' ? 0 : -1} className="ilot-btn ilot-ask" data-item="ask"
         ref={element => { compactItems.current.ask = element; }} aria-label={describe} aria-keyshortcuts="Space /" aria-disabled={promptAvailable ? undefined : true} aria-description={unavailable}
-        onClick={openField}>
+        onMouseEnter={() => { stopHover(); hover.current = window.setTimeout(() => setMode(current => current === 'compact' ? 'grid' : current), ilotMetrics.hoverMs); }}
+        onMouseLeave={stopHover} onClick={openField}>
         <span className="ilot-dot" />
       </button>
     </div>;
