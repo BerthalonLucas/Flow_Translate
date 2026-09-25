@@ -98,13 +98,15 @@ figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap
 [data-tone="light"] {
   --hl: 141 159 255; --ai1: 141 159 255; --ai2: 188 130 243; --ai3: 255 103 120; --ai4: 255 186 113;
   --u1: 95 111 255; --u2: 163 91 234; --u3: 240 80 106; --u4: 242 154 59; --veil: 255 255 255;
-  --a-tint: .24; --a-band: .08; --a-sweep: .32; --a-soft: .32; --a-low: .42; --a-iris: .22; --a-ring: .75;
+  --a-tint: .24; --a-band: .08; --a-sweep: .32; --a-soft: .32; --a-low: .42; --a-iris: .30; --a-ring: .75;
+  --ir1: 95 111 255; --ir2: 163 91 234; --ir3: 240 80 106; --ir4: 242 154 59; --a-iris-glow: .32;
   --native: 0 110 255; --a-native: .26; --native-off: 0 0 0; --a-native-off: .09; --ink-rgb: 0 0 0;
 }
 [data-tone="dark"] {
   --hl: 150 166 255; --ai1: 160 175 255; --ai2: 201 155 255; --ai3: 255 129 147; --ai4: 255 201 140;
   --u1: 150 166 255; --u2: 201 155 255; --u3: 255 129 147; --u4: 255 201 140; --veil: 30 31 34;
   --a-tint: .28; --a-band: .07; --a-sweep: .36; --a-soft: .34; --a-low: .40; --a-iris: .26; --a-ring: .8;
+  --ir1: 160 175 255; --ir2: 201 155 255; --ir3: 255 129 147; --ir4: 255 201 140; --a-iris-glow: .22;
   --native: 80 160 255; --a-native: .34; --native-off: 255 255 255; --a-native-off: .13; --ink-rgb: 255 255 255;
 }
 .fx, .mk, .nat { position: absolute; pointer-events: none; }
@@ -156,7 +158,8 @@ figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap
 .mk-low { border-radius: 2px 5px 3px 4px; background-image: linear-gradient(90deg, rgb(var(--ai1) / calc(var(--a-low) * var(--k-marks))), rgb(var(--ai2) / calc(var(--a-low) * var(--k-marks))), rgb(var(--ai3) / calc(var(--a-low) * var(--k-marks))), rgb(var(--ai4) / calc(var(--a-low) * var(--k-marks)))); }
 .mk-under { border-radius: 2px; background-image: linear-gradient(90deg, rgb(var(--u1)), rgb(var(--u2)), rgb(var(--u3)), rgb(var(--u4))); opacity: var(--k-marks); }
 .mk-ring { border-radius: 5px; box-shadow: 0 0 0 1.25px rgb(var(--hl) / calc(var(--a-ring) * var(--k-marks))), 0 0 10px rgb(var(--ai2) / calc(.3 * var(--k-marks))); }
-.mk-iris { border-radius: 4px; background-image: linear-gradient(90deg, rgb(var(--ai1) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ai2) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ai3) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ai4) / calc(var(--a-iris) * var(--k-marks)))); box-shadow: 0 0 12px rgb(var(--ai2) / calc(.22 * var(--k-marks))); }
+/* Iris: deeper hues on a light ground (Lucas, 25/09: the pastels vanished on white), the pastels on a dark one. */
+.mk-iris { border-radius: 4px; background-image: linear-gradient(90deg, rgb(var(--ir1) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ir2) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ir3) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ir4) / calc(var(--a-iris) * var(--k-marks)))); box-shadow: 0 0 12px rgb(var(--ir2) / calc(var(--a-iris-glow) * var(--k-marks))); }
 .mk-bar { border-radius: 2px; background: linear-gradient(180deg, rgb(var(--u1)), rgb(var(--u2)), rgb(var(--u3))); opacity: var(--k-marks); }
 .mk-dot { border-radius: 1px; background: rgb(var(--hl) / calc(.6 * var(--k-marks))); }
 
@@ -284,7 +287,7 @@ figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap
   <section class="block" aria-labelledby="t-choices">
     <div class="head">
       <h2 id="t-choices">Tes choix</h2>
-      <p class="muted">Une variante par étape. Le départ, ce sont mes propositions ; «&nbsp;actuel&nbsp;» marque ce que fait la 0.5.0 aujourd’hui.</p>
+      <p class="muted">Une variante par étape. Le départ, ce sont les choix de Lucas du 25/09 ; «&nbsp;actuel&nbsp;» marque ce que fait la 0.5.0 aujourd’hui.</p>
     </div>
     <div class="choices">
       <div class="card">
@@ -322,7 +325,7 @@ figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap
     </div>
     <div class="actions">
       <button class="btn primary" id="copy" type="button">Copier mon choix</button>
-      <button class="btn" id="reset" type="button">Revenir à mes propositions</button>
+      <button class="btn" id="reset" type="button">Revenir aux choix du 25/09</button>
       <span id="copy-note" class="muted small" role="status"></span>
     </div>
     <textarea id="copy-out" readonly hidden rows="8" aria-label="Mon choix, en texte"></textarea>
@@ -404,9 +407,9 @@ figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap
   };
   const DEFAULTS = {
     menu: { box: true, lines: true, exact: true, exactStyle: 'tint', k: 1 },
-    work: { fx: 'sweep', box: 'aurora', lines: true, k: 1 },
+    work: { fx: 'veil', box: 'aurora', lines: true, k: 1 },
     arrive: 'wave',
-    marks: { fx: 'under', maxS: 60, k: 1 },
+    marks: { fx: 'iris', maxS: 60, k: 1 },
     scenario: { preset: 'phrase', action: 'fix', native: 'gray' },
     speed: 1, motion: 'full',
   };
@@ -425,7 +428,7 @@ figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const clone = o => JSON.parse(JSON.stringify(o));
-  const KEY = 'flowtranslate-mise-en-valeur-v1';
+  const KEY = 'flowtranslate-mise-en-valeur-v2';
   const merge = (base, over) => {
     const out = clone(base);
     if (!over || typeof over !== 'object') return out;
