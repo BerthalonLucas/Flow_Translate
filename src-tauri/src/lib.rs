@@ -498,6 +498,48 @@ fn save_settings(
 
     Ok(())
 }
+/// « Restore default settings » (settings::reset, Lucas 24/09), saved like any change (its
+/// shortcut registered, every window told); the Îlot's memory of the last action per
+/// application starts over too. When Windows refuses the default menu chord, the menu keeps the
+/// one it had (settings::keep_menu_chord) and everything else is restored. Answers what is now
+/// saved, the keys to the settings window only.
+#[tauri::command]
+fn reset_settings(window: tauri::WebviewWindow, app: AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
+    let current = state.inner.lock().map_err(|_| lock_error())?.settings.clone();
+    let fresh = settings::reset(&current);
+    let mut answer = match save_settings(app.clone(), state, fresh.clone()) {
+        Ok(()) => fresh,
+        Err(error) => {
+            let kept = settings::keep_menu_chord(&fresh, &current).ok_or(error)?;
+            save_settings(app.clone(), app.state::<AppState>(), kept.clone())?;
+            kept
+        }
+    };
+    if let Ok(mut memory) = app.state::<AppState>().menu_memory.lock() {
+        if memory.clear() { let _ = memory.save(); }
+    }
+    if window.label() != "settings" { for profile in answer.profiles.values_mut() { profile.api_key.clear(); } }
+    Ok(answer)
+}
+/// Lucas, 24/09: another application holds the menu's chord, so the settings window proposes one
+/// of these: the first that no enabled binding uses, that types no character as AltGr here, and
+/// that Windows gives now (taken, then let go at once). None when Windows gives none of them.
+/// Never Ctrl+Shift+Space: Word types a non-breaking space with it, which French needs.
+const MENU_ALTERNATIVES: [&str; 3] = ["Ctrl+Alt+Shift+Space", "Alt+Shift+Space", "Ctrl+Alt+Home"];
+#[tauri::command]
+fn suggest_shortcut(app: AppHandle, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let used = state.inner.lock().map_err(|_| lock_error())?.settings.shortcut_bindings.iter()
+        .filter(|b| b.enabled).filter_map(|b| actions::parse_shortcut(&b.shortcut).ok()).map(|key| key.id()).collect::<Vec<_>>();
+    for candidate in MENU_ALTERNATIVES {
+        let key = actions::parse_shortcut(candidate)?;
+        if used.contains(&key.id()) || altgr_types(&key).is_some() || app.global_shortcut().is_registered(key) { continue; }
+        if app.global_shortcut().register(key).is_ok() {
+            let _ = app.global_shortcut().unregister(key);
+            return Ok(Some(candidate.into()));
+        }
+    }
+    Ok(None)
+}
 fn store_capture(
     app: &AppHandle,
     state: &AppState,
@@ -1622,9 +1664,12 @@ fn choose_action(app: AppHandle, state: State<'_, AppState>, capture_id: String,
 /// settings window). A plain space typed by Ctrl+Space is not a conflict.
 #[tauri::command]
 fn shortcut_conflict(shortcut: String) -> Result<ShortcutConflict, String> {
-    let parsed = actions::parse_shortcut(&shortcut)?;
-    let character = actions::altgr_key(&parsed).and_then(|(vk, shift)| host::altgr_character(vk, shift)).filter(|c| *c != ' ');
+    let character = altgr_types(&actions::parse_shortcut(&shortcut)?);
     Ok(ShortcutConflict { alt_gr: character.is_some(), character: character.map(String::from) })
+}
+/// The character a Ctrl+Alt chord types as AltGr with the foreground window's layout, if any.
+fn altgr_types(shortcut: &Shortcut) -> Option<char> {
+    actions::altgr_key(shortcut).and_then(|(vk, shift)| host::altgr_character(vk, shift)).filter(|c| *c != ' ')
 }
 /// The frontend reserves the window once per form (src/layout.ts): anchored, the short
 /// glass with the menu under its pill; bottom, the reader band with the menu above its
@@ -2316,6 +2361,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            reset_settings,
+            suggest_shortcut,
             capture_text,
             frontend_ready,
             translate,

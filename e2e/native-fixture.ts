@@ -4,11 +4,16 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 import type { BindingState, Capture, ErrorCode, ExecutionInfo, HaloEvent, PillSide, PillTarget, Rect, Settings, ShortcutStatus, TranslationRequest, UndoLoss, UndoOutcome } from '../src/types';
 import { ilotReserve } from '../src/layout';
+import { resetFrom } from '../src/settings/reset';
 
 // The Îlot, as Rust's default (UiVersion::Ilot); `&ui=v4` in the URL starts in the 0.4 journey,
 // for the tests that ask for it.
 let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: new URLSearchParams(location.search).get('ui') === 'v4' ? 'v4' : 'ilot', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
+// A fresh install's settings (Rust's Settings::default), for `reset_settings`.
+const freshSettings: Settings = { ...structuredClone(settings), uiVersion: 'ilot' };
+// What `suggest_shortcut` answers (Rust's first free proposal; null: none free).
+let suggestion: string | null = 'Ctrl+Alt+Shift+Space';
 // canReplace is false here; a test raises it with `target` (Rust knows it at the capture since 0.4.0).
 // The fixture's captures are anchored on a 1920 × 1040 screen unless a test says otherwise.
 const capture = (id: string, text = 'Example selection', execution?: ExecutionInfo): Capture => ({ id, text, source: 'selection', canReplace: false, anchor: { x: 400, y: 300, width: 120, height: 18 }, screen: { width: 1920, height: 1040, scale: 1 }, ...(execution ? { execution } : {}) });
@@ -173,6 +178,18 @@ mockIPC((command, args) => {
     void emit('shortcut-status', shortcutStatus());
     return;
   }
+  // As Rust (settings::reset): saved like any change, answered with what was saved; when Windows
+  // refuses the default chord (`refuseShortcut`), the menu keeps its own (settings::keep_menu_chord).
+  if (command === 'reset_settings') {
+    let next = resetFrom(freshSettings, settings);
+    const own = settings.shortcutBindings.find(b => b.kind === 'menu' && b.enabled);
+    if (refuseShortcut && own) next = { ...next, shortcutBindings: next.shortcutBindings.map(b => b.kind === 'menu' ? { ...b, shortcut: own.shortcut } : b) };
+    for (const binding of next.shortcutBindings) if (settings.shortcutBindings.find(b => b.id === binding.id)?.shortcut !== binding.shortcut) delete shortcutStates[binding.id];
+    settings = next;
+    void emit('shortcut-status', shortcutStatus());
+    return structuredClone(settings);
+  }
+  if (command === 'suggest_shortcut') return suggestion;
   if (command === 'check_connection') return { connected, message: connected ? 'Modèle trouvé.' : 'Serveur indisponible.' };
   if (command === 'frontend_ready') return currentCapture;
   if (command === 'translate') { request = args?.request as TranslationRequest; resultText = ''; }
@@ -285,6 +302,9 @@ Object.assign(window, { nativeFixture: {
   workArea: (width: number, height: number, scale = 1) => emit('work-area', { width, height, scale }),
   systemMotion: (reduced: boolean) => { windowsMotion = { reduced }; return emit('system-motion', windowsMotion); },
   settings: (next: Partial<Settings>) => { settings = { ...settings, ...next }; return emit('settings-changed', settings); },
+  // What Rust holds now, and what its next `suggest_shortcut` answers.
+  current: () => structuredClone(settings),
+  suggestion: (value: string | null) => { suggestion = value; },
   // Lot 13: a direct link to a field of the open Settings window.
   focusField: (field: string) => emit('settings-focus-field', { field }),
   unanchored: (id: string) => { currentCapture = { ...capture(id), source: 'clipboard', anchor: null }; return emit('capture', currentCapture); },

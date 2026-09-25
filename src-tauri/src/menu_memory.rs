@@ -60,6 +60,13 @@ impl MenuMemory {
         true
     }
 
+    /// Forgets every application (« Restore default settings »); true when there was any.
+    pub fn clear(&mut self) -> bool {
+        let known = !self.entries.is_empty();
+        self.entries.clear();
+        known
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(&Persisted { applications: self.entries.clone() })
             .map_err(|_| "Impossible de préparer la mémoire du menu.".to_string())?;
@@ -94,6 +101,9 @@ mod tests {
         assert_eq!(memory.entries.len(), LIMIT);
         assert_eq!(memory.get("app69.exe"), Some("correct"));
         assert_eq!(memory.get("notepad.exe"), None, "the least recent went first");
+        assert!(memory.clear() && !memory.clear());
+        memory.save().unwrap();
+        assert_eq!(MenuMemory::load(&root).get("app69.exe"), None, "forgotten, on disk too");
         fs::write(root.join("menu-memory.json"), "not json").unwrap();
         assert_eq!(MenuMemory::load(&root).entries.len(), 0, "an unreadable file is an empty memory");
         fs::remove_dir_all(root).unwrap();

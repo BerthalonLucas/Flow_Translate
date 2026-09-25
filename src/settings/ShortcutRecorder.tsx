@@ -55,18 +55,38 @@ type Props = {
   // What Windows answered for this chord (lot 10, `shortcut_status`): 'taken' when another
   // application holds it, 'failed' for any other refusal. Unknown: nothing is said.
   registration?: BindingState;
+  // Lucas, 24/09: a taken chord gets a free one to take in one click (the menu's: Rust's
+  // suggest_shortcut); null when none is free.
+  suggest?: () => Promise<string | null>;
 };
+// The proposal for a taken chord, asked again whenever the chord or its state changes.
+function useSuggestion(suggest: Props['suggest'], shortcut: string, taken: boolean): string | null {
+  const [suggestion, setSuggestion] = useState<{ shortcut: string; value: string | null } | null>(null);
+  useEffect(() => {
+    if (!suggest || !taken || !shortcut) return;
+    let live = true;
+    void suggest().then(value => { if (live) setSuggestion({ shortcut, value }); }, () => undefined);
+    return () => { live = false; };
+  }, [suggest, shortcut, taken]);
+  return taken && suggestion?.shortcut === shortcut ? suggestion.value : null;
+}
 // The keycaps, the Change button, then what happened: saved, refused (translated), whether
 // Windows could register the saved chord, and the AltGr warning while the saved chord is also an
 // AltGr key here. Warnings, never a refusal: the recorder stays free to take another chord.
 // Rendered as siblings: the parent row or card lays them out.
-export function ShortcutRecorder({ shortcut, enabled, label, busy, record, registration }: Props) {
+export function ShortcutRecorder({ shortcut, enabled, label, busy, record, registration, suggest }: Props) {
   const t = useT();
   const [capturing, setCapturing] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const recorder = useRef<HTMLSpanElement>(null);
   const conflict = useAltGrConflict(shortcut, enabled);
+  const proposal = useSuggestion(suggest, shortcut, enabled && registration === 'taken');
   useEffect(() => { if (capturing) recorder.current?.focus(); }, [capturing]);
+  const take = async (value: string) => {
+    setCapturing(false); setNotice(null);
+    const error = await record(value);
+    setNotice(error === null ? { key: 'shortcuts.saved' } : { text: error });
+  };
   const captureKey = async (event: KeyboardEvent<HTMLSpanElement>) => {
     event.preventDefault(); event.stopPropagation();
     if (event.key === 'Escape') { setCapturing(false); return; }
@@ -74,9 +94,7 @@ export function ShortcutRecorder({ shortcut, enabled, label, busy, record, regis
     const candidate = fromKey(event);
     if (candidate.error) { setNotice({ key: candidate.error }); return; }
     if (!candidate.value) return;
-    setCapturing(false); setNotice(null);
-    const error = await record(candidate.value);
-    setNotice(error === null ? { key: 'shortcuts.saved' } : { text: error });
+    await take(candidate.value);
   };
   const noticeText = notice === null ? '' : 'key' in notice ? t(notice.key) : describeRefusal(notice.text, t);
   const saved = notice !== null && 'key' in notice && notice.key === 'shortcuts.saved';
@@ -92,6 +110,7 @@ export function ShortcutRecorder({ shortcut, enabled, label, busy, record, regis
     </div>
     {noticeText && <p className="row-warning shortcut-notice" data-ok={saved || undefined} role={saved ? 'status' : 'alert'}>{noticeText}</p>}
     {enabled && shortcut && !capturing && (registration === 'taken' || registration === 'failed') && <p className="row-warning shortcut-notice" data-warning={registration} role="status">{t(registration === 'taken' ? 'shortcuts.stateTaken' : 'shortcuts.stateFailed', { shortcut })}</p>}
+    {proposal && !capturing && <p className="shortcut-notice shortcut-suggestion"><button type="button" className="text-button" disabled={busy} onClick={() => void take(proposal)}>{t('shortcuts.useSuggestion', { shortcut: proposal })}</button></p>}
     {conflict && !capturing && <p className="row-warning shortcut-notice" data-warning="altgr" role="status">{conflict.character ? t('shortcuts.altGrConflict', { shortcut, key, character: conflict.character }) : t('shortcuts.altGrConflictKey', { shortcut, key })}</p>}
   </>;
 }
