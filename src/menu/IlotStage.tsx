@@ -3,7 +3,7 @@ import { AnimatePresence } from 'motion/react';
 import { bridge } from '../bridge';
 import { defaultActionId, instructionActionId } from '../actionDefaults';
 import { useT } from '../i18n';
-import { ilotFits, ilotPlace, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, placeX, type IlotPlace, type IlotRoom, type IlotShapeBox, type IlotSide } from '../layout';
+import { ilotFits, ilotMenuShift, ilotPlace, ilotRegion, ilotReserve, ilotRoom, ilotShift, ilotSide, ilotStrip, placeX, type IlotPlace, type IlotRoom, type IlotShapeBox, type IlotSide } from '../layout';
 import { indicatorOf } from '../loaders/pill';
 import { useMotionPreset, useReducedMotionSetting } from '../motion/MotionPreferences';
 import { animateCorner, fadeCorner, type CornerMove, type CornerOffset } from '../motion/surface';
@@ -42,6 +42,10 @@ import { effectiveAfterReplace, ilotOutcome, ownPasteRefusal, type OwnPaste, typ
  *             edges (ilotRoom, the anchor screen's work area). A shape wider than the room on the
  *             left (the error pill, near the screen's left edge) slides right by what it
  *             overhangs, on the shape's own spring (ilotShift); the region follows.
+ *   opening   the menu opens right of the compact bubble when the work area has room there for
+ *             its widest shape, keeping the compact's left edge (the corner moves right by what the
+ *             shape outgrows it, on the shape's spring, ilotMenuShift); else left, as near the
+ *             screen's right edge. Once chosen, the pill goes back to the strip's corner.
  *   outcome   src/menu/outcome.ts: the stage the surface shows, derived from the translation.
  *   lost      `target-invalidated` before any choice (none on its way either): the Îlot leaves.
  *   buttons   configuration → open_settings on the request's field, then the Îlot leaves;
@@ -183,9 +187,14 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   const placed = useRef<IlotPlace | null>(null);
   const placedSide = useRef<PillSide | null>(null);
   const windowShift = useRef({ x: 0, y: 0 });
+  // The menu's shapes (not yet chosen) and the compact bubble's width, for the menu's opening side.
+  const menuNow = useRef(true);
+  const compactWidth = useRef<number | null>(null);
   const boxOf = useCallback((size: SurfaceSize): IlotShapeBox => {
     if (presentation !== 'anchored') return size;
     const room = roomNow.current && { left: roomNow.current.left + windowShift.current.x, right: roomNow.current.right - windowShift.current.x };
+    const opening = menuNow.current && !placed.current ? ilotMenuShift(size.width, compactWidth.current, room) : null;
+    if (opening !== null) return { ...size, shift: opening, dy: 0 };
     return { ...size, shift: ilotShift(size.width, room, placeX(placed.current, size.width)), dy: placed.current?.y ?? 0 };
   }, [presentation]);
   const span = useRef<IlotShapeBox[]>([]);
@@ -237,6 +246,8 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   const onShapeChange = useCallback((change: ShapeChange) => {
     if (!side) return;
     shapeNow.current = change.to;
+    // The compact bubble: the menu's only shape of its height.
+    if (menuNow.current && change.to.height === ilotMetrics.compactHeight) compactWidth.current = change.to.width;
     let to = boxOf(change.to);
     if (change.phase === 'start' && change.from) {
       const from = { ...change.from, shift: cornerAt.current.x, dy: cornerAt.current.y };
@@ -663,6 +674,7 @@ export function IlotStage({ controller, capture }: { controller: TranslationCont
   useEffect(() => { if (closing && side === null) completeDismiss(captureId); }, [closing, side, captureId, completeDismiss]);
 
   const shape = outcome.stage === 'menu' ? 'menu' : 'pill';
+  menuNow.current = shape === 'menu';
   const { frame } = reserve;
   const right = reserve.width - frame.x - frame.width;
   const corner: CSSProperties = presentation === 'bottom' ? { left: 0, right: 0, bottom: reserve.height - frame.y - frame.height }

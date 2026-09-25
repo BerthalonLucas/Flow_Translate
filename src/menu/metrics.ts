@@ -3,8 +3,9 @@
 // plan's rounded figures (§9: grid ≈ 222 × 112, field ≈ 262 × 34): the lab is the reference.
 export const ilotMetrics = {
   // Compact: a 26 px button row with 3 px of padding (app.css:179-180); its width follows the
-  // last action's label (≈ 110 px for « Fix »).
+  // last action's label (≈ 110 px for « Fix »), 32 with the ✦ alone (no action to offer).
   compactHeight: 32,
+  compactMinWidth: 32,
   // Grid: tiles of 66 × 50, 4 apart, 6 from the edge (app.css:188-189): 3 × 66 + 2 × 4 + 2 × 6.
   tile: { width: 66, height: 50 },
   gap: 4,

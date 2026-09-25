@@ -285,15 +285,16 @@ try {
         await ilotWindow('menu after WM_NCACTIVATE', reserved);
       }
     }
-    // The compact region from outside: a real cursor resting on the shape unfolds the grid after
-    // 450 ms, which only the grid path wants.
+    // The compact region from outside: a real cursor resting on its ✦ unfolds the grid after
+    // 450 ms, which only the grid path wants (its last action never does, Lucas 24/09).
     result.compact = await expectRegion('compact', menuWin, compact, [], { inside: false });
     if (viaGrid) {
-      // Now the real cursor rests on the compact state: the shape takes it, and the grid unfolds
-      // from that real hover when the WebView sees the pointer; otherwise (a locked session, no
-      // mouse move after the pass-through was lifted) a DevTools hover unfolds it.
+      // Now the real cursor rests on the compact state's ✦ (its 26 px button, 3 px from the right
+      // edge): the shape takes it, and the grid unfolds from that real hover when the WebView sees
+      // the pointer; otherwise (a locked session, no mouse move after the pass-through was lifted)
+      // a DevTools hover unfolds it.
       let watchGrid = watchOverlay(2400);
-      const center = toScreen(menuWin, dpr, compact.x + compact.width / 2, compact.y + compact.height / 2);
+      const center = toScreen(menuWin, dpr, compact.x + compact.width - 16, compact.y + compact.height / 2);
       const inside = await pointCursor(center.x, center.y);
       expect(inside.root.hwnd, 'compact: the shape takes the cursor').toBe(menuWin.hwnd);
       expect(exStylesOf(menuWin.hwnd), 'compact: pass-through cleared on the shape').toEqual([]);
@@ -305,7 +306,7 @@ try {
         result.beforeHover = await watchGrid;
         expect(result.beforeHover, 'compact under the real cursor: the window never moves nor resizes').toEqual([`${reserved.x},${reserved.y},${reserved.width}x${reserved.height}`]);
         watchGrid = watchOverlay(2000);
-        await page.locator('.ilot-row').hover();
+        await page.locator('.ilot-stage [data-item="ask"]').hover();
         await expect(page.locator('.ilot-stage [data-ilot]')).toHaveAttribute('data-mode', 'grid');
         result.gridOpenedBy = 'DevTools hover (the real cursor did not unfold it)';
       }
