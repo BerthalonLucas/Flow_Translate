@@ -1,0 +1,785 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Labo mise en valeur</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&display=swap">
+<style>
+/* Prototypes of the « mise en valeur du texte » (0.5.0), to be chosen by Lucas before any code.
+   The halo only knows rectangles (text box, lines, exact text, changed words), as the real
+   `halo` window does with UI Automation, and draws over them with plain alpha: no blend mode
+   with the other application, never a recoloured letter. Standalone, no build. */
+:root {
+  --bg: #EEF0F3; --paper: #FFFFFF; --ink: #17191E; --muted: #5D6472; --faint: #8A92A0; --line: #DCE0E6; --field: #F4F5F8;
+  --accent: #3563E9; --on-accent: #FFFFFF; --accent-soft: rgba(53, 99, 233, .10);
+  --ui: "Geist", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --os: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --code: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", monospace;
+  --speed: 1; --k-sel: 1; --k-work: 1; --k-marks: 1;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #101216; --paper: #181B21; --ink: #E8EBF0; --muted: #9AA2B0; --faint: #6F7784; --line: #2A2F38; --field: #20242B; --accent: #7EA2FF; --on-accent: #0B1020; --accent-soft: rgba(126, 162, 255, .14); color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #101216; --paper: #181B21; --ink: #E8EBF0; --muted: #9AA2B0; --faint: #6F7784; --line: #2A2F38; --field: #20242B; --accent: #7EA2FF; --on-accent: #0B1020; --accent-soft: rgba(126, 162, 255, .14); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--ui); }
+.page { max-width: 1320px; margin: 0 auto; padding-inline: 16px; padding-block: 22px 80px; display: flex; flex-direction: column; gap: 20px; }
+h1, h2, h3, h4 { margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: 26px; font-weight: 650; letter-spacing: -.015em; }
+h2 { font-size: 19px; font-weight: 620; }
+h3 { font-size: 14px; font-weight: 620; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.eyebrow { font: 500 11px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.top { display: flex; flex-direction: column; gap: 6px; }
+.lede { color: var(--muted); font-size: 14.5px; max-width: 72ch; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); font: 500 13px/1.1 var(--ui); cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; }
+.btn:hover { border-color: var(--faint); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--paper) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.bar .spacer { flex: 1; }
+.steps { display: flex; flex-wrap: wrap; gap: 4px; }
+.steps button { padding: 6px 10px; border-radius: 999px; border: 1px solid transparent; background: var(--field); font-size: 13px; cursor: pointer; }
+.steps button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.grp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.grp > span { font-size: 12.5px; color: var(--muted); }
+.seg { display: flex; flex-wrap: wrap; gap: 5px; }
+.seg button { padding: 5px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--field); font-size: 12.5px; line-height: 1.25; cursor: pointer; text-align: left; }
+.seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.tag { font: 500 10px/1 var(--mono); letter-spacing: .04em; opacity: .75; margin-left: 2px; text-transform: uppercase; }
+.note-reduced { font-size: 12px; color: var(--muted); }
+
+/* ——— The two example screens ——— */
+.stage { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 18px; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font: 500 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.desk { position: relative; border-radius: 16px; padding: 24px 22px 46px; overflow: hidden; isolation: isolate; }
+.desk:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.desk[data-tone="light"] { background: radial-gradient(120% 100% at 0% 0%, #E4ECFA 0%, #CCD9F0 50%, #B7C6E4 100%); }
+.desk[data-tone="dark"] { background: radial-gradient(120% 100% at 100% 0%, #2C3242 0%, #1B1E27 55%, #121419 100%); }
+.win { position: relative; border-radius: 10px; overflow: hidden; }
+.desk[data-tone="light"] .win { background: #FFFFFF; color: #1F1F1F; box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 16px 40px rgba(30,40,70,.22); }
+.desk[data-tone="dark"] .win { background: #1E1F22; color: #E4E4E6; box-shadow: 0 0 0 1px rgba(255,255,255,.07), 0 18px 48px rgba(0,0,0,.55); }
+.win-bar { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; font: 12px/1 var(--os); white-space: nowrap; overflow: hidden; }
+.desk[data-tone="light"] .win-bar { background: #F3F3F3; color: rgba(0,0,0,.62); border-bottom: 1px solid rgba(0,0,0,.06); }
+.desk[data-tone="dark"] .win-bar { background: #2A2B2F; color: rgba(255,255,255,.62); border-bottom: 1px solid rgba(255,255,255,.05); }
+.win-bar .dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.desk[data-tone="light"] .win-bar .dot { background: linear-gradient(135deg, #3B82F6, #1D4ED8); }
+.desk[data-tone="dark"] .win-bar .dot { background: linear-gradient(135deg, #9CA3AF, #6B7280); }
+.win-bar .ctl { margin-left: auto; display: flex; gap: 16px; opacity: .7; font-size: 11px; }
+.fields { padding: 4px 20px 0; font: 13px/1.4 var(--os); color: rgba(0,0,0,.58); }
+.fields div { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,.07); }
+.fields b { font-weight: 500; min-width: 44px; color: rgba(0,0,0,.42); }
+.menubar { display: flex; gap: 16px; padding: 7px 14px; font: 12.5px/1 var(--os); color: rgba(255,255,255,.62); border-bottom: 1px solid rgba(255,255,255,.05); }
+.doc { position: relative; cursor: text; -webkit-user-select: none; user-select: none; }
+.doc p { position: relative; z-index: 1; margin: 0 0 .7em; }
+.doc p:last-of-type { margin-bottom: 0; }
+.desk[data-tone="light"] .doc { padding: 14px 20px 20px; min-height: 236px; font: 14.5px/1.62 var(--os); }
+.desk[data-tone="dark"] .doc { padding: 12px 16px 18px; min-height: 262px; font: 14px/1.42 var(--code); }
+.native { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.halo, .ilot { position: absolute; inset: 0; pointer-events: none; }
+.halo { z-index: 5; }
+.ilot { z-index: 6; }
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-radius: 12px; background: var(--paper); border: 1px solid var(--line); font-size: 13.5px; }
+.status #status-text { flex: 1 1 420px; }
+.meter { flex: 0 1 180px; height: 4px; border-radius: 4px; background: var(--field); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #8D9FFF, #BC82F3, #FF6778); }
+.scenario { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+
+/* ——— Colours of the effects, per tone of the application under the halo ——— */
+[data-tone="light"] {
+  --hl: 141 159 255; --ai1: 141 159 255; --ai2: 188 130 243; --ai3: 255 103 120; --ai4: 255 186 113;
+  --u1: 95 111 255; --u2: 163 91 234; --u3: 240 80 106; --u4: 242 154 59; --veil: 255 255 255;
+  --a-tint: .24; --a-band: .08; --a-sweep: .32; --a-soft: .32; --a-low: .42; --a-iris: .22; --a-ring: .75;
+  --native: 0 110 255; --a-native: .26; --native-off: 0 0 0; --a-native-off: .09; --ink-rgb: 0 0 0;
+}
+[data-tone="dark"] {
+  --hl: 150 166 255; --ai1: 160 175 255; --ai2: 201 155 255; --ai3: 255 129 147; --ai4: 255 201 140;
+  --u1: 150 166 255; --u2: 201 155 255; --u3: 255 129 147; --u4: 255 201 140; --veil: 30 31 34;
+  --a-tint: .28; --a-band: .07; --a-sweep: .36; --a-soft: .34; --a-low: .40; --a-iris: .26; --a-ring: .8;
+  --native: 80 160 255; --a-native: .34; --native-off: 255 255 255; --a-native-off: .13; --ink-rgb: 255 255 255;
+}
+.fx, .mk, .nat { position: absolute; pointer-events: none; }
+.nat.on { background: rgb(var(--native) / var(--a-native)); }
+.nat.off { background: rgb(var(--native-off) / var(--a-native-off)); }
+
+/* Menu open: the three levels, still. */
+.fx-boxline { border-radius: 9px; box-shadow: 0 0 0 1px rgb(var(--hl) / calc(.6 * var(--k-sel))), 0 0 0 4px rgb(var(--hl) / calc(.12 * var(--k-sel))); }
+.fx-band { border-radius: 4px; background: rgb(var(--hl) / calc(var(--a-band) * var(--k-sel))); }
+.fx-xtint { border-radius: 3px; background: rgb(var(--hl) / calc(var(--a-tint) * var(--k-sel))); }
+.fx-xring { border-radius: 4px; box-shadow: 0 0 0 1.5px rgb(var(--hl) / calc(.85 * var(--k-sel))); }
+.fx-xunder { border-radius: 2px; background: rgb(var(--hl) / calc(.95 * var(--k-sel))); }
+
+/* Work: the text box. */
+@property --ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.fx-aurora { border-radius: 10px; }
+.fx-aurora .ring { position: absolute; inset: -1px; border-radius: 11px; padding: 1.5px; background: conic-gradient(from var(--ang), rgb(var(--ai1)), rgb(var(--ai2)), rgb(var(--ai3)), rgb(var(--ai4)), rgb(var(--ai1))); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: aurora calc(4.5s / var(--speed)) linear infinite; }
+.fx-aurora .glow { position: absolute; inset: 0; filter: blur(9px); opacity: calc(.7 * var(--k-work)); }
+.fx-aurora .glow .ring { inset: -4px; border-radius: 14px; padding: 6px; }
+@keyframes aurora { to { --ang: 360deg; } }
+
+/* Work: the exact text. The strip variables lay the lines end to end (src/halo/geometry.ts). */
+.fx-sweep { border-radius: 3px; background-image: linear-gradient(100deg, transparent 25%, rgb(var(--ai1) / calc(var(--a-sweep) * var(--k-work))) 40%, rgb(var(--ai2) / calc(var(--a-sweep) * var(--k-work))) 50%, rgb(var(--ai4) / calc(var(--a-sweep) * var(--k-work))) 60%, transparent 75%); background-size: calc(var(--total) * 3) 100%; background-repeat: no-repeat; background-position: var(--from) 0; animation: strip calc(1.6s / var(--speed)) cubic-bezier(.4,0,.2,1) infinite; }
+@keyframes strip { from { background-position: var(--from) 0; } to { background-position: var(--to) 0; } }
+.fx-veil { border-radius: 3px; background-image: linear-gradient(100deg, transparent 36%, rgb(var(--veil) / calc(.8 * var(--k-work))) 50%, transparent 64%), linear-gradient(rgb(var(--ai2) / calc(.08 * var(--k-work))), rgb(var(--ai2) / calc(.08 * var(--k-work)))); background-size: calc(var(--total) * 3) 100%, 100% 100%; background-repeat: no-repeat; background-position: var(--from) 0, 0 0; animation: strip2 calc(1.8s / var(--speed)) cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes strip2 { from { background-position: var(--from) 0, 0 0; } to { background-position: var(--to) 0, 0 0; } }
+.fx-edge { border-radius: 5px; animation: edge calc(2.4s / var(--speed)) linear infinite; }
+@keyframes edge { 0%, 100% { box-shadow: 0 0 0 1.5px rgb(var(--ai2) / .6), 0 0 10px rgb(var(--ai1) / .45); } 33% { box-shadow: 0 0 0 1.5px rgb(var(--ai3) / .55), 0 0 10px rgb(var(--ai4) / .45); } 66% { box-shadow: 0 0 0 1.5px rgb(var(--ai1) / .6), 0 0 10px rgb(var(--ai2) / .45); } }
+.fx-scan { background-image: linear-gradient(90deg, transparent, rgb(var(--u1)), rgb(var(--u2)), rgb(var(--u3)), rgb(var(--u4)), transparent); background-repeat: no-repeat; background-size: calc(var(--total) * .4) 2px; background-position: var(--sfrom) 100%; opacity: var(--k-work); animation: scan calc(1.6s / var(--speed)) cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes scan { from { background-position: var(--sfrom) 100%; } to { background-position: var(--sto) 100%; } }
+.fx-breathe { border-radius: 4px; background: linear-gradient(90deg, rgb(var(--ai1) / calc(var(--a-tint) * var(--k-work))), rgb(var(--ai2) / calc(var(--a-tint) * var(--k-work))), rgb(var(--ai3) / calc(var(--a-tint) * var(--k-work)))); background-size: var(--total) 100%; background-position: var(--start) 0; animation: breathe calc(2.2s / var(--speed)) cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes breathe { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+.fx-still { border-radius: 3px; background-image: linear-gradient(100deg, rgb(var(--ai1) / calc(var(--a-sweep) * .75 * var(--k-work))), rgb(var(--ai2) / calc(var(--a-sweep) * .75 * var(--k-work))) 50%, rgb(var(--ai4) / calc(var(--a-sweep) * .75 * var(--k-work)))); background-size: var(--total) 100%; background-repeat: no-repeat; background-position: var(--start) 0; }
+
+/* Arrival of the text. */
+.fx-wave { border-radius: 3px; background-image: linear-gradient(100deg, transparent 25%, rgb(var(--ai1) / .44) 40%, rgb(var(--ai2) / .48) 50%, rgb(var(--ai4) / .44) 60%, transparent 75%); background-size: calc(var(--total) * 3) 100%; background-repeat: no-repeat; background-position: var(--from) 0; animation: strip calc(1000ms / var(--speed)) cubic-bezier(.4,0,.2,1) 1 both; }
+.fx-flash { border-radius: 5px; background: rgb(var(--ai2) / .34); box-shadow: 0 0 16px rgb(var(--ai2) / .5); animation: flash calc(800ms / var(--speed)) cubic-bezier(.2,.7,.3,1) both; }
+@keyframes flash { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
+
+/* The changed words, held until the next action in the text. */
+.marks { position: absolute; inset: 0; transition: opacity calc(900ms / var(--speed)) ease-out; }
+.marks.leaving { opacity: 0; }
+.marks.in-fade .mk { animation: mk-in calc(260ms / var(--speed)) ease-out both; }
+.marks.in-wave .mk { animation: mk-in calc(420ms / var(--speed)) ease-out calc(380ms / var(--speed)) both; }
+.marks.in-flash .mk { animation: mk-in calc(200ms / var(--speed)) ease-out both; }
+@keyframes mk-in { from { opacity: 0; } }
+.mk-soft { border-radius: 3px; background: rgb(var(--hl) / calc(var(--a-soft) * var(--k-marks))); }
+.mk-low, .mk-under, .mk-iris { background-size: var(--total) 100%; background-position: calc(-1 * var(--off)) 0; background-repeat: no-repeat; }
+.mk-low { border-radius: 2px 5px 3px 4px; background-image: linear-gradient(90deg, rgb(var(--ai1) / calc(var(--a-low) * var(--k-marks))), rgb(var(--ai2) / calc(var(--a-low) * var(--k-marks))), rgb(var(--ai3) / calc(var(--a-low) * var(--k-marks))), rgb(var(--ai4) / calc(var(--a-low) * var(--k-marks)))); }
+.mk-under { border-radius: 2px; background-image: linear-gradient(90deg, rgb(var(--u1)), rgb(var(--u2)), rgb(var(--u3)), rgb(var(--u4))); opacity: var(--k-marks); }
+.mk-ring { border-radius: 5px; box-shadow: 0 0 0 1.25px rgb(var(--hl) / calc(var(--a-ring) * var(--k-marks))), 0 0 10px rgb(var(--ai2) / calc(.3 * var(--k-marks))); }
+.mk-iris { border-radius: 4px; background-image: linear-gradient(90deg, rgb(var(--ai1) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ai2) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ai3) / calc(var(--a-iris) * var(--k-marks))), rgb(var(--ai4) / calc(var(--a-iris) * var(--k-marks)))); box-shadow: 0 0 12px rgb(var(--ai2) / calc(.22 * var(--k-marks))); }
+.mk-bar { border-radius: 2px; background: linear-gradient(180deg, rgb(var(--u1)), rgb(var(--u2)), rgb(var(--u3))); opacity: var(--k-marks); }
+.mk-dot { border-radius: 1px; background: rgb(var(--hl) / calc(.6 * var(--k-marks))); }
+
+/* The Îlot above the halo, for context only (menu bubble, pill with its orb, check and Undo). */
+.pill { position: absolute; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border-radius: 999px; font: 500 12.5px/1 var(--os); white-space: nowrap; }
+[data-tone="light"] .pill { background: rgba(255,255,255,.88); color: #1d1d1f; box-shadow: 0 0 0 .5px rgba(0,0,0,.12), 0 6px 18px rgba(20,24,40,.16); }
+[data-tone="dark"] .pill { background: rgba(44,46,52,.92); color: #F2F2F4; box-shadow: 0 0 0 .5px rgba(255,255,255,.14), 0 8px 22px rgba(0,0,0,.5); }
+.pill.enter { animation: pill-in calc(220ms / var(--speed)) cubic-bezier(.2,.9,.3,1.15) both; }
+@keyframes pill-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } }
+.pill svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.pill .sep { width: 1px; height: 16px; background: currentColor; opacity: .18; }
+.pill .spark { width: 20px; height: 20px; margin-right: -4px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; color: #fff; background: conic-gradient(from 200deg, #8D9FFF, #BC82F3, #FF6778, #FFBA71, #8D9FFF); }
+.pill.orb { width: 44px; padding: 0; justify-content: center; }
+.pill.done .check path { stroke-dasharray: 22; stroke-dashoffset: 22; animation: draw calc(380ms / var(--speed)) ease-out forwards; }
+.pill.still .check path { animation: none; stroke-dashoffset: 0; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.pill .count { width: 16px; height: 16px; transform: rotate(-90deg); }
+.pill .count circle { fill: none; stroke: currentColor; stroke-width: 2; opacity: .5; stroke-dasharray: 43.98; animation: count calc(8s / var(--speed)) linear forwards; }
+@keyframes count { to { stroke-dashoffset: 43.98; } }
+.perle { position: relative; width: 14px; height: 14px; border-radius: 50%; overflow: hidden; isolation: isolate; box-shadow: 0 0 0 .5px rgb(var(--ink-rgb) / .12), 0 1px 6px rgb(188 130 243 / .45); animation: perle-b calc(2.4s / var(--speed)) cubic-bezier(.45,0,.55,1) infinite; }
+.perle::before { content: ""; position: absolute; inset: -30%; background: conic-gradient(from 0deg, #BC82F3, #F5B9EA, #8D9FFF, #AA6EEE, #FF6778, #FFBA71, #C686FF, #BC82F3); filter: blur(2.5px); animation: spin calc(3s / var(--speed)) linear infinite; }
+.perle::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 34% 28%, rgb(255 255 255 / .9) 0, rgb(255 255 255 / 0) 42%), radial-gradient(circle at 70% 80%, rgb(255 255 255 / 0) 50%, rgb(255 255 255 / .35) 100%); }
+@keyframes perle-b { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Reduced animations: every effect holds still (the work becomes a fixed iridescent veil). */
+:root[data-motion="reduced"] .fx, :root[data-motion="reduced"] .fx *, :root[data-motion="reduced"] .mk, :root[data-motion="reduced"] .pill, :root[data-motion="reduced"] .pill *, :root[data-motion="reduced"] .perle, :root[data-motion="reduced"] .perle::before { animation: none !important; }
+:root[data-motion="reduced"] .marks { transition: none; }
+:root[data-motion="reduced"] .pill.done .check path { stroke-dashoffset: 0; }
+
+/* ——— Choices, galleries, notes ——— */
+.block { display: flex; flex-direction: column; gap: 12px; }
+.block .head { display: flex; flex-direction: column; gap: 4px; max-width: 80ch; }
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 12px; align-items: start; }
+.card { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); min-width: 0; }
+.card h3 { display: flex; gap: 8px; align-items: baseline; }
+.card h3 .k { font: 600 11px/1 var(--mono); color: var(--accent); }
+.card .hint { font-size: 12.5px; color: var(--muted); }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { font-size: 12.5px; color: var(--muted); }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+.check input, .range input { accent-color: var(--accent); }
+.range { display: flex; align-items: center; gap: 10px; }
+.range input { flex: 1; min-width: 0; }
+.range output { font: 500 12px/1 var(--mono); min-width: 46px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+#copy-out { width: 100%; font: 12px/1.5 var(--mono); padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--field); color: var(--ink); resize: vertical; }
+.gtitle { margin-top: 6px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-family: var(--mono); }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; }
+.gcard { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); min-width: 0; }
+.gcard[data-picked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.gcard header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gcard h4 { font-size: 14px; font-weight: 600; }
+.gcard .note { font-size: 12.5px; color: var(--muted); }
+.gcard .pick[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 440px) { .pair { grid-template-columns: 1fr; } }
+.mini { position: relative; border-radius: 10px; padding: 10px; overflow: hidden; isolation: isolate; }
+.mini[data-tone="light"] { background: #FFFFFF; color: #1F1F1F; box-shadow: inset 0 0 0 1px rgba(0,0,0,.09); }
+.mini[data-tone="dark"] { background: #1E1F22; color: #E4E4E6; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+.mini .doc { padding: 8px 10px; font: 13px/1.55 var(--os); }
+.mini[data-tone="dark"] .doc { font: 12.5px/1.42 var(--code); }
+.needs { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 10px 18px; margin: 0; padding: 14px; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); }
+.needs dt { font-weight: 600; font-size: 13.5px; }
+.needs dd { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 80ch; }
+@media (max-width: 600px) { .needs { grid-template-columns: 1fr; } .needs dd { margin-bottom: 6px; } }
+</style>
+
+<div class="page">
+  <header class="top">
+    <span class="eyebrow">FlowTranslate 0.5.0 · prototypes à choisir</span>
+    <h1>Mise en valeur du texte</h1>
+    <p class="lede">Ce que tu verras sur le texte de l’autre application, du menu jusqu’après le remplacement. Tout est dessiné par-dessus, dans la fenêtre halo : les lettres de l’application ne changent jamais de couleur. Lance le parcours, compare le clair et le sombre, choisis une variante par étape, puis «&nbsp;Copier mon choix&nbsp;».</p>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Parcours">
+    <button class="btn primary" id="go" type="button">▶ Lancer le parcours</button>
+    <div class="steps" role="group" aria-label="Étapes : un clic fige l’étape">
+      <button type="button" data-phase="select">Sélection</button>
+      <button type="button" data-phase="menu">Menu ouvert</button>
+      <button type="button" data-phase="work">Travail</button>
+      <button type="button" data-phase="arrive">Arrivée</button>
+      <button type="button" data-phase="marks">Mots changés</button>
+    </div>
+    <span class="spacer"></span>
+    <div class="grp"><span>Vitesse</span><div class="seg" data-seg="speed" role="group" aria-label="Vitesse"></div></div>
+    <div class="grp"><span>Animations</span><div class="seg" data-seg="motion" role="group" aria-label="Animations"></div></div>
+    <span class="note-reduced" id="device-reduced" hidden>Ton appareil demande moins d’animations : le labo les montre quand même.</span>
+  </div>
+
+  <section class="stage" aria-label="Deux applications d’exemple">
+    <figure>
+      <figcaption><span>Clair · mail, texte proportionnel</span><span>interligne large</span></figcaption>
+      <div class="desk" data-tone="light" tabindex="0" aria-label="Mail d’exemple, clair. Une touche, un clic ou la molette dans le texte comptent comme ta prochaine action.">
+        <div class="win">
+          <div class="win-bar"><span class="dot"></span>Re : brouillon · Mail<span class="ctl" aria-hidden="true"><span>—</span><span>▢</span><span>✕</span></span></div>
+          <div class="fields"><div><b>À</b>Claire Morel</div><div><b>Objet</b>Re : brouillon</div></div>
+          <div class="doc"><div class="native"></div></div>
+        </div>
+        <div class="halo"></div><div class="ilot"></div>
+      </div>
+    </figure>
+    <figure>
+      <figcaption><span>Sombre · bloc-notes, chasse fixe</span><span>interligne serré</span></figcaption>
+      <div class="desk" data-tone="dark" tabindex="0" aria-label="Bloc-notes d’exemple, sombre. Une touche, un clic ou la molette dans le texte comptent comme ta prochaine action.">
+        <div class="win">
+          <div class="win-bar"><span class="dot"></span>brouillon.txt · Bloc-notes<span class="ctl" aria-hidden="true"><span>—</span><span>▢</span><span>✕</span></span></div>
+          <div class="menubar" aria-hidden="true"><span>Fichier</span><span>Modifier</span><span>Affichage</span></div>
+          <div class="doc"><div class="native"></div></div>
+        </div>
+        <div class="halo"></div><div class="ilot"></div>
+      </div>
+    </figure>
+  </section>
+
+  <div class="status" role="status" aria-live="polite"><span id="status-text"></span><span class="meter" aria-hidden="true"><i id="meter"></i></span></div>
+
+  <section class="scenario" aria-label="Scénario">
+    <div class="grp"><span>Sélection</span><div class="seg" data-seg="scenario.preset" role="group" aria-label="Sélection"></div></div>
+    <div class="grp"><span>Action</span><div class="seg" data-seg="scenario.action" role="group" aria-label="Action"></div></div>
+    <div class="grp"><span>Sélection de l’application sous le menu</span><div class="seg" data-seg="scenario.native" role="group" aria-label="Sélection de l’application sous le menu"></div></div>
+  </section>
+
+  <section class="block" aria-labelledby="t-choices">
+    <div class="head">
+      <h2 id="t-choices">Tes choix</h2>
+      <p class="muted">Une variante par étape. Le départ, ce sont mes propositions ; «&nbsp;actuel&nbsp;» marque ce que fait la 0.5.0 aujourd’hui.</p>
+    </div>
+    <div class="choices">
+      <div class="card">
+        <h3><span class="k">1</span>Menu ouvert : montrer la sélection</h3>
+        <p class="hint">Quand le menu prend le clavier, beaucoup d’applications grisent ou cachent leur sélection. FlowTranslate la redessine.</p>
+        <div class="field"><span>Niveaux montrés</span>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="c-menu-box" data-check="menu.box"> Zone de texte</label>
+            <label class="check"><input type="checkbox" id="c-menu-lines" data-check="menu.lines"> Lignes</label>
+            <label class="check"><input type="checkbox" id="c-menu-exact" data-check="menu.exact"> Texte exact</label>
+          </div>
+        </div>
+        <div class="field"><span>Texte exact</span><div class="seg" data-seg="menu.exactStyle" role="group" aria-label="Texte exact"></div></div>
+        <div class="field"><span>Intensité</span><div class="range"><input type="range" id="r-menu-k" data-range="menu.k" min="0.5" max="1.6" step="0.05" aria-label="Intensité du menu"><output data-out="menu.k"></output></div></div>
+      </div>
+      <div class="card">
+        <h3><span class="k">2</span>Travail : l’effet pendant que le modèle écrit</h3>
+        <div class="field"><span>Sur le texte exact</span><div class="seg" data-seg="work.fx" role="group" aria-label="Effet sur le texte exact"></div></div>
+        <div class="field"><span>Sur la zone de texte</span><div class="seg" data-seg="work.box" role="group" aria-label="Effet sur la zone de texte"></div></div>
+        <label class="check"><input type="checkbox" id="c-work-lines" data-check="work.lines"> Garder les lignes</label>
+        <div class="field"><span>Intensité</span><div class="range"><input type="range" id="r-work-k" data-range="work.k" min="0.5" max="1.6" step="0.05" aria-label="Intensité du travail"><output data-out="work.k"></output></div></div>
+      </div>
+      <div class="card">
+        <h3><span class="k">3</span>Arrivée du texte</h3>
+        <div class="field"><span>Au collage</span><div class="seg" data-seg="arrive" role="group" aria-label="Arrivée du texte"></div></div>
+        <p class="hint">Le texte est collé d’un coup : dans une autre application, les lettres ne peuvent pas apparaître mot à mot. L’effet accompagne le collage.</p>
+      </div>
+      <div class="card">
+        <h3><span class="k">4</span>Mots changés</h3>
+        <div class="field"><span>Dessin</span><div class="seg" data-seg="marks.fx" role="group" aria-label="Dessin des mots changés"></div></div>
+        <div class="field"><span>Durée au plus</span><div class="range"><input type="range" id="r-marks-max" data-range="marks.maxS" min="10" max="120" step="5" aria-label="Durée au plus"><output data-out="marks.maxS"></output></div></div>
+        <div class="field"><span>Intensité</span><div class="range"><input type="range" id="r-marks-k" data-range="marks.k" min="0.5" max="1.6" step="0.05" aria-label="Intensité des mots changés"><output data-out="marks.k"></output></div></div>
+        <p class="hint">Effacés à ta prochaine action dans le texte : frappe, clic, molette. Sans lien avec Undo, qui reste 8&nbsp;s dans la pilule.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="copy" type="button">Copier mon choix</button>
+      <button class="btn" id="reset" type="button">Revenir à mes propositions</button>
+      <span id="copy-note" class="muted small" role="status"></span>
+    </div>
+    <textarea id="copy-out" readonly hidden rows="8" aria-label="Mon choix, en texte"></textarea>
+  </section>
+
+  <section class="block" aria-labelledby="t-side">
+    <div class="head">
+      <h2 id="t-side">Côte à côte</h2>
+      <p class="muted">Les mêmes dessins en petit, en clair et en sombre, pour comparer d’un coup d’œil. «&nbsp;Choisir&nbsp;» règle l’étape correspondante.</p>
+    </div>
+    <h3 class="gtitle">Mots changés</h3>
+    <div class="gallery" id="g-marks"></div>
+    <h3 class="gtitle">Pendant le travail, sur le texte exact</h3>
+    <div class="gallery" id="g-work"></div>
+    <h3 class="gtitle">Pendant le travail, sur la zone de texte</h3>
+    <div class="gallery" id="g-box"></div>
+  </section>
+
+  <section class="block" aria-labelledby="t-needs">
+    <div class="head"><h2 id="t-needs">Ce que chaque étape demande à l’app</h2></div>
+    <dl class="needs">
+      <dt>Zone de texte</dt><dd>Le rectangle UI Automation de l’élément qui a le focus. Dans Word ou une page web, c’est toute la zone visible : l’aurore entoure alors la page entière.</dd>
+      <dt>Lignes</dt><dd>Chaque ligne entière touchée par la sélection (UI Automation, unité «&nbsp;ligne&nbsp;»), et non toute la largeur de la zone.</dd>
+      <dt>Menu ouvert</dt><dd>Aujourd’hui le halo n’apparaît qu’au travail. Il faudrait l’afficher dès la capture, pendant le menu.</dd>
+      <dt>Reflet sur les lettres</dt><dd>Un voile de la couleur du fond. Il faut connaître ce fond : le thème de Windows suffit sur un fond blanc ou noir franc ; sinon, lire quelques pixels sous la sélection, sans rien enregistrer.</dd>
+      <dt>Mots changés</dt><dd>Une surveillance côté Rust, séparée d’Undo et de la fermeture de l’overlay : frappe ou clic dans la fenêtre source, molette, déplacement de la fenêtre, 60&nbsp;s au plus.</dd>
+      <dt>Écartés</dt><dd>Recolorer les lettres ou les faire apparaître mot à mot : impossible dans une autre application. Un voile qui se lève sur le texte collé : le texte s’afficherait une fraction de seconde avant le voile.</dd>
+    </dl>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // The example text: each segment is [before, after]; a segment without `after` never changes.
+  const SEGS = [
+    [['Bonjour Claire,']],
+    [['merci', 'Merci'], [' pour tes '], ['remarque', 'remarques'], [' sur le brouillon, je les ai '], ['toute lu', 'toutes lues'], [' hier soir. Pour la '], ['reunion', 'réunion'], [' de jeudi, je propose qu’on commence par le budget '], ['gpu', 'GPU'], [' puis qu’on passe au planning du trimestre, '], ['sa', 'ça'], [' devrait nous laisser le temps de parler des serveurs.']],
+    [['Je t’envoie les chiffres demain matin, '], ['dit moi si il', 'dis-moi s’il'], [' manque quelque chose.']],
+  ];
+  const BEFORE = SEGS.map(p => p.map(s => s[0]).join(''));
+  const at = (p, text, end) => { const i = BEFORE[p].indexOf(text); return end ? i + text.length : i; };
+  const PRESETS = {
+    mots: { from: { p: 1, off: at(1, 'tes remarque') }, to: { p: 1, off: at(1, 'toute lu', true) }, tr: ['your notes on the draft; I read them all'] },
+    phrase: { from: { p: 1, off: at(1, 'Pour la reunion') }, to: { p: 1, off: at(1, 'des serveurs.', true) }, tr: ['For Thursday’s meeting, I suggest we start with the GPU budget and then move on to the quarter’s schedule, which should leave us time to talk about the servers.'] },
+    message: { from: { p: 1, off: 0 }, to: { p: 2, off: BEFORE[2].length }, tr: ['Thanks for your notes on the draft; I read them all last night. For Thursday’s meeting, I suggest we start with the GPU budget and then move on to the quarter’s schedule, which should leave us time to talk about the servers.', 'I’ll send you the figures tomorrow morning; let me know if anything is missing.'] },
+  };
+
+  const MENU_EXACT = [['tint', 'Calque'], ['ring', 'Contour'], ['under', 'Souligné']];
+  const WORK = [
+    ['sweep', 'Balayage de lumière', 'actuel', 'Une bande de lumière parcourt le texte, d’une ligne à la suivante.'],
+    ['veil', 'Reflet sur les lettres', '', 'Un voile couleur du fond passe sur les lettres : elles semblent scintiller. Demande de connaître le fond.'],
+    ['edge', 'Contour vivant', '', 'Un liseré qui change doucement de teinte autour de chaque ligne.'],
+    ['scan', 'Soulignement qui balaie', '', 'Un trait coloré court sous les lignes, comme la relecture d’Apple.'],
+    ['breathe', 'Lueur qui respire', '', 'Un fond irisé qui s’allume et s’éteint lentement.'],
+  ];
+  const BOX = [
+    ['none', 'Rien', 'actuel', 'Seulement le texte.'],
+    ['line', 'Liseré', '', 'Un trait fin autour de la zone de texte, comme au menu.'],
+    ['aurora', 'Aurore', '', 'Un contour aux couleurs d’Apple Intelligence qui tourne, avec sa lueur, comme Siri.'],
+  ];
+  const ARRIVE = [['fade', 'Fondu', 'actuel'], ['wave', 'Vague de lumière'], ['flash', 'Éclat']];
+  const MARKS = [
+    ['soft', 'Surligneur doux', 'actuel', 'Fond bleu pâle sur les mots, comme aujourd’hui.'],
+    ['low', 'Surligneur bas', '', 'Un trait de surligneur irisé sur le bas des mots : le haut des lettres reste net.'],
+    ['under', 'Soulignement dégradé', '', 'Un trait irisé sous les mots changés, rien sur les lettres, comme la relecture d’Apple.'],
+    ['ring', 'Contour', '', 'Un contour fin et une lueur autour des mots ; l’intérieur reste clair.'],
+    ['iris', 'Lueur irisée', '', 'Un fond irisé très léger avec une lueur douce.'],
+    ['bar', 'Barre de marge', '', 'Une barre dans la marge des lignes modifiées, comme les révisions de Word, et un trait discret sous les mots.'],
+  ];
+  const SEG_OPTIONS = {
+    'menu.exactStyle': MENU_EXACT, 'work.fx': WORK, 'work.box': BOX, arrive: ARRIVE, 'marks.fx': MARKS,
+    'scenario.preset': [['mots', 'Quelques mots'], ['phrase', 'Une phrase sur plusieurs lignes'], ['message', 'Tout le message']],
+    'scenario.action': [['fix', 'Fix grammar : mots changés'], ['translate', 'Translate : bloc entier']],
+    'scenario.native': [['gray', 'grisée'], ['hidden', 'cachée']],
+    speed: [[1, '1×'], [0.5, '½×'], [0.25, '¼×']],
+    motion: [['full', 'normales'], ['reduced', 'réduites']],
+  };
+  const DEFAULTS = {
+    menu: { box: true, lines: true, exact: true, exactStyle: 'tint', k: 1 },
+    work: { fx: 'sweep', box: 'aurora', lines: true, k: 1 },
+    arrive: 'wave',
+    marks: { fx: 'under', maxS: 60, k: 1 },
+    scenario: { preset: 'phrase', action: 'fix', native: 'gray' },
+    speed: 1, motion: 'full',
+  };
+  const STATUS = {
+    select: 'Ta sélection, telle que l’application la montre avant le raccourci.',
+    menu: 'Le menu a pris le clavier : l’application grise ou cache sa sélection, FlowTranslate la redessine.',
+    work: 'Le modèle travaille : l’effet reste par-dessus le texte, sans toucher aux lettres.',
+    arrive: 'Le texte est collé d’un coup ; l’effet accompagne son arrivée.',
+    marks: 'Mots changés : tenus jusqu’à ta prochaine action dans le texte (frappe, clic, molette).',
+  };
+  const ICON = {
+    fix: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 16 6-12 6 12"/><path d="M8 12h8"/><path d="m16 20 2 2 4-4"/></svg>',
+    translate: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>',
+  };
+
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const KEY = 'flowtranslate-mise-en-valeur-v1';
+  const merge = (base, over) => {
+    const out = clone(base);
+    if (!over || typeof over !== 'object') return out;
+    for (const k of Object.keys(base)) {
+      if (!(k in over)) continue;
+      if (base[k] && typeof base[k] === 'object') out[k] = merge(base[k], over[k]);
+      else if (typeof over[k] === typeof base[k]) out[k] = over[k];
+    }
+    return out;
+  };
+  let cfg = merge(DEFAULTS, (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } })());
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch { /* per-viewer convenience only */ } };
+  const getP = p => p.split('.').reduce((o, k) => o[k], cfg);
+  const setP = (p, v) => { const ks = p.split('.'); const last = ks.pop(); ks.reduce((o, k) => o[k], cfg)[last] = v; };
+
+  // Replaces the preset's range: Fix grammar changes the segments that lie wholly inside it,
+  // Translate puts the preset's translation in its place. Offsets are per paragraph.
+  function rewrite(preset, action) {
+    const { from, to } = preset;
+    if (action === 'translate') {
+      const prefix = BEFORE[from.p].slice(0, from.off), suffix = BEFORE[to.p].slice(to.off), tr = preset.tr;
+      const paras = [...BEFORE.slice(0, from.p), ...tr.map((t, i) => (i === 0 ? prefix : '') + t + (i === tr.length - 1 ? suffix : '')), ...BEFORE.slice(to.p + 1)];
+      const last = from.p + tr.length - 1;
+      const range = { from: { p: from.p, off: prefix.length }, to: { p: last, off: (tr.length === 1 ? prefix.length : 0) + tr[tr.length - 1].length } };
+      const marks = [];
+      for (let p = range.from.p; p <= range.to.p; p++) marks.push({ p, start: p === range.from.p ? range.from.off : 0, end: p === range.to.p ? range.to.off : paras[p].length });
+      return { paras, range, marks };
+    }
+    const paras = [], marks = [];
+    let end = to.off;
+    SEGS.forEach((segs, p) => {
+      let b = 0, a = 0, text = '';
+      const within = p >= from.p && p <= to.p, lo = p === from.p ? from.off : 0, hi = p === to.p ? to.off : Infinity;
+      for (const [before, after = before] of segs) {
+        const inside = within && after !== before && b >= lo && b + before.length <= hi;
+        const t = inside ? after : before;
+        if (inside) { marks.push({ p, start: a, end: a + after.length }); if (p === to.p) end += after.length - before.length; }
+        text += t; b += before.length; a += t.length;
+      }
+      paras.push(text);
+    });
+    return { paras, range: { from, to: { p: to.p, off: end } }, marks };
+  }
+  const result = () => rewrite(PRESETS[cfg.scenario.preset], cfg.scenario.action);
+
+  // Rectangles: merged per line, like the lines Rust sends to the halo (lot 5).
+  function mergeLines(list) {
+    const out = [];
+    for (const r of list.filter(r => r.width > .5 && r.height > .5).sort((a, b) => a.top - b.top || a.left - b.left)) {
+      const last = out[out.length - 1];
+      if (last && Math.abs((r.top + r.bottom) / 2 - (last.top + last.bottom) / 2) < Math.min(r.height, last.bottom - last.top) / 2) {
+        last.left = Math.min(last.left, r.left); last.right = Math.max(last.right, r.right);
+        last.top = Math.min(last.top, r.top); last.bottom = Math.max(last.bottom, r.bottom);
+      } else out.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+    }
+    return out;
+  }
+  const local = (r, o) => ({ x: r.left - o.left, y: r.top - o.top, w: r.right - r.left, h: r.bottom - r.top });
+  const pad = (r, dx, dy = 0) => ({ x: r.x - dx, y: r.y - dy, w: r.w + 2 * dx, h: r.h + 2 * dy });
+  const inset = (r, n) => ({ x: r.x + n, y: r.y + n, w: r.w - 2 * n, h: r.h - 2 * n });
+  const strip = rs => { let total = 0; const offs = rs.map(r => { const o = total; total += r.w; return o; }); return { total, offs }; };
+  const stripVars = (T, o) => ({ '--total': T + 'px', '--off': o + 'px', '--from': (-2.4 * T - o) + 'px', '--to': (0.4 * T - o) + 'px', '--sfrom': (-0.4 * T - o) + 'px', '--sto': (T - o) + 'px', '--start': (-o) + 'px' });
+
+  class Surface {
+    constructor(el) { this.el = el; this.doc = $('.doc', el); this.halo = $('.halo', el); this.ilot = $('.ilot', el); this.native = $('.native', el); this.key = ''; }
+    setText(paras) {
+      $$('p', this.doc).forEach(n => n.remove());
+      this.ps = paras.map(t => { const p = document.createElement('p'); p.textContent = t; this.doc.appendChild(p); return p; });
+    }
+    len(p) { return this.ps[p].textContent.length; }
+    rectsOf(p, s, e) {
+      const node = this.ps[p] && this.ps[p].firstChild;
+      if (!node || e <= s) return [];
+      const r = document.createRange(); r.setStart(node, s); r.setEnd(node, e);
+      return mergeLines([...r.getClientRects()]);
+    }
+    lines(range) {
+      const out = [];
+      for (let p = range.from.p; p <= range.to.p; p++) out.push(...this.rectsOf(p, p === range.from.p ? range.from.off : 0, p === range.to.p ? range.to.off : this.len(p)));
+      return out;
+    }
+    touching(p, rects) { return this.rectsOf(p, 0, this.len(p)).filter(l => rects.some(s => s.top < l.bottom - 1 && s.bottom > l.top + 1)); }
+    fullLines(range) {
+      const out = [];
+      for (let p = range.from.p; p <= range.to.p; p++) out.push(...this.touching(p, this.rectsOf(p, p === range.from.p ? range.from.off : 0, p === range.to.p ? range.to.off : this.len(p))));
+      return out;
+    }
+    markLines(marks) {
+      const seen = new Map();
+      for (const m of marks) for (const l of this.touching(m.p, this.rectsOf(m.p, m.start, m.end))) seen.set(Math.round(l.top), l);
+      return [...seen.values()];
+    }
+  }
+
+  function add(parent, cls, r, vars) {
+    const d = document.createElement('div');
+    d.className = cls;
+    if (r) Object.assign(d.style, { left: r.x + 'px', top: r.y + 'px', width: Math.max(0, r.w) + 'px', height: Math.max(0, r.h) + 'px' });
+    if (vars) for (const k in vars) d.style.setProperty(k, vars[k]);
+    parent.appendChild(d);
+    return d;
+  }
+
+  function drawMenu(layer, g, m) {
+    if (m.box) add(layer, 'fx fx-boxline', inset(g.box, 3));
+    if (m.lines) g.full.forEach(r => add(layer, 'fx fx-band', pad(r, 3, 1)));
+    if (m.exact) g.exact.forEach(r => add(layer, 'fx fx-x' + m.exactStyle, m.exactStyle === 'under' ? { x: r.x, y: r.y + r.h * .9, w: r.w, h: 2 } : pad(r, 1)));
+  }
+  function drawWork(layer, g, w, reduced) {
+    if (w.box === 'line') add(layer, 'fx fx-boxline', inset(g.box, 3));
+    if (w.box === 'aurora') add(layer, 'fx fx-aurora', inset(g.box, 3)).innerHTML = '<i class="ring"></i><i class="glow"><i class="ring"></i></i>';
+    if (w.lines) g.full.forEach(r => add(layer, 'fx fx-band', pad(r, 3, 1)));
+    if (w.fx === 'none') return;
+    const fx = reduced ? 'still' : w.fx;
+    const rects = g.exact.map(r => fx === 'edge' ? pad(r, 2, 1) : fx === 'scan' ? { x: r.x, y: r.y, w: r.w, h: r.h + 3 } : pad(r, 1));
+    const st = strip(rects);
+    rects.forEach((r, i) => add(layer, 'fx fx-' + fx, r, stripVars(st.total, st.offs[i])));
+  }
+  function markRect(fx, r) {
+    switch (fx) {
+      case 'low': return { x: r.x - 1, y: r.y + r.h * .5, w: r.w + 2, h: r.h * .42 };
+      case 'under': return { x: r.x, y: r.y + r.h * .88, w: r.w, h: 2 };
+      case 'ring': return pad(r, 2, 1);
+      case 'iris': return pad(r, 2);
+      case 'bar': return { x: r.x, y: r.y + r.h * .9, w: r.w, h: 1.5 };
+      default: return pad(r, 1);
+    }
+  }
+  function drawMarks(layer, g, fx, { arrive, leaving, reduced }) {
+    const anim = reduced ? null : arrive;
+    if (anim === 'wave') { const st = strip(g.whole); g.whole.forEach((r, i) => add(layer, 'fx fx-wave', pad(r, 1), stripVars(st.total, st.offs[i]))); }
+    const box = add(layer, 'marks' + (leaving ? ' leaving' : '') + (anim ? ' in-' + anim : ''));
+    const rects = g.marks.map(r => markRect(fx, r)), st = strip(rects);
+    rects.forEach((r, i) => add(box, 'mk mk-' + (fx === 'bar' ? 'dot' : fx), r, { '--total': st.total + 'px', '--off': st.offs[i] + 'px' }));
+    if (fx === 'bar') g.barLines.forEach(l => add(box, 'mk mk-bar', { x: l.x - 11, y: l.y + 1, w: 3, h: l.h - 2 }));
+    if (anim === 'flash') g.marks.forEach(r => add(layer, 'fx fx-flash', pad(r, 2, 1)));
+  }
+
+  // The Îlot, under the lines it follows, above them when there is no room below.
+  function pill(s, cls, html, lines, o, animate) {
+    const d = document.createElement('div');
+    d.className = 'pill ' + cls + (animate ? ' enter' : ' still');
+    d.innerHTML = html;
+    s.ilot.appendChild(d);
+    const w = d.offsetWidth, h = d.offsetHeight;
+    const last = lines[lines.length - 1] || { x: 24, y: 24, w: 0, h: 0 }, first = lines[0] || last;
+    let x = last.x, y = last.y + last.h + 8;
+    if (y + h > o.height - 6) y = first.y - h - 8;
+    x = Math.max(8, Math.min(x, o.width - w - 8));
+    Object.assign(d.style, { left: x + 'px', top: y + 'px' });
+    return d;
+  }
+  const bubbleHtml = () => cfg.scenario.action === 'translate' ? `${ICON.translate}<span>Translate</span><span class="sep"></span><span class="spark">✦</span>` : `${ICON.fix}<span>Fix grammar</span><span class="sep"></span><span class="spark">✦</span>`;
+  const DONE = '<svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Undo</span><svg class="count" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/></svg>';
+
+  // ——— The run: select → menu → work → arrive → marks → clean ———
+  const run = { phase: 'marks', pinned: 'marks', leaving: false, endedBy: '', holdEnd: 0, doneStart: 0, phaseStart: 0 };
+  const timers = new Set();
+  let holdTick = 0;
+  const later = (ms, fn) => { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); };
+  const after = (ms, fn) => later(ms / cfg.speed, fn);
+  const clearTimers = () => { timers.forEach(clearTimeout); timers.clear(); clearInterval(holdTick); holdTick = 0; };
+  const main = $$('.stage .desk').map(el => new Surface(el));
+
+  function drawMain(s) {
+    const res = result();
+    const before = run.phase === 'select' || run.phase === 'menu' || run.phase === 'work';
+    const key = (before ? 'b' : 'a') + cfg.scenario.preset + cfg.scenario.action;
+    if (s.key !== key) { s.setText(before ? BEFORE : res.paras); s.key = key; }
+    s.halo.replaceChildren(); s.ilot.replaceChildren(); s.native.replaceChildren();
+    const o = s.el.getBoundingClientRect(), dO = s.doc.getBoundingClientRect();
+    const L = r => local(r, o), box = L(dO);
+    const reduced = cfg.motion === 'reduced', fresh = performance.now() - run.phaseStart < 150;
+    if (before) {
+      const range = PRESETS[cfg.scenario.preset], sel = s.lines(range);
+      const nat = run.phase === 'select' ? 'on' : cfg.scenario.native === 'gray' ? 'off' : '';
+      if (nat) sel.forEach(r => add(s.native, 'nat ' + nat, local(r, dO)));
+      const g = { box, exact: sel.map(L), full: s.fullLines(range).map(L) };
+      if (run.phase === 'menu') { drawMenu(s.halo, g, cfg.menu); pill(s, 'bubble', bubbleHtml(), g.exact, o, fresh && !reduced); }
+      if (run.phase === 'work') { drawWork(s.halo, g, cfg.work, reduced); pill(s, 'orb', '<span class="perle"></span>', g.exact, o, fresh && !reduced); }
+      return;
+    }
+    const whole = s.lines(res.range).map(L);
+    if (run.phase === 'arrive' || run.phase === 'marks') {
+      const g = { box, whole, marks: res.marks.flatMap(m => s.rectsOf(m.p, m.start, m.end)).map(L), barLines: cfg.marks.fx === 'bar' ? s.markLines(res.marks).map(L) : [] };
+      drawMarks(s.halo, g, cfg.marks.fx, { arrive: run.phase === 'arrive' && fresh ? cfg.arrive : null, leaving: run.leaving, reduced });
+    }
+    if (run.doneStart) {
+      const d = pill(s, 'done', DONE, whole, o, fresh && !reduced);
+      $('.count circle', d).style.animationDelay = -(performance.now() - run.doneStart) + 'ms';
+    }
+  }
+  const renderAll = () => main.forEach(drawMain);
+
+  function setPhase(phase) {
+    run.phase = phase; run.leaving = false; run.phaseStart = performance.now();
+    renderAll(); syncSteps(); status();
+  }
+  function launch() {
+    clearTimers(); run.pinned = null; run.doneStart = 0;
+    setPhase('select');
+    after(800, () => setPhase('menu'));
+    after(2700, () => setPhase('work'));
+    after(5900, arrive);
+  }
+  function arrive() {
+    run.doneStart = performance.now();
+    run.holdEnd = performance.now() + cfg.marks.maxS * 1000;
+    setPhase('arrive');
+    after(1300, () => setPhase('marks'));
+    holdTick = setInterval(() => { if (performance.now() >= run.holdEnd) endMarks('timeout'); else status(); }, 250);
+    scheduleUndoEnd();
+  }
+  // Undo keeps its own 8 s, whatever happens to the marks.
+  function scheduleUndoEnd() {
+    if (!run.doneStart) return;
+    later(Math.max(0, run.doneStart + 8000 / cfg.speed - performance.now()) + 40, () => { run.doneStart = 0; renderAll(); });
+  }
+  function endMarks(by) {
+    if (run.leaving || !(run.phase === 'marks' || run.phase === 'arrive')) return;
+    clearTimers();
+    run.leaving = true; run.endedBy = by;
+    $$('.stage .marks').forEach(m => m.classList.add('leaving'));
+    $$('.stage .fx-wave, .stage .fx-flash').forEach(n => n.remove());
+    after(900, () => setPhase('clean'));
+    scheduleUndoEnd();
+    status();
+  }
+  function pin(phase) {
+    clearTimers(); run.pinned = phase; run.doneStart = 0;
+    if (phase === 'arrive') return loopArrive();
+    setPhase(phase);
+  }
+  function loopArrive() { setPhase('work'); after(900, () => { setPhase('arrive'); after(2300, loopArrive); }); }
+  function nextAction(kind) { if (run.phase === 'marks' || run.phase === 'arrive') endMarks(kind); }
+
+  function syncSteps() { $$('.steps [data-phase]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.phase === (run.pinned || run.phase)))); }
+  function status() {
+    const ph = run.phase;
+    let text = STATUS[ph] || '', meter = 0;
+    if ((ph === 'marks' || ph === 'arrive') && !run.leaving) {
+      if (run.pinned === 'marks') text += ' Figé pour comparer : tape, clique ou fais défiler dans le texte pour voir l’effacement.';
+      else if (run.pinned === 'arrive') text += ' En boucle.';
+      else {
+        const left = Math.max(0, run.holdEnd - performance.now());
+        text += ` ${cfg.marks.maxS} s au plus, encore ${Math.ceil(left / 1000)} s. Undo garde ses 8 s dans la pilule.`;
+        meter = left / (cfg.marks.maxS * 1000);
+      }
+    }
+    if (run.leaving || ph === 'clean') text = run.endedBy === 'timeout' ? `Surlignage retiré au bout de ${cfg.marks.maxS} s.` : `Surlignage retiré par ta prochaine action : ${run.endedBy}.`;
+    $('#status-text').textContent = text;
+    $('#meter').style.width = (meter * 100).toFixed(1) + '%';
+  }
+
+  for (const s of main) {
+    $('.win', s.el).addEventListener('mousedown', () => nextAction('clic'));
+    s.doc.addEventListener('wheel', () => nextAction('molette'), { passive: true });
+    s.el.addEventListener('keydown', e => { if (!['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) nextAction('frappe'); });
+  }
+
+  // ——— Galleries ———
+  const MINI_B = 'merci pour tes remarque sur le brouillon, je les ai toute lu hier soir.';
+  const MINI_A = 'Merci pour tes remarques sur le brouillon, je les ai toutes lues hier soir.';
+  const MINI_MARKS = ['Merci', 'remarques', 'toutes lues'].map(w => { const i = MINI_A.indexOf(w); return { p: 0, start: i, end: i + w.length }; });
+  const GALLERIES = [{ id: 'g-marks', path: 'marks.fx', list: MARKS, kind: 'marks' }, { id: 'g-work', path: 'work.fx', list: WORK, kind: 'work' }, { id: 'g-box', path: 'work.box', list: BOX, kind: 'box' }];
+  const minis = [];
+  const miniHtml = tone => `<div class="mini" data-tone="${tone}" aria-hidden="true"><div class="doc"><div class="native"></div></div><div class="halo"></div><div class="ilot"></div></div>`;
+  for (const g of GALLERIES) {
+    const host = document.getElementById(g.id);
+    for (const [v, name, tag, note] of g.list) {
+      const card = document.createElement('article');
+      card.className = 'gcard'; card.dataset.path = g.path; card.dataset.v = v;
+      card.innerHTML = `<header><h4>${name}${tag ? ` <small class="tag">${tag}</small>` : ''}</h4><button type="button" class="btn pick" aria-pressed="false">Choisir</button></header><p class="note">${note}</p><div class="pair">${miniHtml('light')}${miniHtml('dark')}</div>`;
+      $('.pick', card).addEventListener('click', () => change(g.path, v));
+      host.appendChild(card);
+      $$('.mini', card).forEach(el => minis.push(Object.assign(new Surface(el), { kind: g.kind, v })));
+    }
+  }
+  function drawMini(s) {
+    const text = s.kind === 'marks' ? MINI_A : MINI_B;
+    if (s.key !== text) { s.setText([text]); s.key = text; }
+    s.halo.replaceChildren();
+    const o = s.el.getBoundingClientRect(), L = r => local(r, o), box = L(s.doc.getBoundingClientRect()), reduced = cfg.motion === 'reduced';
+    if (s.kind === 'marks') {
+      const g = { box, whole: [], marks: MINI_MARKS.flatMap(m => s.rectsOf(0, m.start, m.end)).map(L), barLines: s.v === 'bar' ? s.markLines(MINI_MARKS).map(L) : [] };
+      drawMarks(s.halo, g, s.v, { arrive: null, leaving: false, reduced });
+    } else if (s.kind === 'work') {
+      drawWork(s.halo, { box, full: [], exact: s.lines({ from: { p: 0, off: 0 }, to: { p: 0, off: text.length } }).map(L) }, { fx: s.v, box: 'none', lines: false }, reduced);
+    } else {
+      const i = text.indexOf('toute lu'), exact = s.lines({ from: { p: 0, off: i }, to: { p: 0, off: i + 8 } }).map(L);
+      drawWork(s.halo, { box, full: [], exact }, { fx: 'none', box: s.v, lines: false }, reduced);
+      exact.forEach(r => add(s.halo, 'fx fx-xtint', pad(r, 1)));
+    }
+  }
+  const renderGalleries = () => minis.forEach(drawMini);
+
+  // ——— Controls ———
+  $$('[data-seg]').forEach(host => {
+    host.replaceChildren(...SEG_OPTIONS[host.dataset.seg].map(([v, label, tag]) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.dataset.v = String(v);
+      b.innerHTML = label + (tag ? ` <small class="tag">${tag}</small>` : '');
+      b.addEventListener('click', () => change(host.dataset.seg, v));
+      return b;
+    }));
+  });
+  $$('[data-check]').forEach(i => i.addEventListener('change', () => change(i.dataset.check, i.checked)));
+  $$('[data-range]').forEach(i => i.addEventListener('input', () => change(i.dataset.range, Number(i.value))));
+  function applyVars() {
+    const r = document.documentElement;
+    r.style.setProperty('--speed', String(cfg.speed));
+    r.style.setProperty('--k-sel', String(cfg.menu.k));
+    r.style.setProperty('--k-work', String(cfg.work.k));
+    r.style.setProperty('--k-marks', String(cfg.marks.k));
+    r.dataset.motion = cfg.motion;
+  }
+  function syncControls() {
+    $$('[data-seg]').forEach(host => { const v = String(getP(host.dataset.seg)); $$('button', host).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); });
+    $$('[data-check]').forEach(i => { i.checked = !!getP(i.dataset.check); });
+    $$('[data-range]').forEach(i => { i.value = String(getP(i.dataset.range)); });
+    $$('[data-out]').forEach(o => { const v = getP(o.dataset.out); o.textContent = o.dataset.out === 'marks.maxS' ? v + ' s' : '×' + Number(v).toFixed(2); });
+    $$('.gcard').forEach(c => { const on = String(getP(c.dataset.path)) === c.dataset.v; c.dataset.picked = String(on); const b = $('.pick', c); b.setAttribute('aria-pressed', String(on)); b.textContent = on ? 'Choisi' : 'Choisir'; });
+  }
+  function change(path, v) {
+    setP(path, v); save(); applyVars(); syncControls(); renderAll(); renderGalleries(); status();
+  }
+  const name = (list, v) => (list.find(o => o[0] === v) || [v, v])[1];
+  function summary() {
+    const levels = [cfg.menu.box && 'zone de texte', cfg.menu.lines && 'lignes', cfg.menu.exact && `texte exact (${name(MENU_EXACT, cfg.menu.exactStyle).toLowerCase()})`].filter(Boolean).join(' + ') || 'rien';
+    return [
+      'FlowTranslate · mise en valeur du texte · mon choix',
+      `1. Menu ouvert : ${levels} ; intensité ×${cfg.menu.k}`,
+      `2. Travail : ${name(WORK, cfg.work.fx)} ; zone de texte : ${name(BOX, cfg.work.box).toLowerCase()} ; lignes ${cfg.work.lines ? 'gardées' : 'retirées'} ; intensité ×${cfg.work.k}`,
+      `3. Arrivée : ${name(ARRIVE, cfg.arrive)}`,
+      `4. Mots changés : ${name(MARKS, cfg.marks.fx)} ; jusqu’à la prochaine action, ${cfg.marks.maxS} s au plus ; intensité ×${cfg.marks.k}`,
+      '',
+      JSON.stringify({ menu: cfg.menu, work: cfg.work, arrive: cfg.arrive, marks: cfg.marks }),
+    ].join('\n');
+  }
+  $('#copy').addEventListener('click', () => {
+    const text = summary(), out = $('#copy-out'), note = $('#copy-note');
+    out.value = text; out.hidden = false;
+    const fallback = () => { out.focus(); out.select(); note.textContent = 'Copie refusée ici : le texte est sélectionné, fais Ctrl+C.'; };
+    try { navigator.clipboard.writeText(text).then(() => { note.textContent = 'Copié. Colle-le dans la conversation.'; }, fallback); } catch { fallback(); }
+  });
+  $('#reset').addEventListener('click', () => { cfg = clone(DEFAULTS); save(); applyVars(); syncControls(); pin('marks'); renderGalleries(); $('#copy-note').textContent = ''; });
+  $('#go').addEventListener('click', launch);
+  $$('.steps [data-phase]').forEach(b => b.addEventListener('click', () => pin(b.dataset.phase)));
+  try { $('#device-reduced').hidden = !matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no media queries */ }
+
+  applyVars(); syncControls(); pin('marks'); renderGalleries();
+  let frame = 0;
+  const redraw = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => { renderAll(); renderGalleries(); }); };
+  new ResizeObserver(redraw).observe($('.page'));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(redraw);
+})();
+</script>
