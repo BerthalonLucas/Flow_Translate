@@ -1,0 +1,15 @@
+{
+  "mode": "quality",
+  "historyEnabled": false,
+  "autostart": false,
+  "language": "en",
+  "theme": "dark",
+  "defaultActionId": "correct",
+  "shortcutBindings": [
+    { "id": "menu", "kind": "menu", "shortcut": "Ctrl+Alt+Space", "actionId": "correct", "outputMode": "replace", "enabled": false }
+  ],
+  "profiles": {
+    "fast": { "endpoint": "http://127.0.0.1:8001/v1", "model": "flowtranslate-fast", "apiKeyDpapi": "" },
+    "quality": { "endpoint": "http://127.0.0.1:8002/v1", "model": "flowtranslate-quality", "apiKeyDpapi": "" }
+  }
+}

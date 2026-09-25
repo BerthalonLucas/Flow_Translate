@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { anchoredFloor, anchoredReserve, bottomReserve, glass, halo, menu, readerMetrics, shortMetrics } from '../src/layout';
-import type { Settings } from '../src/types';
+import { workingPillShape } from '../src/loaders/pill';
+import type { Settings, UiVersion } from '../src/types';
 
 declare global {
   interface Window {
@@ -31,15 +32,23 @@ declare global {
   }
 }
 
-async function openNativeFixture(page: Page) {
+// The fixture starts in the Îlot, as the app does; `ui: 'v4'` asks for the 0.4 journey.
+async function openNativeFixture(page: Page, ui: UiVersion = 'ilot') {
   await page.setViewportSize({ width: 640, height: 480 });
-  await page.route('**/?window=overlay&fixture=1', async route => {
+  await page.route('**/?window=overlay&fixture=1*', async route => {
     const response = await route.fetch();
     await route.fulfill({ response, body: (await response.text()).replace('/src/main.tsx', '/e2e/native-fixture.ts') });
   });
-  await page.goto('/?window=overlay&fixture=1');
+  await page.goto(`/?window=overlay&fixture=1${ui === 'v4' ? '&ui=v4' : ''}`);
+  await expect(page.locator('html')).toHaveAttribute('data-ui', ui);
   await expect(page.locator('.glass-overlay')).toBeVisible();
 }
+// The waiting pill of each journey, where the glass's action pill will stand: the Îlot's working
+// pill (lot 8, Perle by default) and the 0.4 spinner pill (uiVersion « v4 », asked for).
+const journeys = [
+  { ui: 'ilot', name: 'Îlot', pill: '.working-pill', width: workingPillShape('perle').width },
+  { ui: 'v4', name: '0.4', pill: '.wait-pill', width: glass.waitPill.width },
+] as const;
 const geometry = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').at(-1)?.args);
 const resizeCount = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'resize_overlay').length);
 const dimmingCalls = (page: Page) => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'overlay_dimming').map(call => call.args?.dimming));
@@ -50,9 +59,9 @@ const short = shortMetrics('normal');
 
 // Calibrated reading (2026-09-14): the waiting pill reserves the anchored window on the
 // glass footprint (Rust anchors `frame`, not the pill), the short result then publishes
-// the glass once at the same size; the menu only changes the surfaces.
-test('IPC fixture: the waiting pill reserves the anchored window on the glass footprint; a short result opens there and the menu never resizes it', async ({ page }) => {
-  await openNativeFixture(page);
+// the glass once at the same size; the menu only changes the surfaces. Both journeys.
+for (const { ui, name, pill, width } of journeys) test(`IPC fixture (${name}): the waiting pill reserves the anchored window on the glass footprint; a short result opens there and the menu never resizes it`, async ({ page }) => {
+  await openNativeFixture(page, ui);
   await expect.poll(async () => (await geometry(page))?.width).toBe(anchoredReserve.width);
   const initial = await geometry(page);
   expect(initial?.height).toBe(anchoredFloor);
@@ -60,15 +69,15 @@ test('IPC fixture: the waiting pill reserves the anchored window on the glass fo
   expect(initial?.frame).toEqual({ x: halo.x, y: halo.top + glass.overlap, width: glass.shortWidth, height: short.minHeight, radius: 0 });
   const waiting = await regionsOf(page);
   expect(waiting).toHaveLength(1);
-  expect(waiting[0]).toEqual({ x: halo.x + glass.shortWidth - glass.pillInset - glass.waitPill.width, y: halo.top, width: 60, height: 28, radius: 14 });
-  await expect(page.locator('.wait-pill')).toBeVisible();
+  expect(waiting[0]).toEqual({ x: halo.x + glass.shortWidth - glass.pillInset - width, y: halo.top, width, height: 28, radius: 14 });
+  await expect(page.locator(pill)).toBeVisible();
   await expect(page.locator('.translation-bubble')).toHaveCount(0);
   const initialCount = await resizeCount(page);
   await page.evaluate(async () => {
     for (let i = 0; i < 4; i++) await window.nativeFixture.delta('Bonjour, ');
   });
   // Buffered: nothing lands and nothing resizes before the stream ends.
-  await expect(page.locator('.wait-pill')).toBeVisible();
+  await expect(page.locator(pill)).toBeVisible();
   expect(await resizeCount(page)).toBe(initialCount);
   await page.evaluate(() => window.nativeFixture.done());
   await expect(page.locator('.translation-text')).toContainText('Bonjour, Bonjour, Bonjour, Bonjour,');
@@ -86,9 +95,9 @@ test('IPC fixture: the waiting pill reserves the anchored window on the glass fo
   expect(regions[1].x + regions[1].width).toBe(halo.x + glass.shortWidth - glass.pillInset);
   expect(opened!.frame).toEqual({ ...regions[0], radius: 0 });
   await expect(page.locator('.translation-bubble')).toHaveAttribute('data-reveal', 'true');
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   await expect(page.locator('.translation-bubble')).toHaveCSS('width', '380px');
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
   await expect(page.getByRole('menu')).toBeVisible();
   await expect(page.getByRole('menu')).toHaveCSS('transform', 'none');
   await expect.poll(async () => (await regionsOf(page)).length).toBe(3);
@@ -108,7 +117,7 @@ test('IPC fixture: the waiting pill reserves the anchored window on the glass fo
   await page.evaluate(() => window.nativeFixture.capture('second'));
   await expect.poll(async () => (await geometry(page))?.captureId).toBe('second');
   await expect.poll(async () => (await geometry(page))?.presentation).toBe('anchored');
-  await expect(page.locator('.wait-pill')).toBeVisible();
+  await expect(page.locator(pill)).toBeVisible();
 });
 
 test('IPC fixture: initial regions are sent even when hidden WebView rAF is suspended', async ({ page }) => {
@@ -135,13 +144,16 @@ test('IPC fixture: a new capture during exit cannot be closed by the old animati
   await openNativeFixture(page);
   await page.evaluate(async () => {
     await window.nativeFixture.dismissEvent('first');
-    await new Promise(resolve => setTimeout(resolve, 35));
+    // Mid-exit whatever the machine's load: a fixed 35 ms wait could outlast the 120 ms exit
+    // on a busy runner (1 failure in 12 before the Îlot branch). The capture lands on the first
+    // frame where the glass is closing.
+    await new Promise<void>(resolve => { const check = () => document.querySelector('.glass-overlay[data-closing="true"]') ? resolve() : requestAnimationFrame(check); check(); });
     await window.nativeFixture.capture('new-capture');
     await window.nativeFixture.delta('Nouvelle traduction');
     await window.nativeFixture.done();
   });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-capture-id', 'new-capture');
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'complete_overlay_dismiss').length)).toBe(0);
   await page.evaluate(() => window.nativeFixture.dismissEvent('first'));
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-closing', 'false');
@@ -150,9 +162,9 @@ test('IPC fixture: a new capture during exit cannot be closed by the old animati
 test('IPC fixture: a late copy acknowledgement never appears in the next capture', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); window.nativeFixture.holdCopy(); });
-  await page.getByRole('button', { name: 'Copier la traduction', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy translation', exact: true }).click();
   await page.evaluate(async () => { await window.nativeFixture.capture('next'); window.nativeFixture.releaseCopy(); await window.nativeFixture.delta('Autre traduction'); await window.nativeFixture.done(); });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   await expect(page.locator('.compact-feedback')).toHaveCount(0);
 });
 
@@ -169,8 +181,8 @@ test('IPC fixture: reduced motion closes immediately through the same handshake'
 // placed it; a `work-area` event (the cursor changed screen) resizes the band.
 // UI-025: the placement is decided at the capture on the source text, so a long selection
 // waits at the bottom from the start and the band is born there without any move.
-test('IPC fixture: a long source waits at the bottom from the start; the band is born there without a move', async ({ page }) => {
-  await openNativeFixture(page);
+for (const { ui, name, width } of journeys) test(`IPC fixture (${name}): a long source waits at the bottom from the start; the band is born there without a move`, async ({ page }) => {
+  await openNativeFixture(page, ui);
   await page.setViewportSize({ width: 1100, height: 800 });
   const reserve = bottomReserve(fixtureScreen, 'normal');
   await page.evaluate(() => window.nativeFixture.capture('long-source', 'Une longue sélection à traduire. '.repeat(40)));
@@ -178,7 +190,7 @@ test('IPC fixture: a long source waits at the bottom from the start; the band is
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-placement', 'bottom');
   const initial = await geometry(page);
   expect([initial!.width, initial!.height, initial!.presentation]).toEqual([reserve.width, reserve.height, 'bottom']);
-  expect((initial!.regions as Region[])[0]).toMatchObject({ x: (reserve.width - 60) / 2, width: 60, height: 28 });
+  expect((initial!.regions as Region[])[0]).toMatchObject({ x: (reserve.width - width) / 2, width, height: 28 });
   await page.evaluate(async () => { await window.nativeFixture.delta('Une longue traduction. '.repeat(120)); await window.nativeFixture.done(); });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'reader');
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-moving', 'false');
@@ -209,10 +221,10 @@ test('IPC fixture: a long result from a short source moves to the bottom as a re
   await expect(page.locator('.translation-copy')).toHaveCSS('line-height', '33px');
   await expect(page.locator('.translation-copy')).toHaveCSS('font-size', '22px');
   await expect(page.locator('.translation-bubble')).toHaveAttribute('data-reveal', 'true');
-  await expect(page.getByRole('button', { name: 'Épingler', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pin', exact: true })).toBeVisible();
   // The menu opens above the pill, inside the reserve, without a resize.
   const count = await resizeCount(page);
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
   await expect.poll(async () => (await regionsOf(page)).length).toBe(3);
   const withMenu = await regionsOf(page);
   expect(withMenu[2].y).toBeGreaterThanOrEqual(halo.top);
@@ -228,8 +240,8 @@ test('IPC fixture: a long result from a short source moves to the bottom as a re
   expect(count).toBeLessThan(await resizeCount(page));
 });
 
-test('IPC fixture: a capture without an anchor opens at the bottom at once, its waiting pill centred', async ({ page }) => {
-  await openNativeFixture(page);
+for (const { ui, name, width } of journeys) test(`IPC fixture (${name}): a capture without an anchor opens at the bottom at once, its waiting pill centred`, async ({ page }) => {
+  await openNativeFixture(page, ui);
   await page.evaluate(() => window.nativeFixture.unanchored('clip'));
   await expect.poll(async () => (await geometry(page))?.captureId).toBe('clip');
   const reserve = bottomReserve(fixtureScreen, 'normal');
@@ -237,7 +249,7 @@ test('IPC fixture: a capture without an anchor opens at the bottom at once, its 
   expect([initial!.width, initial!.height, initial!.presentation]).toEqual([reserve.width, reserve.height, 'bottom']);
   const regions = initial!.regions as Region[];
   expect(regions).toHaveLength(1);
-  expect(regions[0]).toMatchObject({ x: (reserve.width - 60) / 2, width: 60, height: 28 });
+  expect(regions[0]).toMatchObject({ x: (reserve.width - width) / 2, width, height: 28 });
   await page.evaluate(async () => { await window.nativeFixture.delta('Court.'); await window.nativeFixture.done(); });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'short');
   await expect.poll(async () => (await regionsOf(page))[0]?.width).toBe(glass.shortWidth);
@@ -266,68 +278,69 @@ async function openSettingsFixture(page: Page, fail = false) {
 
 test('IPC fixture: settings recover from load failure', async ({ page }) => {
   await openSettingsFixture(page, true);
-  await expect(page.getByRole('alert')).toContainText('réglages sont indisponibles');
-  await expect(page.getByText('Chargement des réglages…')).toHaveCount(0);
+  await expect(page.getByRole('alert')).toContainText('Settings are unavailable');
+  await expect(page.getByText('Loading settings…')).toHaveCount(0);
   await page.evaluate(() => window.nativeFixture.recoverSettings());
-  await page.getByRole('button', { name: 'Réessayer', exact: true }).click();
-  await expect(page.getByLabel('Profil par défaut')).toBeVisible();
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(page.getByLabel('Default profile')).toBeVisible();
 });
 
 test('IPC fixture: choices save immediately, checks never save, typing saves after a pause, close without translation', async ({ page }) => {
   await openSettingsFixture(page);
   expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'check_connection'))).toBe(false);
-  await expect(page.locator('.save-status')).toHaveText('Enregistré');
-  await page.getByRole('radio', { name: 'Rapide', exact: true }).first().click();
-  await expect(page.locator('.save-status')).toHaveText('Enregistré à l’instant');
-  await page.getByRole('radio', { name: 'Grande', exact: true }).click();
+  await expect(page.locator('.save-status')).toHaveText('Saved');
+  await page.getByRole('radiogroup', { name: 'Default profile', exact: true }).getByRole('radio', { name: 'Fast', exact: true }).click();
+  await expect(page.locator('.save-status')).toHaveText('Saved just now');
+  await page.getByRole('radio', { name: 'Large', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length)).toBe(2);
-  await page.getByRole('radio', { name: 'Lente', exact: true }).click();
+  await page.getByRole('radio', { name: 'Slow', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings)).toMatchObject({ autoClose: 'slow', textSize: 'large' });
-  await page.getByRole('button', { name: 'Connexion', exact: true }).click();
+  await page.getByRole('button', { name: 'Connection', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings)).toMatchObject({ mode: 'fast', connectionExpanded: true });
   const fast = page.locator('.profile').nth(1);
-  await expect(fast).toContainText('Rapide');
+  await expect(fast).toContainText('Fast');
   const saves = await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length);
-  await fast.getByRole('button', { name: 'Vérifier', exact: true }).click();
-  await expect(fast.getByRole('status')).toHaveText('Échec de connexion');
+  await fast.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(fast.getByRole('status')).toHaveText('Connection failed');
   await expect(fast).toContainText('Serveur indisponible.');
   await page.evaluate(() => window.nativeFixture.connect());
-  await fast.getByRole('button', { name: 'Vérifier', exact: true }).click();
-  await expect(fast.getByRole('status')).toContainText('Connecté ·');
+  await fast.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(fast.getByRole('status')).toContainText('Connected ·');
   expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').length)).toBe(saves);
-  await page.getByLabel('Modèle', { exact: true }).nth(1).fill('changed-model');
-  await expect(fast.getByRole('status')).toHaveText('Non vérifié');
+  await page.getByLabel('Model', { exact: true }).nth(1).fill('changed-model');
+  await expect(fast.getByRole('status')).toHaveText('Not checked');
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'save_settings').at(-1)?.args?.settings)).toMatchObject({ profiles: { fast: { model: 'changed-model' } } });
   const calls = await page.evaluate(() => window.nativeFixture.calls);
   expect(calls.filter(call => call.command === 'check_connection').map(call => call.args?.mode)).toEqual(['fast', 'fast']);
   expect(calls.some(call => call.command === 'translate')).toBe(false);
-  await page.getByRole('button', { name: 'Fermer', exact: true }).click();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'plugin:window|close'))).toBe(true);
 });
 
 test('IPC fixture: a refused shortcut keeps the previous combination and explains the conflict', async ({ page }) => {
   await openSettingsFixture(page);
   await page.evaluate(() => window.nativeFixture.refuseShortcut());
-  await page.getByRole('button', { name: 'Modifier', exact: true }).click();
+  await page.getByRole('button', { name: 'Change', exact: true }).click();
   await page.keyboard.press('Control+Alt+Y');
-  await expect(page.getByRole('alert')).toHaveText('Le raccourci est déjà utilisé ou indisponible.');
-  await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'T']);
-  await expect(page.locator('.save-status')).toHaveText('Enregistré');
+  // Rust's French refusal, said in the interface's language (lot 13).
+  await expect(page.getByRole('alert')).toHaveText('Another app already uses this shortcut, or Windows refused it. Choose another one.');
+  await expect(page.locator('.keycaps kbd')).toHaveText(['Ctrl', 'Alt', 'Space']);
+  await expect(page.locator('.save-status')).toHaveText('Saved');
 });
 
 test('IPC fixture: server error offers retry and settings through existing menu', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(() => window.nativeFixture.error());
-  await expect(page.locator('.error-copy')).toContainText('Réglages et Réessayer');
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Réglages', exact: true }).click();
+  await expect(page.locator('.error-copy')).toContainText('Settings and Try again');
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
   expect(await page.evaluate(() => window.nativeFixture.calls.some(call => call.command === 'open_settings'))).toBe(true);
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Réessayer', exact: true }).click();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Try again', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'translate').length)).toBe(2);
   await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
 });
 
 // Reading budget over the bridge: the glass dims once the budget is spent and unheld
@@ -336,7 +349,7 @@ test('IPC fixture: server error offers retry and settings through existing menu'
 test('IPC fixture: the budget spent, the glass dims and frees Escape; the native proximity brings it back, its departure closes it', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(async () => { await window.nativeFixture.settings({ autoClose: 'fast' }); await window.nativeFixture.delta('Bonjour.'); await window.nativeFixture.done(); });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   // 5 s × 0.7 = 3.5 s without any visit.
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-dimming', 'true', { timeout: 5000 });
   await expect.poll(() => dimmingCalls(page)).toEqual([true]);
@@ -356,7 +369,7 @@ test('IPC fixture: the budget spent, the glass dims and frees Escape; the native
 test('IPC fixture: the native cursor proximity holds the glass past its budget', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(async () => { await window.nativeFixture.settings({ autoClose: 'fast' }); await window.nativeFixture.near(true); await window.nativeFixture.delta('Bonjour.'); await window.nativeFixture.done(); });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   await page.waitForTimeout(4500);
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-dimming', 'false');
   expect(await dimmingCalls(page)).toEqual([]);
@@ -367,7 +380,7 @@ test('IPC fixture: the native cursor proximity holds the glass past its budget',
 test('IPC fixture: « Jamais » keeps the glass without any budget', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(async () => { await window.nativeFixture.settings({ autoClose: 'never' }); await window.nativeFixture.delta('Bonjour.'); await window.nativeFixture.done(); });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   await page.waitForTimeout(6000);
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-dimming', 'false');
   expect(await dimmingCalls(page)).toEqual([]);
@@ -379,7 +392,7 @@ test('IPC fixture: a long path breaks after its separators in the result and in 
   await page.evaluate(path => window.nativeFixture.capture('path', `The binary is at ${path}`), path);
   await expect.poll(async () => (await geometry(page))?.captureId).toBe('path');
   await page.evaluate(async path => { await window.nativeFixture.delta(`Le binaire est dans ${path}`); await window.nativeFixture.done(); }, path);
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   const text = page.locator('.translation-text');
   await expect(text).toHaveText(`Le binaire est dans ${path}`);
   await expect(text).toHaveCSS('overflow-wrap', 'break-word');
@@ -399,8 +412,8 @@ test('IPC fixture: a long path breaks after its separators in the result and in 
   });
   expect(await wrapped('.translation-text')).toMatchObject({ split: 0 });
   expect((await wrapped('.translation-text')).lines).toBeGreaterThan(1);
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Afficher l’original', exact: true }).click();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Show original', exact: true }).click();
   await expect(page.locator('.original-copy')).toContainText('The binary is at');
   expect(await page.locator('.original-copy wbr').count()).toBe(10);
   expect(await wrapped('.original-copy')).toMatchObject({ split: 0 });
@@ -411,17 +424,17 @@ test('IPC fixture: a long path breaks after its separators in the result and in 
 test('IPC fixture: « Remplacer » waits for the second capture step and ignores a stale target', async ({ page }) => {
   await openNativeFixture(page);
   await page.evaluate(async () => { await window.nativeFixture.delta('Bonjour'); await window.nativeFixture.done(); });
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Replace', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.evaluate(() => window.nativeFixture.target('someone-else', true));
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Replace', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.evaluate(() => window.nativeFixture.target('first', true));
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Replace', exact: true })).toBeEnabled();
 });
 
 test('IPC fixture: a notice without a glass is a lone pill that never asks for a window resize', async ({ page }) => {
@@ -463,15 +476,16 @@ test('IPC fixture: a replayed result is complete at once, at the bottom, and ask
   await page.evaluate(() => window.nativeFixture.replay('again'));
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-capture-id', 'again');
   await expect(page.locator('.translation-text')).toHaveText('Exemple de sélection');
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
   expect(await translations()).toBe(before);
   await expect.poll(async () => (await geometry(page))?.presentation).toBe('bottom');
 });
 
 
-// 0.4.0 — « Remplacer la sélection »: the pill alone, then the paste reported by Rust.
-test('IPC fixture: a replace capture keeps the pill alone, shows the check once pasted, then leaves by itself', async ({ page }) => {
-  await openNativeFixture(page);
+// 0.4.0 — « Remplacer la sélection »: the pill alone, then the paste reported by Rust. A direct
+// shortcut under the Îlot does the same in its working pill.
+for (const { ui, name, pill } of journeys) test(`IPC fixture (${name}): a replace capture keeps the pill alone, shows the check once pasted, then leaves by itself`, async ({ page }) => {
+  await openNativeFixture(page, ui);
   await page.evaluate(async () => {
     await window.nativeFixture.captureReplace('replace-1', 'Texte avec des fotes');
     await window.nativeFixture.delta('Texte avec des fautes');
@@ -479,9 +493,9 @@ test('IPC fixture: a replace capture keeps the pill alone, shows the check once 
   });
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'pending');
   await expect(page.locator('.translation-bubble')).toHaveCount(0);
-  await expect(page.locator('.wait-pill')).toBeVisible();
+  await expect(page.locator(pill)).toBeVisible();
   await page.evaluate(() => window.nativeFixture.deliver('applied'));
-  await expect(page.locator('.wait-pill')).toHaveAttribute('data-done', 'true');
+  await expect(page.locator(pill)).toHaveAttribute('data-done', 'true');
   await expect(page.locator('.translation-bubble')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'dismiss_overlay').length)).toBe(1);
   expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'replace_result').length)).toBe(0);
@@ -498,9 +512,9 @@ test('IPC fixture: a refused paste opens the glass with the result, the reason a
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'short');
   await expect(page.locator('.translation-text')).toContainText('Texte avec des fautes');
   await expect(page.locator('.compact-feedback')).toContainText('Le collage a été bloqué');
-  await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Replace', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'dismiss_overlay').length)).toBe(0);
 });
 
@@ -516,7 +530,7 @@ test('IPC fixture: a paste that never reports back opens the glass after three s
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'pending');
   await page.clock.runFor(700);
   await expect(page.locator('.glass-overlay')).toHaveAttribute('data-form', 'short');
-  await expect(page.locator('.compact-feedback')).toContainText('n’a pas répondu');
+  await expect(page.locator('.compact-feedback')).toContainText('did not answer');
 });
 
 test('IPC fixture: the manual « Remplacer » keeps the native refusal and disables another attempt', async ({ page }) => {
@@ -527,11 +541,11 @@ test('IPC fixture: the manual « Remplacer » keeps the native refusal and disab
     await window.nativeFixture.done();
     window.nativeFixture.refuseReplace();
   });
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Remplacer', exact: true }).click();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Replace', exact: true }).click();
   await expect(page.locator('.compact-feedback')).toContainText('La fenêtre source a changé');
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: 'Remplacer', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Replace', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.nativeFixture.calls.filter(call => call.command === 'replace_result').length)).toBe(1);
 });
 

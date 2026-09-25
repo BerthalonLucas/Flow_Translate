@@ -14,18 +14,18 @@ use windows::Win32::{
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+            GetAsyncKeyState, GetKeyboardLayout, MapVirtualKeyExW, MapVirtualKeyW, SendInput, ToUnicodeEx, HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
             KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
-            VK_INSERT, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
+            VK_INSERT, VK_LBUTTON, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
         },
         Shell::{DefSubclassProc, SetWindowSubclass},
         WindowsAndMessaging::{
             GetClassNameW, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongPtrW, GetWindowRect,
-            GetWindowThreadProcessId, IsWindowVisible, GUITHREADINFO,
+            GetWindowThreadProcessId, IsWindow, IsWindowVisible, GUITHREADINFO,
             SetForegroundWindow, SetWindowLongPtrW, ShowWindow, SW_HIDE,
-            SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_NCACTIVATE, WM_NCPAINT,
-            WS_CAPTION, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+            SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, MA_NOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_MOUSEACTIVATE, WM_NCACTIVATE, WM_NCPAINT,
+            WS_CAPTION, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
             WS_SYSMENU, WS_THICKFRAME,
         },
     },
@@ -42,6 +42,9 @@ const SILENT_FRAME_SUBCLASS: usize = 0x466C_6F77;
 // lParam = -1 (« do not repaint ») painted nothing. This subclass is installed after Tao's,
 // so comctl32 calls it first: WM_NCACTIVATE still reaches Tao (activation bookkeeping,
 // Focused events) but DefWindowProc receives -1; the non-client paint requests are dropped.
+// Once an Îlot choice is made (lot 3), a click must never activate the overlay again:
+// WM_MOUSEACTIVATE answers MA_NOACTIVATE while `set_no_activate` holds (the click itself
+// still reaches the WebView).
 unsafe extern "system" fn silent_frame_proc(
     hwnd: HWND,
     msg: u32,
@@ -54,6 +57,7 @@ unsafe extern "system" fn silent_frame_proc(
         match msg {
             WM_NCACTIVATE => DefSubclassProc(hwnd, msg, wparam, LPARAM(-1)),
             WM_NCPAINT | WM_NCUAHDRAWCAPTION | WM_NCUAHDRAWFRAME => LRESULT(0),
+            WM_MOUSEACTIVATE if no_activate_applies(hwnd.0 as isize) => LRESULT(MA_NOACTIVATE as isize),
             _ => DefSubclassProc(hwnd, msg, wparam, lparam),
         }
     }
@@ -159,33 +163,366 @@ static ESCAPE_PENDING:AtomicBool=AtomicBool::new(false);
 static OVERLAY_VISIBLE:AtomicBool=AtomicBool::new(false);
 static SOURCE:AtomicIsize=AtomicIsize::new(0);
 static OVERLAY:AtomicIsize=AtomicIsize::new(0);
-static CAPSULE:AtomicIsize=AtomicIsize::new(0);
+/// The Îlot menu is open and waits for a choice (lot 3): its keys belong to the frontend.
+static MENU_OPEN:AtomicBool=AtomicBool::new(false);
+/// The overlay held the foreground for this menu (review of da-ilot, n°2 and n°6): the keys of
+/// the source are then the user's again, the hook's fallback only serves a refused activation.
+static MENU_FOCUSED:AtomicBool=AtomicBool::new(false);
+/// Where the hook hands the menu keys it took from the source (a worker emits them).
+static MENU_KEYS:OnceLock<std::sync::mpsc::SyncSender<MenuKey>>=OnceLock::new();
+/// After a paste the Îlot can undo (lot 9): the source window whose keys end that offer. A
+/// key that is not ours reaching it (the user types, or another tool does) is reported once.
+static UNDO_WATCH:AtomicBool=AtomicBool::new(false);
+static UNDO_SOURCE:AtomicIsize=AtomicIsize::new(0);
+static TYPED:OnceLock<std::sync::mpsc::SyncSender<Typed>>=OnceLock::new();
+/// Our own synthetic keys carry this in `dwExtraInfo`: the hook tells them from the user's.
+pub const OUR_KEYS:usize=0x464C_5754;
 
-pub fn escape_scope(source:isize,overlay:isize,capsule:isize){
-    SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);CAPSULE.store(capsule,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
+/// A key that reached the source while Undo was offered: the user's own Ctrl+Z (the
+/// application undoes the paste itself), or any other key.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum Typed{UndoKey,Other}
+pub fn arm_undo_watch(source:isize){UNDO_SOURCE.store(source,Ordering::Relaxed);UNDO_WATCH.store(source!=0,Ordering::Release);}
+pub fn disarm_undo_watch(){UNDO_WATCH.store(false,Ordering::Release);}
+
+/// Whether a key down ends the Undo offer: not one of ours, not a lone modifier or lock
+/// key, not Escape (it closes the pill; it writes nothing).
+pub fn ends_undo(vk:u32,extra:usize)->bool{
+    extra!=OUR_KEYS&&!matches!(vk,0x10..=0x12|0x14|0x1B|0x5B|0x5C|0x90|0x91|0xA0..=0xA5)
+}
+
+/// The marks of a paste (« mise en valeur », Lucas 25/09) last until the user's next action:
+/// a key that is not ours, a click or the wheel anywhere but on our pill. Keys come through
+/// the keyboard hook; clicks and the wheel through a mouse hook that only lives while the
+/// marks show, on its own thread (a low-level mouse hook sees every move: none stays
+/// installed for nothing). The action is reported once per arming.
+static MARKS_WATCH:AtomicBool=AtomicBool::new(false);
+static MARKS_OVERLAY:AtomicIsize=AtomicIsize::new(0);
+static MARKS_ENDED:OnceLock<std::sync::mpsc::SyncSender<()>>=OnceLock::new();
+/// The mouse hook's thread: its id while it pumps, `MOUSE_STARTING` while it starts or stops.
+static MOUSE_THREAD:AtomicU32=AtomicU32::new(0);
+const MOUSE_STARTING:u32=u32::MAX;
+
+/// Whether a key down ends the marks: not one of ours, not a lone modifier or lock key.
+/// Escape counts, unlike for Undo: the user acts in the text's window.
+pub fn ends_marks(vk:u32,extra:usize)->bool{
+    extra!=OUR_KEYS&&!matches!(vk,0x10..=0x12|0x14|0x5B|0x5C|0x90|0x91|0xA0..=0xA5)
+}
+
+/// Whether a low-level mouse message ends the marks: a button pressed, the wheel turned.
+pub fn ends_marks_mouse(message:u32)->bool{
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN,WM_MBUTTONDOWN,WM_MOUSEHWHEEL,WM_MOUSEWHEEL,WM_RBUTTONDOWN,WM_XBUTTONDOWN};
+    [WM_LBUTTONDOWN,WM_RBUTTONDOWN,WM_MBUTTONDOWN,WM_XBUTTONDOWN,WM_MOUSEWHEEL,WM_MOUSEHWHEEL].contains(&message)
+}
+
+/// Where the marks' end is reported: `on_action` runs on its own thread.
+pub fn install_marks_watch(on_action:impl Fn()+Send+'static)->Result<(),String>{
+    let (sender,receiver)=std::sync::mpsc::sync_channel::<()>(1);
+    let _=MARKS_ENDED.set(sender);
+    std::thread::Builder::new().name("marks-watch".into()).spawn(move||{for ()in receiver{on_action();}})
+        .map(|_|()).map_err(|_|"La fin des marques est indisponible.".to_string())
+}
+
+/// The marks show: their watch starts, the keys at once, the mouse once its thread runs.
+/// `overlay`: our pill, whose clicks leave the marks alone.
+pub fn arm_marks_watch(overlay:isize){
+    MARKS_OVERLAY.store(overlay,Ordering::Relaxed);
+    MARKS_WATCH.store(true,Ordering::Release);
+    if MOUSE_THREAD.compare_exchange(0,MOUSE_STARTING,Ordering::AcqRel,Ordering::Acquire).is_ok()
+        &&std::thread::Builder::new().name("marks-mouse".into()).spawn(watch_mouse).is_err(){
+        MOUSE_THREAD.store(0,Ordering::Release);
+    }
+}
+
+/// The marks left or hid: nothing is reported any more and the mouse hook goes away.
+pub fn disarm_marks_watch(){
+    use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW,WM_QUIT};
+    MARKS_WATCH.store(false,Ordering::Release);
+    let thread=MOUSE_THREAD.load(Ordering::Acquire);
+    if thread!=0&&thread!=MOUSE_STARTING{unsafe{let _=PostThreadMessageW(thread,WM_QUIT,WPARAM(0),LPARAM(0));}}
+}
+
+fn marks_action(){
+    if MARKS_WATCH.swap(false,Ordering::AcqRel){if let Some(ended)=MARKS_ENDED.get(){let _=ended.try_send(());}}
+}
+
+/// The mouse hook's thread: installs the hook, pumps until `disarm_marks_watch` posts
+/// WM_QUIT, removes it. Armed again meanwhile, it starts over rather than leave the marks
+/// without their mouse. The hook itself stays minimal: one comparison, and for a press or
+/// the wheel, the window under the pointer (our thread owns no window: nothing is sent).
+fn watch_mouse(){
+    use windows::Win32::{Foundation::HINSTANCE,System::Threading::GetCurrentThreadId,UI::WindowsAndMessaging::{CallNextHookEx,GetAncestor,GetMessageW,PeekMessageW,SetWindowsHookExW,UnhookWindowsHookEx,WindowFromPoint,GA_ROOT,MSG,MSLLHOOKSTRUCT,PM_NOREMOVE,WH_MOUSE_LL}};
+    unsafe extern "system" fn mouse(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&MARKS_WATCH.load(Ordering::Acquire)&&ends_marks_mouse(wparam.0 as u32){
+            let point=unsafe{(*(lparam.0 as *const MSLLHOOKSTRUCT)).pt};
+            let overlay=MARKS_OVERLAY.load(Ordering::Relaxed);
+            if overlay==0||unsafe{GetAncestor(WindowFromPoint(point),GA_ROOT)}.0 as isize!=overlay{marks_action();}
+        }
+        unsafe{CallNextHookEx(None,code,wparam,lparam)}
+    }
+    unsafe{
+        let thread=GetCurrentThreadId();
+        let mut message=MSG::default();
+        // The queue exists before the id is published: a WM_QUIT posted right then is kept.
+        let _=PeekMessageW(&mut message,None,0,0,PM_NOREMOVE);
+        let module=GetModuleHandleW(None).ok().map(|module|HINSTANCE(module.0));
+        loop{
+            let Ok(hook)=SetWindowsHookExW(WH_MOUSE_LL,Some(mouse),module,0) else{MOUSE_THREAD.store(0,Ordering::Release);return};
+            MOUSE_THREAD.store(thread,Ordering::Release);
+            if MARKS_WATCH.load(Ordering::Acquire){while GetMessageW(&mut message,None,0,0).0>0{}}
+            let _=UnhookWindowsHookEx(hook);
+            MOUSE_THREAD.store(MOUSE_STARTING,Ordering::Release);
+            if MARKS_WATCH.load(Ordering::Acquire){continue;}
+            MOUSE_THREAD.store(0,Ordering::Release);
+            // Armed again right then: start over, unless that arming started a thread itself.
+            if !(MARKS_WATCH.load(Ordering::Acquire)&&MOUSE_THREAD.compare_exchange(0,MOUSE_STARTING,Ordering::AcqRel,Ordering::Acquire).is_ok()){return;}
+        }
+    }
+}
+
+pub fn escape_scope(source:isize,overlay:isize){
+    SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);
 }
 pub fn close_escape_scope(){OVERLAY_VISIBLE.store(false,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+/// Whether a scope (Escape, or the menu's) is open.
+pub fn escape_open()->bool{OVERLAY_VISIBLE.load(Ordering::Acquire)}
 pub fn take_escape()->bool{ESCAPE_PENDING.swap(false,Ordering::AcqRel)}
 pub fn handle(window:&WebviewWindow)->isize{window.hwnd().map(|h|h.0 as isize).unwrap_or(0)}
 
-pub fn install_escape_hook()->Result<(),String>{
+/// Opens or closes the menu's scope. A menu binding opens it at its press, before the capture
+/// is even taken (review of da-ilot, n°4 and n°7): a key typed right after the shortcut never
+/// lands in the source, Rust holds it until the capture has its id. The stored capture opens
+/// it again for its own source. While it is open the hook never swallows Escape for itself:
+/// the WebView owns it when the overlay has the foreground, the frontend receives it as a
+/// `menu-key` otherwise.
+pub fn set_menu_open(open:bool,source:isize,overlay:isize){
+    if open{SOURCE.store(source,Ordering::Relaxed);OVERLAY.store(overlay,Ordering::Relaxed);OVERLAY_VISIBLE.store(true,Ordering::Release);ESCAPE_PENDING.store(false,Ordering::Release);}
+    MENU_FOCUSED.store(false,Ordering::Release);
+    MENU_OPEN.store(open,Ordering::Release);
+}
+pub fn menu_open()->bool{MENU_OPEN.load(Ordering::Acquire)}
+/// The overlay took the foreground for the open menu (`focus_overlay`, or seen by the hook).
+pub fn set_menu_focused(){if MENU_OPEN.load(Ordering::Acquire){MENU_FOCUSED.store(true,Ordering::Release);}}
+pub fn menu_focused()->bool{MENU_FOCUSED.load(Ordering::Acquire)}
+/// Whether the hook takes a menu key from the source: only while the menu waits over a source
+/// that kept the foreground because the overlay never got it. Once the overlay had it, the
+/// user coming back to the source (a click in the document) means he left the menu: his keys
+/// are his (the context watcher then closes the menu).
+pub fn takes_source_keys(fg:isize,source:isize,focused:bool)->bool{fg!=0&&fg==source&&!focused}
+
+/// A menu key taken from the source window while the overlay could not hold the
+/// foreground: `key` is written like `KeyboardEvent.key` (« Enter », « Tab », « ArrowDown »,
+/// « 3 », « f »…), `shift` tells Shift+Tab from Tab. Never a text: one key at a time, and
+/// only the keys the menu understands.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct MenuKey{pub key:String,pub shift:bool}
+
+/// Which keys the menu takes from the source (the keyboard fallback of lot 3). `other`:
+/// Ctrl, Alt or Windows is held, and then nothing is taken (shortcuts, Alt+Tab and AltGr
+/// stay the user's). Digits are the physical keys 1 to 6 of the row or the keypad, so
+/// AZERTY needs no Shift; letters are read through the active layout, without modifier,
+/// and only when they are letters. `letter` is only called for the letter keys.
+pub fn menu_key(vk:u32,shift:bool,other:bool,letter:impl FnOnce()->Option<char>)->Option<String>{
+    if other{return None;}
+    Some(match vk{
+        0x0D=>"Enter".into(),
+        0x1B=>"Escape".into(),
+        0x09=>"Tab".into(),
+        0x25=>"ArrowLeft".into(),
+        0x26=>"ArrowUp".into(),
+        0x27=>"ArrowRight".into(),
+        0x28=>"ArrowDown".into(),
+        0x31..=0x36=>char::from_u32(vk).map(String::from)?,
+        0x61..=0x66=>char::from_u32(vk-0x30).map(String::from)?,
+        0x41..=0x5A if !shift=>letter().filter(|c|c.is_alphabetic()).map(String::from)?,
+        _=>return None,
+    })
+}
+
+/// The character a key gives with the layout of the window `fg` (no modifier), read
+/// without touching any keyboard state (ToUnicodeEx flag 4, Windows 10 1607+).
+fn layout_letter(vk:u32,scan:u32,fg:isize)->Option<char>{
+    unsafe{
+        let thread=GetWindowThreadProcessId(HWND(fg as *mut _),None);
+        character(vk,scan,&[0u8;256],GetKeyboardLayout(thread))
+    }
+}
+
+unsafe fn character(vk:u32,scan:u32,state:&[u8;256],layout:HKL)->Option<char>{
+    let mut buffer=[0u16;8];
+    let count=unsafe{ToUnicodeEx(vk,scan,state,&mut buffer,4,Some(layout))};
+    // A dead key answers -1 with its own character in the buffer.
+    let length=match count{1=>1,-1=>1,_=>return None};
+    char::decode_utf16(buffer[..length].iter().copied()).next()?.ok().filter(|c|!c.is_control())
+}
+
+fn held(key:VIRTUAL_KEY)->bool{unsafe{GetAsyncKeyState(key.0 as i32)<0}}
+
+/// The character Ctrl+Alt (+Shift) + `vk` types with `layout` (lot 4): on a layout with
+/// AltGr (AZERTY, QWERTZ…) Windows reads Ctrl+Alt as AltGr, so a global shortcut on that
+/// chord steals a character (€, {, @…). None when the chord types nothing. A dead key
+/// counts: it is a character the user types.
+pub fn altgr_character_in(layout:HKL,vk:u32,shift:bool)->Option<char>{
+    let mut state=[0u8;256];
+    for key in [VK_CONTROL,VK_LCONTROL,VK_MENU,VK_LMENU]{state[key.0 as usize]=0x80;}
+    if shift{for key in [VK_SHIFT,VK_LSHIFT]{state[key.0 as usize]=0x80;}}
+    unsafe{
+        let scan=MapVirtualKeyExW(vk,MAPVK_VK_TO_VSC,Some(layout));
+        character(vk,scan,&state,layout)
+    }
+}
+
+/// `altgr_character_in` with the layout of the foreground window's thread (the settings
+/// window, whose recorder asks while the user types the chord).
+pub fn altgr_character(vk:u32,shift:bool)->Option<char>{
+    unsafe{
+        let thread=GetWindowThreadProcessId(GetForegroundWindow(),None);
+        altgr_character_in(GetKeyboardLayout(thread),vk,shift)
+    }
+}
+
+/// The keyboard layouts loaded in this session (a test looks for a known one; nothing is
+/// ever loaded for it).
+#[cfg(test)]
+fn keyboard_layouts()->Vec<HKL>{
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayoutList;
+    unsafe{
+        let count=GetKeyboardLayoutList(None);
+        if count<=0{return Vec::new();}
+        let mut layouts=vec![HKL::default();count as usize];
+        let filled=GetKeyboardLayoutList(Some(&mut layouts));
+        layouts.truncate(filled.max(0) as usize);
+        layouts
+    }
+}
+
+/// The executable name of the process that owns a window, lowercase (« notepad.exe »):
+/// the key of the Îlot's memory per application (lot 4). Never a path, never a title.
+pub fn process_name(handle:isize)->Option<String>{
+    use windows::Win32::{Foundation::CloseHandle,System::Threading::{OpenProcess,QueryFullProcessImageNameW,PROCESS_NAME_WIN32,PROCESS_QUERY_LIMITED_INFORMATION}};
+    if handle==0{return None;}
+    let mut pid=0u32;
+    unsafe{GetWindowThreadProcessId(HWND(handle as *mut _),Some(&mut pid));}
+    if pid==0{return None;}
+    let mut path=[0u16;1024];
+    let mut length=path.len() as u32;
+    unsafe{
+        let process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid).ok()?;
+        let read=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,windows::core::PWSTR(path.as_mut_ptr()),&mut length);
+        let _=CloseHandle(process);
+        read.ok()?;
+    }
+    executable_name(&String::from_utf16_lossy(&path[..length as usize]))
+}
+
+/// The file name of an executable path, lowercase; None for anything implausible.
+pub fn executable_name(path:&str)->Option<String>{
+    let name=path.rsplit(['\\','/']).next()?.trim().to_lowercase();
+    (!name.is_empty()&&name.len()<=260&&!name.chars().any(char::is_control)).then_some(name)
+}
+
+/// The low-level keyboard hook, on the main thread. It stays minimal (LowLevelHooksTimeout):
+/// a few atomics, the async state of the modifiers and, for a letter while the menu is
+/// open over the source, one ToUnicodeEx. `on_menu_key` runs on its own thread.
+pub fn install_keyboard_hook(on_menu_key:impl Fn(MenuKey)+Send+'static,on_typed:impl Fn(Typed)+Send+'static)->Result<(),String>{
     use windows::Win32::{Foundation::{HINSTANCE,LRESULT,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::{CallNextHookEx,SetWindowsHookExW,KBDLLHOOKSTRUCT,WH_KEYBOARD_LL,WM_KEYDOWN,WM_SYSKEYDOWN,WM_KEYUP,WM_SYSKEYUP}};
     unsafe extern "system" fn keyboard(code:i32,wparam:WPARAM,lparam:LPARAM)->LRESULT{
+        if code>=0&&MARKS_WATCH.load(Ordering::Acquire){
+            let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let message=wparam.0 as u32;
+            if (message==WM_KEYDOWN||message==WM_SYSKEYDOWN)&&ends_marks(key.vkCode,key.dwExtraInfo){marks_action();}
+        }
+        if code>=0&&UNDO_WATCH.load(Ordering::Acquire){
+            let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let message=wparam.0 as u32;
+            if (message==WM_KEYDOWN||message==WM_SYSKEYDOWN)&&ends_undo(key.vkCode,key.dwExtraInfo)&&foreground()==UNDO_SOURCE.load(Ordering::Relaxed){
+                UNDO_WATCH.store(false,Ordering::Release);
+                let undo=key.vkCode==0x5A&&held(VK_CONTROL)&&!held(VK_MENU)&&!held(VK_SHIFT)&&!held(VK_LWIN)&&!held(VK_RWIN);
+                if let Some(typed)=TYPED.get(){let _=typed.try_send(if undo{Typed::UndoKey}else{Typed::Other});}
+            }
+        }
         if code>=0&&OVERLAY_VISIBLE.load(Ordering::Acquire){
             let key=unsafe{&*(lparam.0 as *const KBDLLHOOKSTRUCT)};
+            let message=wparam.0 as u32;
             let fg=foreground();
-            if key.vkCode==VK_ESCAPE.0 as u32&&fg!=0&&[SOURCE.load(Ordering::Relaxed),OVERLAY.load(Ordering::Relaxed),CAPSULE.load(Ordering::Relaxed)].contains(&fg){
-                if [WM_KEYDOWN,WM_SYSKEYDOWN].contains(&(wparam.0 as u32)){ESCAPE_PENDING.store(true,Ordering::Release);return LRESULT(1);}
-                if [WM_KEYUP,WM_SYSKEYUP].contains(&(wparam.0 as u32)){return LRESULT(1);}
+            if MENU_OPEN.load(Ordering::Acquire){
+                if fg!=0&&fg==OVERLAY.load(Ordering::Relaxed){MENU_FOCUSED.store(true,Ordering::Release);}
+                // The source kept the foreground (the overlay could not take it, or not yet):
+                // the menu keys go to the frontend, down and up, and never reach the source.
+                if takes_source_keys(fg,SOURCE.load(Ordering::Relaxed),MENU_FOCUSED.load(Ordering::Acquire)){
+                    let other=held(VK_CONTROL)||held(VK_MENU)||held(VK_LWIN)||held(VK_RWIN);
+                    let shift=held(VK_SHIFT);
+                    if let Some(name)=menu_key(key.vkCode,shift,other,||layout_letter(key.vkCode,key.scanCode,fg)){
+                        if message==WM_KEYDOWN||message==WM_SYSKEYDOWN{
+                            if let Some(keys)=MENU_KEYS.get(){let _=keys.try_send(MenuKey{key:name,shift});}
+                        }
+                        return LRESULT(1);
+                    }
+                }
+                // With the overlay in front, every key (Escape included) belongs to the WebView.
+            }else if key.vkCode==VK_ESCAPE.0 as u32&&fg!=0&&[SOURCE.load(Ordering::Relaxed),OVERLAY.load(Ordering::Relaxed)].contains(&fg){
+                if [WM_KEYDOWN,WM_SYSKEYDOWN].contains(&message){ESCAPE_PENDING.store(true,Ordering::Release);return LRESULT(1);}
+                if [WM_KEYUP,WM_SYSKEYUP].contains(&message){return LRESULT(1);}
             }
         }
         unsafe{CallNextHookEx(None,code,wparam,lparam)}
     }
+    let (sender,receiver)=std::sync::mpsc::sync_channel::<MenuKey>(32);
+    let _=MENU_KEYS.set(sender);
+    std::thread::Builder::new().name("menu-keys".into()).spawn(move||{for key in receiver{on_menu_key(key);}})
+        .map_err(|_|"La gestion du clavier est indisponible.".to_string())?;
+    let (sender,receiver)=std::sync::mpsc::sync_channel::<Typed>(4);
+    let _=TYPED.set(sender);
+    std::thread::Builder::new().name("undo-watch".into()).spawn(move||{for typed in receiver{on_typed(typed);}})
+        .map_err(|_|"La gestion du clavier est indisponible.".to_string())?;
     unsafe{
         let module=GetModuleHandleW(None).map_err(|_|"Module clavier indisponible.".to_string())?;
         SetWindowsHookExW(WH_KEYBOARD_LL,Some(keyboard),Some(HINSTANCE(module.0)),0).map_err(|_|"La gestion d’Échap est indisponible.".to_string())?;
     }
     Ok(())
+}
+
+// After an Îlot choice (lot 3) the overlay is a pill the user may click (Undo, later) and
+// must never take the focus back from the source: WS_EX_NOACTIVATE on the window and
+// MA_NOACTIVATE in `silent_frame_proc`. The hit tester rewrites the extended style every
+// few milliseconds, so it re-applies the bit from these atomics (Tao may rebuild it too).
+static NO_ACTIVATE:AtomicBool=AtomicBool::new(false);
+static NO_ACTIVATE_WINDOW:AtomicIsize=AtomicIsize::new(0);
+
+fn no_activate_applies(handle:isize)->bool{
+    handle!=0&&NO_ACTIVATE.load(Ordering::Acquire)&&NO_ACTIVATE_WINDOW.load(Ordering::Relaxed)==handle
+}
+
+fn with_no_activate(handle:isize,style:isize)->isize{
+    if handle==0||NO_ACTIVATE_WINDOW.load(Ordering::Relaxed)!=handle{return style;}
+    let bit=WS_EX_NOACTIVATE.0 as isize;
+    if NO_ACTIVATE.load(Ordering::Acquire){style|bit}else{style&!bit}
+}
+
+/// Raises (after a choice) or lowers (at the next capture) the overlay's no-activate state.
+pub fn set_no_activate(handle:isize,on:bool){
+    if handle==0{return;}
+    NO_ACTIVATE_WINDOW.store(handle,Ordering::Relaxed);
+    NO_ACTIVATE.store(on,Ordering::Release);
+    let hwnd=HWND(handle as *mut _);
+    unsafe{
+        let current=GetWindowLongPtrW(hwnd,GWL_EXSTYLE);
+        let next=with_no_activate(handle,current);
+        if next!=current{SetWindowLongPtrW(hwnd,GWL_EXSTYLE,next);}
+    }
+}
+
+/// Gives the foreground back to `target` (the source window). Allowed while this process
+/// owns the foreground (the overlay has it); true when `target` holds it afterwards.
+pub fn give_foreground(target:isize)->bool{
+    if target==0{return false;}
+    let hwnd=HWND(target as *mut _);
+    unsafe{
+        if !IsWindow(Some(hwnd)).as_bool(){return false;}
+        if GetForegroundWindow()==hwnd{return true;}
+        let _=SetForegroundWindow(hwnd);
+        GetForegroundWindow()==hwnd
+    }
 }
 pub fn belongs_to(window: &WebviewWindow, handle: isize) -> bool {
     window.hwnd().is_ok_and(|h| h.0 as isize == handle)
@@ -311,7 +648,7 @@ pub fn monitor_info(handle: isize) -> (Rect, f64) {
     )
 }
 
-// The overlay and the capsule never go through Tao's show()/hide(): show() uses
+// The overlay and the halo never go through Tao's show()/hide(): show() uses
 // SetWindowPos directly so the source keeps its focus, and any later Tao
 // visibility diff rebuilds the styles with WS_CAPTION | WS_SYSMENU (Tao 0.35
 // `WindowFlags::apply_diff`), which DWM then paints as a « FlowTranslate » title.
@@ -423,6 +760,8 @@ unsafe fn pass_through(hwnd: HWND, on: bool) {
     unsafe {
         let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let next = if on { current | mask } else { current & !mask };
+        // The same read-modify-write keeps the overlay's no-activate bit (lot 3) in step.
+        let next = with_no_activate(hwnd.0 as isize, next);
         if next != current {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
         }
@@ -480,6 +819,10 @@ pub fn start_hit_tester(app: AppHandle, overlay: isize, on_screen: impl Fn(&AppH
     });
 }
 
+pub fn is_visible(window: &WebviewWindow) -> bool {
+    window.hwnd().is_ok_and(|hwnd| unsafe { IsWindowVisible(HWND(hwnd.0)).as_bool() })
+}
+
 pub fn hide(window: &WebviewWindow) -> Result<(), String> {
     let hwnd = window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?;
     unsafe { let _ = ShowWindow(HWND(hwnd.0), SW_HIDE); }
@@ -487,8 +830,10 @@ pub fn hide(window: &WebviewWindow) -> Result<(), String> {
 }
 
 /// Brings the already visible overlay to the foreground so the WebView receives
-/// the keyboard, then re-establishes the frameless silhouette.
-pub fn activate(window: &WebviewWindow) -> Result<(), String> {
+/// the keyboard (the Îlot menu), then re-establishes the frameless silhouette. Returns
+/// whether the overlay really holds the foreground afterwards: Windows may refuse the
+/// switch (foreground lock) and SetForegroundWindow's own answer is no proof of it.
+pub fn activate(window: &WebviewWindow) -> Result<bool, String> {
     let handle = window
         .hwnd()
         .map_err(|_| "Fenêtre indisponible.".to_string())?
@@ -498,13 +843,19 @@ pub fn activate(window: &WebviewWindow) -> Result<(), String> {
         if !IsWindowVisible(hwnd).as_bool() {
             return Err("La capture n’est plus active.".into());
         }
-        // The request comes from a click in the capsule, so this process owns the
-        // foreground and Windows grants the switch; a refusal is not an error.
+        // The request follows the shortcut this process just received, so Windows
+        // normally grants the switch; a refusal is reported, not raised.
         if GetForegroundWindow() != hwnd {
             let _ = SetForegroundWindow(hwnd);
         }
     }
-    repair_handle(handle)
+    repair_handle(handle)?;
+    let deadline = Instant::now() + Duration::from_millis(40);
+    loop {
+        if unsafe { GetForegroundWindow() } == hwnd { return Ok(true); }
+        if Instant::now() >= deadline { return Ok(false); }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Sizes, moves and shows the window (frameless, topmost, never activated). Only called
@@ -535,6 +886,50 @@ pub fn place(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
     Ok(())
 }
 
+/// The halo (lot 6) draws over other windows and never takes a click, the focus, a taskbar
+/// button or an Alt+Tab entry (a tool window, without the WS_EX_APPWINDOW Tao gives every
+/// top-level window). Its styles are set once and never touched by the hit tester (it
+/// publishes no surface); `place_below` re-applies them should Tao have rebuilt them.
+const HALO_EX_STYLE: isize = (WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
+
+unsafe fn halo_style_hwnd(hwnd: HWND) {
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = (current | HALO_EX_STYLE) & !(WS_EX_APPWINDOW.0 as isize);
+        if next != current {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+        }
+    }
+}
+
+pub fn halo_style(window: &WebviewWindow) -> Result<(), String> {
+    let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
+    unsafe { halo_style_hwnd(hwnd) };
+    Ok(())
+}
+
+/// Places the window at `rect` (physical) right under `above` in the z-order (the top of
+/// the topmost band when `above` is 0) and shows it without activating it. It moves while
+/// still hidden first: on a screen of another DPI, Tao resizes the window when
+/// WM_DPICHANGED arrives, and the second call restores the exact rectangle.
+pub fn place_below(window: &WebviewWindow, rect: Rect, above: isize) -> Result<(), String> {
+    let hwnd = HWND(window.hwnd().map_err(|_| "Fenêtre indisponible.".to_string())?.0);
+    let (x, y) = (rect.x.round() as i32, rect.y.round() as i32);
+    let (width, height) = (rect.width.round().max(1.) as i32, rect.height.round().max(1.) as i32);
+    unsafe {
+        halo_style_hwnd(hwnd);
+        let mut flags = SWP_NOACTIVATE | SWP_NOZORDER;
+        if strip_chrome_hwnd(hwnd) {
+            flags |= SWP_FRAMECHANGED;
+        }
+        SetWindowPos(hwnd, None, x, y, width, height, flags).map_err(|_| "Placement indisponible.".to_string())?;
+        let after = if above != 0 { HWND(above as *mut _) } else { HWND_TOPMOST };
+        SetWindowPos(hwnd, Some(after), x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            .map_err(|_| "Placement indisponible.".to_string())?;
+    }
+    Ok(())
+}
+
 /// Publishes the surfaces the hit tester reads. The pass-through state is set at once:
 /// the cursor is almost always outside the glass when it appears, and a surface that
 /// just vanished under the pointer must stop catching clicks before the next poll.
@@ -545,16 +940,6 @@ pub fn set_regions(window: &WebviewWindow, regions: &[SurfaceRegion], scale: f64
     unsafe { pass_through(hwnd, !cursor_inside(hwnd, &surface)) };
     remember_surface(h.0 as isize, surface);
     Ok(())
-}
-
-pub fn show(
-    window: &WebviewWindow,
-    rect: Rect,
-    regions: &[SurfaceRegion],
-    scale: f64,
-) -> Result<(), String> {
-    place(window, rect)?;
-    set_regions(window, regions, scale)
 }
 
 /// Strips any caption Tao rebuilt. Safe from any thread: both calls message the
@@ -684,7 +1069,8 @@ fn key_input(key: VIRTUAL_KEY, extended: bool, up: bool) -> INPUT {
                 wScan: scan,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                // Ours: the Undo watch of the hook never takes them for the user's.
+                dwExtraInfo: OUR_KEYS,
             },
         },
     }
@@ -726,6 +1112,28 @@ pub fn send_paste_chord() -> Result<(), u32> {
     Ok(())
 }
 
+/// Sends Ctrl+Z to the foreground window (Undo of lot 9, option A): one chord, the target
+/// editor undoes its own paste. On a partial injection the keys already pressed are
+/// released and the count sent is returned.
+pub fn send_undo_chord() -> Result<(), u32> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_Z;
+    let inputs = [
+        key_input(VK_CONTROL, false, false),
+        key_input(VK_Z, false, false),
+        key_input(VK_Z, false, true),
+        key_input(VK_CONTROL, false, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        if sent > 0 {
+            let release = [key_input(VK_Z, false, true), key_input(VK_CONTROL, false, true)];
+            unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32); }
+        }
+        return Err(sent);
+    }
+    Ok(())
+}
+
 /// Waits, at most `timeout`, for the clipboard counter to leave `before`.
 pub fn wait_clipboard_change(before: u32, timeout: Duration) -> Option<u32> {
     let deadline = Instant::now() + timeout;
@@ -758,6 +1166,97 @@ mod tests {
         }
         let sequence = std::thread::spawn(clipboard_sequence).join().unwrap();
         assert_ne!(sequence, 0);
+    }
+
+    #[test]
+    fn the_hook_takes_the_source_keys_only_while_the_overlay_never_had_the_foreground() {
+        // Review n°2 and n°6: activation refused, the source kept the foreground: the fallback.
+        assert!(takes_source_keys(10, 10, false));
+        // The overlay had it and the user came back to his document: his keys are his.
+        assert!(!takes_source_keys(10, 10, true));
+        assert!(!takes_source_keys(20, 10, false), "another window in front");
+        assert!(!takes_source_keys(0, 0, false), "no foreground");
+    }
+
+    #[test]
+    fn only_a_key_that_writes_and_is_not_ours_ends_the_undo_offer() {
+        // Letters, digits, Enter, Backspace, arrows, Ctrl+Z's Z: the user acts in the source.
+        for vk in [0x41, 0x5A, 0x31, 0x0D, 0x08, 0x2E, 0x25, 0x20] { assert!(ends_undo(vk, 0), "{vk:#x}"); }
+        // Another tool's injected keys count too (dictation types into the source).
+        assert!(ends_undo(0x41, 0x1234));
+        // Our own chords, lone modifiers, lock keys and Escape never do.
+        assert!(!ends_undo(0x56, OUR_KEYS));
+        for vk in [0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91, 0x1B] { assert!(!ends_undo(vk, 0), "{vk:#x}"); }
+    }
+
+    #[test]
+    fn the_marks_end_at_the_users_next_key_click_or_wheel() {
+        // Any key that writes or moves, Escape included, another tool's too.
+        for vk in [0x41, 0x5A, 0x0D, 0x08, 0x25, 0x20, 0x1B, 0x21] { assert!(ends_marks(vk, 0), "{vk:#x}"); }
+        assert!(ends_marks(0x41, 0x1234));
+        // Our own paste, lone modifiers and lock keys never do.
+        assert!(!ends_marks(0x56, OUR_KEYS));
+        for vk in [0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91] { assert!(!ends_marks(vk, 0), "{vk:#x}"); }
+        // A press of any button and the wheel end them; a move or a release does not.
+        for message in [0x0201, 0x0204, 0x0207, 0x020B, 0x020A, 0x020E] { assert!(ends_marks_mouse(message), "{message:#x}"); }
+        for message in [0x0200, 0x0202, 0x0205, 0x0208, 0x020C] { assert!(!ends_marks_mouse(message), "{message:#x}"); }
+    }
+
+    #[test]
+    fn the_keyboard_fallback_takes_only_the_menu_keys_and_never_a_chord() {
+        let none = || -> Option<char> { panic!("only the letter keys read the layout") };
+        assert_eq!(menu_key(0x0D, false, false, none).as_deref(), Some("Enter"));
+        assert_eq!(menu_key(0x1B, false, false, none).as_deref(), Some("Escape"));
+        assert_eq!(menu_key(0x09, true, false, none).as_deref(), Some("Tab"), "Shift+Tab is a Tab with shift");
+        assert_eq!(menu_key(0x28, false, false, none).as_deref(), Some("ArrowDown"));
+        assert_eq!(menu_key(0x25, false, false, none).as_deref(), Some("ArrowLeft"));
+        // Digits 1 to 6 by key, row or keypad, Shift or not (AZERTY types « & » without it).
+        assert_eq!(menu_key(0x31, false, false, none).as_deref(), Some("1"));
+        assert_eq!(menu_key(0x36, true, false, none).as_deref(), Some("6"));
+        assert_eq!(menu_key(0x63, false, false, none).as_deref(), Some("3"));
+        assert_eq!(menu_key(0x37, false, false, none), None, "7 is not in the grid");
+        assert_eq!(menu_key(0x30, false, false, none), None);
+        // Letters come from the active layout, without any modifier, and must be letters.
+        assert_eq!(menu_key(0x46, false, false, || Some('f')).as_deref(), Some("f"));
+        assert_eq!(menu_key(0x51, false, false, || Some('a')).as_deref(), Some("a"), "AZERTY: the layout names the key");
+        assert_eq!(menu_key(0x46, false, false, || Some('ф')).as_deref(), Some("ф"));
+        assert_eq!(menu_key(0x46, true, false, || Some('F')), None, "Shift+letter stays the user's");
+        assert_eq!(menu_key(0x46, false, false, || Some('1')), None);
+        assert_eq!(menu_key(0x46, false, false, || None), None, "a dead key passes");
+        // Space (the free field needs the real WebView), and any chord, are never taken.
+        assert_eq!(menu_key(0x20, false, false, none), None);
+        for vk in [0x0D, 0x1B, 0x09, 0x28, 0x31, 0x46] { assert_eq!(menu_key(vk, false, true, || Some('f')), None, "{vk:#x} with Ctrl/Alt/Win"); }
+    }
+
+    #[test]
+    fn the_memory_key_is_the_lowercase_executable_name_only() {
+        assert_eq!(executable_name("C:\\Windows\\System32\\Notepad.exe").as_deref(), Some("notepad.exe"));
+        assert_eq!(executable_name("C:/Program Files/Google/Chrome/Application/chrome.exe").as_deref(), Some("chrome.exe"));
+        assert_eq!(executable_name("WINWORD.EXE").as_deref(), Some("winword.exe"));
+        assert_eq!(executable_name("C:\\dir\\"), None);
+        assert_eq!(executable_name(""), None);
+    }
+
+    /// Only on a layout this session already has (none is ever loaded for the test):
+    /// French AZERTY types € with AltGr+E and @ with AltGr+0, US English has no AltGr.
+    #[test]
+    fn altgr_is_read_on_a_known_layout_when_the_session_has_one() {
+        let layouts = keyboard_layouts();
+        let find = |id: usize| layouts.iter().copied().find(|layout| layout.0 as usize & 0xFFFF_FFFF == id);
+        let (french, us) = (find(0x040C_040C), find(0x0409_0409));
+        if french.is_none() && us.is_none() {
+            eprintln!("no French AZERTY nor US layout loaded in this session: skipped");
+            return;
+        }
+        if let Some(french) = french {
+            assert_eq!(altgr_character_in(french, 0x45, false), Some('€'));
+            assert_eq!(altgr_character_in(french, 0x30, false), Some('@'));
+            assert_eq!(altgr_character_in(french, 0x41, false), None, "AltGr+A types nothing");
+        }
+        if let Some(us) = us {
+            assert_eq!(altgr_character_in(us, 0x45, false), None);
+            assert_eq!(altgr_character_in(us, 0x20, false), None);
+        }
     }
 
     #[test]

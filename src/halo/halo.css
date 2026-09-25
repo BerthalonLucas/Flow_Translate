@@ -1,0 +1,89 @@
+/* The halo window (lot 6, « mise en valeur », Lucas 25/09): a transparent page the size of what
+   it draws plus its glow, never hit. Every value comes from design-lab/mise-en-valeur.html
+   with Lucas's choice: menu = text box + lines + exact text (tint), work = reflection on the
+   letters + aurora + lines, arrival = wave of light, changed words = iridescent glow. */
+body.flowtranslate-halo { min-height: 0; overflow: hidden; background: transparent; }
+.halo { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 150ms ease-out; }
+.halo[data-state="shown"] { opacity: 1; }
+.halo[data-state="leaving"] { opacity: 0; transition-timing-function: ease-in; }
+.halo div { position: absolute; }
+
+/* The colours, from the ground read under the text (`data-tone`), else from the app's theme.
+   The reflection is a veil of the ground's own colour (`--ground`) when Rust read it. Light:
+   deeper iris hues (the pastels vanished on white, Lucas 25/09); dark: the pastels. */
+.halo, .halo[data-tone="light"] {
+  --hl: 141 159 255; --ai1: 141 159 255; --ai2: 188 130 243; --ai3: 255 103 120; --ai4: 255 186 113;
+  --veil: var(--ground, 255 255 255); --a-tint: .24; --a-band: .08; --a-still: .24;
+  --ir1: 95 111 255; --ir2: 163 91 234; --ir3: 240 80 106; --ir4: 242 154 59; --a-iris: .30; --a-iris-glow: .32;
+}
+:root[data-theme="dark"] .halo:not([data-tone]), .halo[data-tone="dark"] {
+  --hl: 150 166 255; --ai1: 160 175 255; --ai2: 201 155 255; --ai3: 255 129 147; --ai4: 255 201 140;
+  --veil: var(--ground, 30 31 34); --a-tint: .28; --a-band: .07; --a-still: .27;
+  --ir1: 160 175 255; --ir2: 201 155 255; --ir3: 255 129 147; --ir4: 255 201 140; --a-iris: .26; --a-iris-glow: .22;
+}
+
+/* The menu: the three levels, still. */
+.halo-box { border-radius: 9px; box-shadow: 0 0 0 1px rgb(var(--hl) / .6), 0 0 0 4px rgb(var(--hl) / .12); }
+.halo-band { border-radius: 4px; background: rgb(var(--hl) / var(--a-band)); }
+.halo-tint { border-radius: 3px; background: rgb(var(--hl) / var(--a-tint)); }
+
+/* The work: the aurora turns around the text box (4.5 s a turn), its glow blurred beneath. */
+@property --halo-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.halo-aurora { border-radius: 10px; }
+.halo-aurora i { position: absolute; }
+.halo-aurora .ring { inset: -1px; border-radius: 11px; padding: 1.5px; background: conic-gradient(from var(--halo-angle), rgb(var(--ai1)), rgb(var(--ai2)), rgb(var(--ai3)), rgb(var(--ai4)), rgb(var(--ai1))); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: halo-aurora 4.5s linear infinite; }
+.halo-aurora .glow { inset: 0; filter: blur(9px); opacity: .7; }
+.halo-aurora .glow .ring { inset: -4px; border-radius: 14px; padding: 6px; }
+@keyframes halo-aurora { to { --halo-angle: 360deg; } }
+
+/* The work: the reflection on the letters. A band of the ground's colour at .8 passes over
+   the exact text laid end to end (--total, --from, --to: src/halo/geometry.ts), over a faint
+   violet wash, 1.8 s a pass. */
+.halo-veil {
+  border-radius: 3px;
+  background-image: linear-gradient(100deg, transparent 36%, rgb(var(--veil) / .8) 50%, transparent 64%), linear-gradient(rgb(var(--ai2) / .08), rgb(var(--ai2) / .08));
+  background-size: calc(var(--total) * 3) 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-position: var(--from) 0, 0 0;
+  animation: halo-reflect 1.8s cubic-bezier(.45,0,.55,1) infinite;
+}
+@keyframes halo-reflect { from { background-position: var(--from) 0, 0 0; } to { background-position: var(--to) 0, 0 0; } }
+
+/* The arrival: one wave of light over the new text (1 s), then the marks rise from 380 ms on
+   (420 ms). Without the new text's lines, the marks fade in over 260 ms. */
+.halo-wave {
+  border-radius: 3px;
+  background-image: linear-gradient(100deg, transparent 25%, rgb(var(--ai1) / .44) 40%, rgb(var(--ai2) / .48) 50%, rgb(var(--ai4) / .44) 60%, transparent 75%);
+  background-size: calc(var(--total) * 3) 100%;
+  background-repeat: no-repeat;
+  background-position: var(--from) 0;
+  animation: halo-wave 1000ms cubic-bezier(.4,0,.2,1) 1 both;
+}
+@keyframes halo-wave { from { background-position: var(--from) 0; } to { background-position: var(--to) 0; } }
+.halo-marks { inset: 0; }
+.halo-marks[data-arrival="wave"] .halo-mark { animation: halo-mark-in 420ms ease-out 380ms both; }
+.halo-marks[data-arrival="fade"] .halo-mark { animation: halo-mark-in 260ms ease-out both; }
+@keyframes halo-mark-in { from { opacity: 0; } }
+
+/* The changed words: an iridescent glow over the strip of the marks, held, then 900 ms out. */
+.halo-mark {
+  border-radius: 4px;
+  background-image: linear-gradient(90deg, rgb(var(--ir1) / var(--a-iris)), rgb(var(--ir2) / var(--a-iris)), rgb(var(--ir3) / var(--a-iris)), rgb(var(--ir4) / var(--a-iris)));
+  background-size: var(--total) 100%;
+  background-position: calc(-1 * var(--off)) 0;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 12px rgb(var(--ir2) / var(--a-iris-glow));
+}
+.halo[data-phase="marks"] { transition: opacity 900ms ease-out; }
+.halo[data-phase="marks"][data-state="leaving"] { transition-timing-function: ease-out; }
+
+/* Reduced animations: everything holds still. The reflection becomes a fixed iridescent veil
+   over the same strip, the aurora a still ring, no wave; the marks appear and leave at once. */
+:root[data-motion="reduced"] .halo * { animation: none !important; }
+:root[data-motion="reduced"] .halo-veil {
+  background-image: linear-gradient(100deg, rgb(var(--ai1) / var(--a-still)), rgb(var(--ai2) / var(--a-still)) 50%, rgb(var(--ai4) / var(--a-still)));
+  background-size: var(--total) 100%;
+  background-position: var(--start) 0;
+}
+:root[data-motion="reduced"] .halo-wave { display: none; }
+:root[data-motion="reduced"] .halo[data-phase="marks"] { transition: none; }

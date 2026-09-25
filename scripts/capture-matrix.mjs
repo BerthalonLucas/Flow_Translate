@@ -33,8 +33,8 @@ report.version = await page.evaluate(() => navigator.userAgent);
 const captureId = () => page.evaluate(() => document.querySelector('.glass-overlay')?.getAttribute('data-capture-id') ?? null);
 const closeGlass = async () => {
   if (!(await page.locator('.glass-overlay').count())) return;
-  await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Fermer', exact: true }).click();
+  await page.getByRole('button', { name: 'More options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
   await expect(page.locator('.glass-overlay')).toHaveCount(0);
 };
 // Presses the shortcut and waits for what the overlay shows: a glass for a new capture
@@ -54,9 +54,9 @@ const shoot = async (previousId) => {
   const latencyMs = Math.round(performance.now() - started);
   let original = null;
   if (outcome.kind === 'glass') {
-    await expect(page.getByRole('button', { name: 'Copier la traduction', exact: true })).toBeEnabled({ timeout: 8000 });
-    await page.getByRole('button', { name: 'Plus d’options', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Afficher l’original', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Copy translation', exact: true })).toBeEnabled({ timeout: 8000 });
+    await page.getByRole('button', { name: 'More options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Show original', exact: true }).click();
     original = (await page.locator('.original-copy').textContent())?.replace(/^Original/, '').trim() ?? null;
   }
   return { ...outcome, latencyMs, original };

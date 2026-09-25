@@ -14,6 +14,13 @@ quand le plan dit « comme dans le labo », c’est ici qu’il faut regarder, e
   Chrome (double-clic suffit ; React est chargé depuis cdnjs, il faut donc Internet).
 - Copie identique : `../docs/design/labo-flowtranslate.html`.
 - Version publiée pour Lucas : https://claude.ai/artifact/AtzY6pK6b6TvWsF8Be3MPt (privée).
+- **`mise-en-valeur.html`** (25/09) : les prototypes de la mise en valeur du texte, **à choisir
+  par Lucas avant tout code** : la sélection à trois niveaux pendant le menu, l’effet pendant le
+  travail, l’arrivée du texte, les mots changés tenus jusqu’à la prochaine action (60 s au plus),
+  en clair et en sombre. Page autonome sans dépendance ni build ; « Copier mon choix » donne le
+  choix en texte + JSON. Version publiée : https://claude.ai/artifact/95Hn4JpMoSe8sHTneT7hBE
+  (privée ; republier la page sans ses trois premières lignes, que le lecteur d’artefacts
+  fournit lui-même).
 
 Les **réglages par défaut sont les choix de Lucas**. Le bouton « Tout remettre à zéro » y revient.
 Le bouton « Copier ma config » produit un résumé lisible + JSON des réglages en cours : c’est le

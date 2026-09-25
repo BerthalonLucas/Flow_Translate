@@ -1,3 +1,16 @@
+# En cours : 0.5.0 « Îlot » (branche `da-ilot`)
+
+La 0.5.0 est en cours d’implémentation sur la branche `da-ilot` et n’est pas publiée. Elle
+fera de FlowTranslate un assistant d’écriture : sélectionner un texte, presser
+`Ctrl+Alt+Espace`, choisir une action dans un petit menu ouvert à côté de la sélection
+(l’« Îlot » : Corriger, Traduire, Rendre professionnel, Raccourcir, Rédiger un mail ou une
+consigne libre), et le texte sera remplacé sur place. Pendant le travail, une petite pilule
+avec un orbe et un balayage de lumière sur les lignes sélectionnées ; après, une coche, un
+bouton Annuler de 8 secondes et les mots changés surlignés. Interface en anglais par défaut
+avec bascule française, thème qui suit Windows. Plan : [docs/DA-PLAN.md](docs/DA-PLAN.md) ;
+référence visuelle : [design-lab/](design-lab/README.md). Jusqu’à sa publication, tout ce
+qui suit décrit la 0.4.0.
+
 # Nouveautés 0.4.0
 
 Sélectionnez un texte déjà écrit (`Ctrl+A`), pressez le raccourci de **Corriger** : le texte corrigé remplace la sélection sur place, dans un mail, la barre de recherche, un champ web, Word ou VS Code. Le résultat passe par le presse-papiers et une seule corde `Ctrl+V` ; le presse-papiers est remis en place. Pendant le travail, seule la pilule tourne ; elle montre ✓ puis s’efface. Si le collage est impossible (console, mot de passe, fenêtre changée), la bulle s’ouvre avec le résultat et Copier.
@@ -10,18 +23,23 @@ L’installateur se trouve dans les [releases](https://github.com/BerthalonLucas
 
 # FlowTranslate
 
-Traiter n’importe quelle sélection sous Windows 11 par un modèle de langue : sélectionner,
-un raccourci par action (traduire, corriger, professionnaliser, les vôtres), lire ou
-laisser remplacer sur place. Client **Tauri 2 + React + Rust** ; moteur de
-traduction **séparé**, au choix : le serveur vLLM livré dans `server/` (Hy-MT2), ou tout
-serveur compatible OpenAI, local ou distant.
+Assistant d’écriture pour Windows 11 : sélectionner un texte dans n’importe quelle
+application, choisir une action (corriger, traduire, professionnaliser, les vôtres) et
+laisser un modèle de langue remplacer le texte sur place, ou lire le résultat à côté. En
+0.4.0, chaque action a son raccourci ; la 0.5.0, en cours sur la branche `da-ilot`,
+ouvrira à la place un menu d’actions à côté de la sélection (`Ctrl+Alt+Espace`). Client
+**Tauri 2 + React + Rust** ; moteur **séparé**, au choix : le serveur vLLM livré dans
+`server/` (Hy-MT2 pour traduire, Gemma 4 pour corriger et reformuler), ou tout serveur
+compatible OpenAI, local ou distant.
 
 **État : version d’essai 0.4.0.** Capture directe (le raccourci copie lui-même la
 sélection quand UI Automation ne la donne pas), lecture calibrée (verre court près du
 texte ou bande de lecture à la moitié de l’écran, décidés sur le vrai texte), fermeture
 d’elle-même au temps de lecture, bande qui suit la souris d’un écran à l’autre. Moteurs
 réels validés en 0.1.5. Le jugement visuel de Lucas sur chaque version reste la
-référence ([docs/UI-ISSUES.md](docs/UI-ISSUES.md)).
+référence ([docs/UI-ISSUES.md](docs/UI-ISSUES.md)). La nouvelle direction artistique
+« Îlot » de la 0.5.0 est en cours d’implémentation sur la branche `da-ilot` (section
+précédente).
 
 ## Installer
 
@@ -33,7 +51,9 @@ référence ([docs/UI-ISSUES.md](docs/UI-ISSUES.md)).
 2. Lancer FlowTranslate : seule une icône apparaît dans la zone de notification.
 3. Brancher un moteur (section suivante), puis Réglages → **Connexion avancée** →
    « Vérifier ».
-4. Sélectionner du texte dans n’importe quelle application et presser `Ctrl+Alt+T`.
+4. Sélectionner du texte dans n’importe quelle application et presser `Ctrl+Alt+T`
+   (0.4.0). À partir de la 0.5.0, en cours sur la branche `da-ilot`, le raccourci par
+   défaut deviendra `Ctrl+Alt+Espace`, qui ouvre le menu d’actions.
 
 Pas de release publiée pour une version donnée ? La construire soi-même : voir
 « Développer et construire ».
@@ -57,6 +77,12 @@ le poste (`127.0.0.1`) ; ailleurs, `https://` est obligatoire.
   avec la requête exacte envoyée et ce qui est attendu en retour.
 
 ## Utiliser
+
+Cette section décrit la 0.4.0 publiée. La 0.5.0, en cours sur la branche `da-ilot`,
+remplacera les raccourcis par action par le menu Îlot sur `Ctrl+Alt+Espace` (les
+raccourcis directs vers une action resteront possibles), la bulle graphite par une pilule
+avec coche, Annuler et mots changés surlignés, et gardera le mode « Afficher le résultat »
+et la bande de lecture dans la nouvelle matière (voir [docs/DA-PLAN.md](docs/DA-PLAN.md)).
 
 - Un raccourci = une action sur la sélection courante (`Ctrl+Alt+T` : Traduire en
   français au départ) et un résultat : **Afficher dans la bulle** ou **Remplacer la
@@ -133,6 +159,10 @@ son SHA-256 et crée la release GitHub avec la note de version de
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) : installation, exploitation, retour arrière.
 - [docs/BRIDGE.md](docs/BRIDGE.md) : contrat React ↔ Rust ; [docs/SPEC.md](docs/SPEC.md),
   [docs/native.md](docs/native.md) : spécification et couche Windows.
+- [docs/DA-PLAN.md](docs/DA-PLAN.md), [design-lab/README.md](design-lab/README.md),
+  [docs/UI-DECISIONS.md](docs/UI-DECISIONS.md) : nouvelle direction artistique « Îlot »
+  (plan, labo de référence, décisions de Lucas) ; [docs/RECETTE.md](docs/RECETTE.md) :
+  recette manuelle.
 - [docs/RELEASE-NOTES.md](docs/RELEASE-NOTES.md), [docs/UI-ISSUES.md](docs/UI-ISSUES.md),
   [docs/UI-ITERATION.md](docs/UI-ITERATION.md) : versions, défauts, itérations visuelles.
 

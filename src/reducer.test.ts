@@ -9,6 +9,17 @@ describe('translationReducer', () => {
     const clipboard = { ...selected, source: 'clipboard' as const, canReplace: false };
     expect(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: clipboard }).phase).toBe('idle');
   });
+  it('keeps a menu capture waiting, then gives it the chosen execution once and waits for the paste', () => {
+    const menu: Capture = { ...selected, menu: { lastActionId: null } };
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: menu });
+    expect(state).toMatchObject({ phase: 'idle', delivery: null, requestId: null });
+    const execution = { actionId: 'correct', actionName: 'Fix grammar', outputMode: 'replace' as const, mode: 'quality' as const };
+    expect(translationReducer(state, { type: 'CHOOSE', captureId: 'stale', execution })).toBe(state);
+    state = translationReducer(state, { type: 'TARGET', captureId: 'c1', canReplace: false });
+    state = translationReducer(state, { type: 'CHOOSE', captureId: 'c1', execution });
+    expect(state).toMatchObject({ delivery: 'pending', capture: { execution, canReplace: false, menu: { lastActionId: null } } });
+    expect(translationReducer(state, { type: 'CHOOSE', captureId: 'c1', execution: { ...execution, actionId: 'translate' } })).toBe(state);
+  });
   it('ignores events belonging to a stale request', () => {
     const active = translationReducer(translationReducer(initialTranslationState, { type: 'CAPTURE', capture: selected }), { type: 'START', requestId: 'new', mode: 'quality' });
     expect(translationReducer(active, { type: 'STREAM', event: { requestId: 'old', kind: 'done' } })).toEqual(active);
@@ -73,6 +84,54 @@ describe('translationReducer', () => {
     expect(translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'fallback', confirmed: false, message: 'x' } })).toMatchObject({ delivery: 'fallback', result: 'Bonjour' });
     // A relaunch with the other profile shows its result: no second delivery.
     expect(translationReducer(state, { type: 'START', requestId: 'r2', mode: 'fast' }).delivery).toBeNull();
+  });
+  it('offers Undo only after Rust’s own paste found its text, until undo-state withdraws it for that request', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { id: 'c1', text: 'x', source: 'selection', canReplace: true, anchor: null, execution: { actionId: 'correct', actionName: 'Fix', outputMode: 'replace', mode: 'quality' } } });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done', text: 'y' } });
+    expect(state.undoable).toBe(false);
+    expect(translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '' } }).undoable).toBe(false);
+    expect(translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'fallback', confirmed: false, message: '', undoable: true } }).undoable).toBe(false);
+    const pasted = translationReducer(state, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '', undoable: true, pastedRects: [{ x: 0, y: 0, width: 10, height: 10 }] } });
+    expect(pasted.undoable).toBe(true);
+    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'stale', reason: 'typed' })).toBe(pasted);
+    expect(translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'r1', reason: 'typed' })).toMatchObject({ undoable: false, undoLost: 'typed' });
+    // A retry starts without Undo.
+    expect(translationReducer(pasted, { type: 'START', requestId: 'r2', mode: 'quality' }).undoable).toBe(false);
+  });
+
+  it('keeps why Undo was withdrawn, the first reason only, even when undo-state comes before the delivery', () => {
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { id: 'c1', text: 'x', source: 'selection', canReplace: true, anchor: null, execution: { actionId: 'correct', actionName: 'Fix', outputMode: 'replace', mode: 'quality' } } });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });
+    state = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done', text: 'y' } });
+    const delivered = { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '', undoable: true } } as const;
+    // Rust watched the caret move between its paste and the delivery reaching the page.
+    const early = translationReducer(state, { type: 'UNDO_LOST', requestId: 'r1', reason: 'caret_moved' });
+    expect(early).toMatchObject({ undoable: false, undoLost: 'caret_moved' });
+    expect(translationReducer(early, delivered)).toMatchObject({ delivery: 'applied', undoable: false, undoLost: 'caret_moved' });
+    // The first reason stays.
+    const pasted = translationReducer(state, delivered);
+    const undone = translationReducer(pasted, { type: 'UNDO_LOST', requestId: 'r1', reason: 'undo_key' });
+    expect(undone).toMatchObject({ undoable: false, undoLost: 'undo_key' });
+    expect(translationReducer(undone, { type: 'UNDO_LOST', requestId: 'r1', reason: 'typed' })).toBe(undone);
+    // Another request, another capture: nothing withdrawn yet.
+    expect(translationReducer(undone, { type: 'START', requestId: 'r2', mode: 'quality' }).undoLost).toBeNull();
+    expect(translationReducer(undone, { type: 'CAPTURE', capture: { id: 'c2', text: 'x', source: 'selection', canReplace: true, anchor: null } }).undoLost).toBeNull();
+  });
+
+  it('keeps the code of lot 10 beside the message, an unknown one read as internal, none as null', () => {
+    const replace = { ...selected, execution: { actionId: 'correct', actionName: 'Corriger', outputMode: 'replace' as const, mode: 'quality' as const } };
+    let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: replace });
+    state = translationReducer(state, { type: 'START', requestId: 'r1', mode: 'quality' });
+    expect(translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'Clé refusée.', code: 'unauthorized' } })).toMatchObject({ phase: 'error', error: 'Clé refusée.', code: 'unauthorized' });
+    expect(translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'x', code: 'teapot' as never } }).code).toBe('internal');
+    expect(translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'x' } }).code).toBeNull();
+    const done = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'done', text: 'Bonjour' } });
+    expect(translationReducer(done, { type: 'DELIVERY', event: { requestId: 'r1', status: 'fallback', confirmed: false, message: 'x', code: 'target_changed' } }).code).toBe('target_changed');
+    expect(translationReducer(done, { type: 'DELIVERY', event: { requestId: 'r1', status: 'applied', confirmed: true, message: '' } }).code).toBeNull();
+    // A relaunch starts clean.
+    const failed = translationReducer(state, { type: 'STREAM', event: { requestId: 'r1', kind: 'error', message: 'x', code: 'busy' } });
+    expect(translationReducer(failed, { type: 'START', requestId: 'r2', mode: 'quality' }).code).toBeNull();
   });
   it('keeps a target that arrives before the result for the done event', () => {
     let state = translationReducer(initialTranslationState, { type: 'CAPTURE', capture: { ...selected, canReplace: false } });

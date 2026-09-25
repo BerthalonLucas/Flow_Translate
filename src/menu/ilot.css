@@ -1,0 +1,59 @@
+/* The Îlot (docs/DA-PLAN.md, lot 7). Values from the design lab, the reference:
+   design-lab/src/app.css:139 (.surface type), 179-198 (.m-row, .m-btn, .m-sep, .m-input, .ai-dot,
+   .m-grid, .m-tile, .m-ghost, .keycap) and menus.jsx:37-39 (field 34 high, input 230 wide).
+   Colours derive from the theme's ink (src/theme.css), so light and dark follow Windows. The
+   surface is the app's painted material; its shape springs around a centred layer
+   (.shape-clip / .shape-layer, src/glass.css) and its size is set by src/menu/MorphSurface.tsx. */
+.ilot { position: relative; display: inline-block; vertical-align: top; color: rgb(var(--ink-rgb)); font-size: 13px; line-height: 1.3; }
+.ilot-shape { position: relative; border-radius: var(--surface-radius); background: var(--surface-sheen), var(--surface-bg); box-shadow: var(--surface-rim), var(--surface-shadow); }
+.ilot svg { display: block; flex: none; }
+
+/* Compact: the last action · the ✦ pastille (app.css:179-184, 187). */
+.ilot-row { display: flex; align-items: center; gap: 2px; padding: 3px; }
+.ilot-btn { appearance: none; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 0; border-radius: 13px; background: transparent; color: rgb(var(--ink-rgb) / .86); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; transition: background-color 110ms ease, color 110ms ease; }
+.ilot-btn:hover { background: rgb(var(--ink-rgb) / .08); color: rgb(var(--ink-rgb)); }
+.ilot-btn.is-default { color: rgb(var(--ink-rgb)); font-weight: 560; }
+/* A long action name ends in an ellipsis; the full name is its tooltip. */
+.ilot-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.ilot-hint { font-size: 10.5px; color: rgb(var(--ink-rgb) / .42); }
+.ilot-sep { flex: none; width: 1px; height: 14px; margin: 0 3px; background: rgb(var(--ink-rgb) / .12); }
+.ilot-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: conic-gradient(#BC82F3, #8D9FFF, #FF6778, #FFBA71, #BC82F3); box-shadow: 0 0 6px rgba(188, 130, 243, .6); }
+
+/* Grid: 3 × 2 tiles of 66 × 50, 4 apart, 6 from the edge (app.css:188-190). */
+.ilot-grid { display: grid; grid-template-columns: repeat(3, 66px); gap: 4px; padding: 6px; }
+.ilot-tile { appearance: none; min-width: 0; height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0 4px; border: 0; border-radius: 12px; background: rgb(var(--ink-rgb) / .04); color: rgb(var(--ink-rgb) / .85); font: inherit; font-size: 11px; cursor: pointer; }
+.ilot-tile:hover, .ilot-tile.is-hot { background: rgb(var(--ink-rgb) / .1); color: rgb(var(--ink-rgb)); }
+.ilot-tile-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Keyboard focus, inside the item (the shape clips anything outside it), once the keyboard has
+   moved in the menu (data-ring): at rest the focused default item looks as in the lab. */
+.ilot-btn:focus-visible, .ilot-tile:focus-visible { outline: none; }
+.ilot[data-ring] :is(.ilot-btn, .ilot-tile):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* The free instruction cannot be typed while Rust forwards the keys: dimmed, quietly. */
+.ilot-btn[aria-disabled="true"], .ilot-tile[aria-disabled="true"] { cursor: default; opacity: .4; }
+.ilot-btn[aria-disabled="true"]:hover { background: transparent; }
+.ilot-tile[aria-disabled="true"]:hover, .ilot-tile[aria-disabled="true"].is-hot { background: rgb(var(--ink-rgb) / .04); }
+[aria-disabled="true"] > .ilot-dot { filter: grayscale(1); box-shadow: none; }
+
+/* Field: dot · input 230 · ↵, 34 high (app.css:185-186, 196-198; menus.jsx:37-41). The caret is
+   its focus mark: the field is the whole surface. */
+.ilot-field { position: relative; display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px 0 10px; }
+.ilot-input { width: 230px; height: 26px; min-width: 0; padding: 0 6px; border: 0; background: transparent; color: rgb(var(--ink-rgb)); font: inherit; font-size: 13px; }
+.ilot-input, .ilot-input:focus-visible { outline: none; }
+.ilot-input::placeholder { color: rgb(var(--ink-rgb) / .42); }
+.ilot-keycap { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 5px; font-size: 10.5px; font-weight: 600; background: rgb(var(--ink-rgb) / .08); box-shadow: inset 0 -1px 0 rgb(var(--ink-rgb) / .12); color: rgb(var(--ink-rgb) / .8); }
+/* The field's ↵ sends like Enter (a pointer's way to send); it keeps the lab's look. */
+.ilot-field .ilot-keycap { cursor: pointer; }
+
+/* The Îlot's window (src/menu/IlotStage.tsx): the reserve of src/layout.ts (ilotReserve), click-
+   through except for the Îlot itself. The corner that holds the Îlot is placed inline on the
+   strip Rust anchors: its right edge and the side facing the selection stay put while the shape
+   springs, the rest grows away from the selection. */
+.ilot-stage { position: fixed; left: 0; top: 0; pointer-events: none; }
+.ilot-corner { position: absolute; display: flex; justify-content: center; }
+.ilot-corner > .ilot { pointer-events: auto; }
+/* The browser preview has no window to reserve (its demos never open the menu): the stage sits
+   where the glass would. */
+.standalone-demo > .ilot-stage { position: absolute; left: calc(50% - 173px); top: calc(50% - 132px); }
+.demo-desktop > .ilot-stage { position: absolute; z-index: 10; top: calc(42.5% - 74px); left: calc(142px + 48% - 16px); }

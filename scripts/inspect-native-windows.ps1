@@ -10,7 +10,7 @@ param(
 )
 # Lists the top-level HWNDs of FlowTranslate (or of one process) as JSON:
 # geometry in physical pixels, window region box, caption-producing styles,
-# pass-through ex-styles. Evidence for the frameless silhouette that a WebView
+# pass-through ex-styles, no-activate and tool-window bits. Evidence for the frameless silhouette that a WebView
 # screenshot cannot give. Dev switches: -PassThrough <hwnd> [-Enable] sets or
 # clears WS_EX_TRANSPARENT | WS_EX_LAYERED on one HWND; -HitTest x,y reports the
 # window under a screen point (WindowFromPoint, root and owner process);
@@ -133,6 +133,10 @@ $callback = [FlowTranslateNativeProbe+EnumProc]{ param($h, $l)
       region = $region
       styles = $styles
       exStyles = $exStyles
+      # The halo's own bits and the Îlot's after its choice (lot 3), kept apart from exStyles,
+      # whose exact list the probe compares with the hit tester's pass-through pair.
+      noActivate = [bool]($exStyle -band 0x08000000)
+      toolWindow = [bool]($exStyle -band 0x00000080)
       topmost = [bool]($exStyle -band 0x00000008)
       cursor = @{ x = $cursor.X; y = $cursor.Y }
     }

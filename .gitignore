@@ -19,3 +19,6 @@ __pycache__/
 *.key
 *.pem
 .DS_Store
+
+# Agent worktrees (full copies of the repository)
+.claude/worktrees/

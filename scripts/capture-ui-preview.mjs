@@ -16,15 +16,15 @@ try {
   const video = page.video();
   await page.goto(`${base}/?window=overlay&demo=1`);
   await page.waitForFunction(() => {
-    const copy = document.querySelector('button[aria-label="Copier la traduction"]');
+    const copy = document.querySelector('button[aria-label="Copy translation"]');
     return copy && !copy.disabled;
   });
   await page.waitForTimeout(500);
   await page.screenshot({ path: resolve(output, 'compact.png') });
   // The browser demo acknowledges Copy without touching the system clipboard.
-  await page.getByRole('button', { name: 'Copier la traduction', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy translation', exact: true }).click();
   await page.waitForTimeout(600);
-  const more = () => page.getByRole('button', { name: 'Plus d’options', exact: true });
+  const more = () => page.getByRole('button', { name: 'More options', exact: true });
   await more().hover();
   await page.waitForTimeout(300);
   await more().click();
@@ -38,7 +38,7 @@ try {
   await page.waitForTimeout(700);
   await more().click();
   await page.waitForTimeout(450);
-  await page.getByRole('menuitem', { name: 'Fermer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
   await page.waitForTimeout(450);
   await context.close();
   await video.saveAs(resolve(output, 'transitions.webm'));

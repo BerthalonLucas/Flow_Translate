@@ -1,14 +1,16 @@
-use crate::types::{Capture, CaptureOrigin, CaptureSource, Rect, StoredCapture, TargetIdentity};
+use crate::error::{AppError, ErrorKind};
+use crate::selection_lines;
+use crate::types::{Capture, CaptureOrigin, CaptureSource, HaloLevels, Rect, StoredCapture, TargetCheck, TargetIdentity};
 use arboard::Clipboard;
-use uiautomation::{patterns::UITextPattern, variants::SafeArray, UIAutomation, UIElement};
-use uiautomation::{patterns::UIValuePattern, types::TextAttribute};
+use uiautomation::{patterns::{UITextPattern, UITextRange}, variants::SafeArray, UIAutomation, UIElement};
+use uiautomation::{patterns::UIValuePattern, types::{TextAttribute, TextPatternRangeEndpoint, TextUnit}};
 use uuid::Uuid;
 use std::time::{Duration, Instant};
 
 /// A copy the user made himself counts as fresh this long (Lucas, 2026-09-14).
 const FRESH_COPY_MS: u64 = 3_000;
 /// The shortcut chord must be released before a synthetic chord is sent.
-const CHORD_RELEASE: Duration = Duration::from_millis(600);
+pub(crate) const CHORD_RELEASE: Duration = Duration::from_millis(600);
 /// How long the target may take to serve the synthetic copy.
 const COPY_SETTLE: Duration = Duration::from_millis(350);
 /// Our own clipboard traffic (copy, restoration) is invisible to the freshness watcher.
@@ -25,7 +27,7 @@ thread_local! {
     static UI_AUTOMATION: std::cell::OnceCell<UIAutomation> = const { std::cell::OnceCell::new() };
 }
 
-fn ui_automation() -> Result<UIAutomation, ()> {
+pub(crate) fn ui_automation() -> Result<UIAutomation, ()> {
     UI_AUTOMATION.with(|cell| {
         if let Some(automation) = cell.get() {
             return Ok(automation.clone());
@@ -36,8 +38,13 @@ fn ui_automation() -> Result<UIAutomation, ()> {
     })
 }
 
-/// Text, last visible rectangle, length and editability of the current UIA selection.
-fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool), String> {
+/// What `selection` answers when the control is readable but holds no selection (none,
+/// or collapsed to the caret by a click or an arrow key).
+const NO_SELECTION: &str = "Aucune sélection active.";
+
+/// Text, visible rectangles (physical, one per run as `GetBoundingRectangles` gives
+/// them), length and editability of the current UIA selection.
+pub(crate) fn selection(element: &UIElement) -> Result<(String, Vec<Rect>, usize, bool), String> {
     let pattern = element
         .get_pattern::<UITextPattern>()
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?;
@@ -46,12 +53,12 @@ fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool),
         .map_err(|_| "La sélection n’est pas accessible par UI Automation.".to_string())?
         .into_iter()
         .next()
-        .ok_or_else(|| "Aucune sélection active.".to_string())?;
+        .ok_or_else(|| NO_SELECTION.to_string())?;
     let text = range
         .get_text(6001)
         .map_err(|_| "Impossible de lire la sélection.".to_string())?;
     if text.is_empty() {
-        return Err("Aucune sélection active.".into());
+        return Err(NO_SELECTION.into());
     }
     if text.encode_utf16().count() >= 6001 {
         return Err("La sélection dépasse 6 000 unités de texte et pourrait être tronquée.".into());
@@ -62,25 +69,81 @@ fn selection(element: &UIElement) -> Result<(String, Option<Rect>, usize, bool),
         .ok()
         .and_then(|v| <uiautomation::variants::Variant as TryInto<bool>>::try_into(v).ok())
         .is_some_and(|v| !v);
-    let anchor = unsafe { range.as_ref().GetBoundingRectangles() }
-        .ok()
-        .and_then(|raw| <SafeArray as TryInto<Vec<f64>>>::try_into(SafeArray::from(raw)).ok())
-        .and_then(|values| {
-            values.chunks_exact(4).last().map(|last| Rect {
-                x: last[0],
-                y: last[1],
-                width: last[2],
-                height: last[3],
-            }).filter(|r| r.x.is_finite() && r.y.is_finite() && r.width.is_finite() && r.height.is_finite() && r.width > 0.0 && r.height > 0.0)
-        });
-    Ok((text, anchor, selection_len, range_editable))
+    let rects = range_rects(&range);
+    Ok((text, rects, selection_len, range_editable))
 }
 
-fn ensure_source_unchanged(source_window: isize) -> Result<(), String> {
+/// The visible runs of a range, physical, as `GetBoundingRectangles` gives them (none when
+/// the provider answers nothing usable).
+pub(crate) fn range_rects(range: &uiautomation::patterns::UITextRange) -> Vec<Rect> {
+    unsafe { range.as_ref().GetBoundingRectangles() }
+        .ok()
+        .and_then(|raw| <SafeArray as TryInto<Vec<f64>>>::try_into(SafeArray::from(raw)).ok())
+        .map(|values| selection_lines::from_flat(&values))
+        .unwrap_or_default()
+}
+
+/// The halo's other two levels (Lucas, 25/09), physical: the text box (the focused element's
+/// bounds, clipped to its window) and the whole lines the selection touches, from the start of
+/// its first line to the end of its last, merged per line like the selection. Empty when the
+/// provider cannot answer (no line unit, no bounds): the halo then draws the selection alone.
+pub(crate) fn selection_levels(element: &UIElement, window: Option<Rect>) -> (Option<Rect>, Vec<Rect>) {
+    let text_box = element
+        .get_bounding_rectangle()
+        .ok()
+        .map(|r| Rect { x: f64::from(r.get_left()), y: f64::from(r.get_top()), width: f64::from(r.get_right() - r.get_left()), height: f64::from(r.get_bottom() - r.get_top()) })
+        .filter(selection_lines::drawable)
+        .and_then(|b| match window { Some(w) => selection_lines::clip(&b, &w), None => Some(b) });
+    let full = (|| {
+        let range = element.get_pattern::<UITextPattern>().ok()?.get_selection().ok()?.into_iter().next()?;
+        // Real copies (ITextRangeProvider::Clone): the derived Clone would share the range.
+        let first = UITextRange::from(unsafe { range.as_ref().Clone() }.ok()?);
+        let last = UITextRange::from(unsafe { range.as_ref().Clone() }.ok()?);
+        first.move_endpoint_by_range(TextPatternRangeEndpoint::End, &range, TextPatternRangeEndpoint::Start).ok()?;
+        last.move_endpoint_by_range(TextPatternRangeEndpoint::Start, &range, TextPatternRangeEndpoint::End).ok()?;
+        first.expand_to_enclosing_unit(TextUnit::Line).ok()?;
+        last.expand_to_enclosing_unit(TextUnit::Line).ok()?;
+        first.move_endpoint_by_range(TextPatternRangeEndpoint::End, &last, TextPatternRangeEndpoint::End).ok()?;
+        Some(selection_lines::lines(&range_rects(&first), window))
+    })()
+    .unwrap_or_default();
+    (text_box, full)
+}
+
+/// The anchor of a capture: the last visible rectangle as UI Automation gives it (none
+/// when that one is unusable). Physical; the placement and `validate_target` compare it.
+pub(crate) fn anchor_of(rects: &[Rect]) -> Option<Rect> {
+    rects.last().copied().filter(selection_lines::drawable)
+}
+
+fn ensure_source_unchanged(source_window: isize) -> Result<(), AppError> {
     if source_window == 0 || crate::host::foreground() != source_window {
-        return Err("La fenêtre source a changé pendant la capture. Réessayez.".into());
+        return Err(AppError::new(ErrorKind::TargetChanged, "La fenêtre source a changé pendant la capture. Réessayez."));
     }
     Ok(())
+}
+
+/// A password field is never read; a field UI Automation cannot tell apart is treated as one.
+fn refuse_protected(password: Result<bool, ()>) -> Result<(), AppError> {
+    match password {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(AppError::new(ErrorKind::ProtectedField, "La capture est refusée dans un champ protégé.")),
+        Err(()) => Err(AppError::new(ErrorKind::ProtectedField, "Impossible de vérifier si le champ actif est protégé; capture refusée.")),
+    }
+}
+
+/// What a copy gave: nothing readable is nothing to act on; past 6,000 characters it is
+/// refused before anything is sent.
+fn copied_text(text: Option<String>) -> Result<String, AppError> {
+    let text = text.filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| AppError::new(ErrorKind::NoSelection, "Rien à traduire dans la fenêtre active."))?;
+    if text.chars().count() > 6000 {
+        return Err(too_long());
+    }
+    Ok(text)
+}
+fn too_long() -> AppError {
+    AppError::new(ErrorKind::TooLong, "Sélection trop longue (6 000 caractères).")
 }
 
 /// Whether a paste can replace what was captured (0.4.0, decided at the capture): the
@@ -96,7 +159,7 @@ pub fn replaceable(origin: CaptureOrigin, editable: bool, window_class: &str, pa
     }
 }
 
-pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture, String> {
+pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture, AppError> {
     if demo {
         let public = Capture {
             id: Uuid::new_v4().to_string(),
@@ -111,34 +174,46 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                 width: 280.0,
                 height: 24.0,
             }),
+            // Two lines ending on the anchor: the halo is exercised without UI Automation.
+            selection_rects: vec![
+                Rect { x: 640.0, y: 396.0, width: 360.0, height: 24.0 },
+                Rect { x: 640.0, y: 420.0, width: 280.0, height: 24.0 },
+            ],
             replay: None,
             execution: None,
+            menu: None,
+        };
+        // A text box around the two lines and their whole width: the three levels without
+        // UI Automation. No ground: the halo follows the app's theme.
+        let levels = HaloLevels {
+            text_box: Some(Rect { x: 620.0, y: 380.0, width: 420.0, height: 84.0 }),
+            full_lines: vec![Rect { x: 640.0, y: 396.0, width: 380.0, height: 24.0 }, Rect { x: 640.0, y: 420.0, width: 380.0, height: 24.0 }],
+            ground: None,
         };
         return Ok(StoredCapture {
             public,
             target: None,
+            invalidated: false,
+            levels,
         });
     }
     let source_class = crate::host::window_class(source_window);
     if let Ok(automation) = ui_automation() {
         if let Ok(element) = automation.get_focused_element() {
-            match element.is_password() {
-                Ok(true) => {
-                    return Err("La capture est refusée dans un champ protégé.".into());
-                }
-                Err(_) => {
-                    return Err(
-                        "Impossible de vérifier si le champ actif est protégé; capture refusée."
-                            .into(),
-                    );
-                }
-                Ok(false) => {}
-            }
+            refuse_protected(element.is_password().map_err(|_| ()))?;
             match selection(&element) {
-                Ok((text, anchor, selection_len, range_editable)) => {
+                Ok((text, rects, selection_len, range_editable)) => {
                     ensure_source_unchanged(source_window)?;
+                    let anchor = anchor_of(&rects);
+                    let window = crate::host::window_rect(source_window);
+                    let selection_rects = selection_lines::lines(&rects, window);
+                    // Before any of our windows shows over the text: its box, its whole lines
+                    // and the colour under it (Lucas, 25/09).
+                    let (text_box, full_lines) = selection_levels(&element, window);
+                    let ground = crate::ground::under(&selection_rects, text_box, window);
+                    let levels = HaloLevels { text_box, full_lines, ground };
                     let runtime_id = element.get_runtime_id().map_err(|_| {
-                        "Impossible d’identifier le contrôle source.".to_string()
+                        AppError::internal("Impossible d’identifier le contrôle source.")
                     })?;
                     let value_editable = element
                         .get_pattern::<UIValuePattern>()
@@ -155,9 +230,11 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         origin: CaptureOrigin::Uia,
                         can_replace,
                         anchor,
+                        selection_rects,
                         screen: None,
                         replay: None,
                         execution: None,
+                        menu: None,
                     };
                     let target = Some(TargetIdentity {
                         runtime_id: Some(runtime_id),
@@ -167,11 +244,12 @@ pub fn capture_current(demo: bool, source_window: isize) -> Result<StoredCapture
                         anchor,
                         selection_len,
                         editable,
+                        check: TargetCheck::Uia,
                     });
                     ensure_source_unchanged(source_window)?;
-                    return Ok(StoredCapture { public, target });
+                    return Ok(StoredCapture { public, target, invalidated: false, levels });
                 }
-                Err(message) if message.contains("6 000") => return Err(message),
+                Err(message) if message.contains("6 000") => return Err(AppError::new(ErrorKind::TooLong, message)),
                 Err(_) => {}
             }
         }
@@ -191,7 +269,7 @@ fn read_clipboard() -> Option<String> {
 /// Without a UIA selection: copies for the user (synthetic Ctrl+Insert), else accepts a
 /// copy he made himself in the last three seconds, else nothing to translate. A copy
 /// that worked proves a selection: it can be pasted over (origin `copy`).
-fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredCapture, String> {
+fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredCapture, AppError> {
     let pressed_at = crate::host::now_ms();
     let changed_at = crate::host::clipboard_changed_at();
     let copied = synthetic_copy(source_window);
@@ -199,21 +277,15 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         Ok(text) => (Some(text.clone()), CaptureOrigin::Copy),
         Err(_) => (fresh(changed_at, pressed_at, FRESH_COPY_MS).then(read_clipboard).flatten(), CaptureOrigin::Fresh),
     };
-    let text = text
-        .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| {
-            let mut message = "Rien à traduire dans la fenêtre active.".to_string();
-            // For the real capture matrix only (FLOWTRANSLATE_CAPTURE_TRACE): which step of
-            // the synthetic copy gave up and how old the user's last copy is. Never any text.
-            if std::env::var_os("FLOWTRANSLATE_CAPTURE_TRACE").is_some() {
-                let age = changed_at.map(|at| pressed_at.saturating_sub(at));
-                message.push_str(&format!(" [copy: {}; last user copy: {:?} ms ago]", copied.as_ref().err().copied().unwrap_or("ok"), age));
-            }
-            message
-        })?;
-    if text.chars().count() > 6000 {
-        return Err("Sélection trop longue (6 000 caractères).".into());
-    }
+    let text = copied_text(text).map_err(|mut error| {
+        // For the real capture matrix only (FLOWTRANSLATE_CAPTURE_TRACE): which step of
+        // the synthetic copy gave up and how old the user's last copy is. Never any text.
+        if error.kind == ErrorKind::NoSelection && std::env::var_os("FLOWTRANSLATE_CAPTURE_TRACE").is_some() {
+            let age = changed_at.map(|at| pressed_at.saturating_sub(at));
+            error.message.push_str(&format!(" [copy: {}; last user copy: {:?} ms ago]", copied.as_ref().err().copied().unwrap_or("ok"), age));
+        }
+        error
+    })?;
     ensure_source_unchanged(source_window)?;
     let can_replace = replaceable(origin, true, source_class, false);
     let target = can_replace.then(|| TargetIdentity {
@@ -224,6 +296,7 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         anchor: None,
         selection_len: text.chars().count(),
         editable: true,
+        check: TargetCheck::Copy,
     });
     let public = Capture {
         id: Uuid::new_v4().to_string(),
@@ -232,11 +305,13 @@ fn clipboard_capture(source_window: isize, source_class: &str) -> Result<StoredC
         origin,
         can_replace,
         anchor: None,
+        selection_rects: Vec::new(),
         screen: None,
         replay: None,
         execution: None,
+        menu: None,
     };
-    Ok(StoredCapture { public, target })
+    Ok(StoredCapture { public, target, invalidated: false, levels: HaloLevels::default() })
 }
 
 /// Sends the copy chord to the source window and reads what it copied, then puts the
@@ -267,25 +342,65 @@ fn synthetic_copy(source_window: isize) -> Result<String, &'static str> {
 /// front, its focused control is the same and, when UI Automation gave the selection,
 /// the focused element and its selection are unchanged. A UIA that stopped answering is
 /// not a change (the paste goes to the same control).
-pub fn validate_target(target: &TargetIdentity) -> Result<(), String> {
+pub fn validate_target(target: &TargetIdentity) -> Result<(), AppError> {
+    let changed = |message: &str| Err(AppError::new(ErrorKind::TargetChanged, message));
     if crate::host::foreground() != target.native_window {
-        return Err("La fenêtre source a changé; remplacement refusé.".into());
+        return changed("La fenêtre source a changé; remplacement refusé.");
     }
     if target.control != 0 && crate::host::focused_control(target.native_window).is_some_and(|(handle, _)| handle != target.control) {
-        return Err("Le champ actif a changé; remplacement refusé.".into());
+        return changed("Le champ actif a changé; remplacement refusé.");
     }
     let Some(runtime_id) = &target.runtime_id else { return Ok(()) };
     let Some(element) = ui_automation().ok().and_then(|a| a.get_focused_element().ok()) else { return Ok(()) };
     if element.get_runtime_id().is_ok_and(|id| id != *runtime_id) {
-        return Err("La cible a changé; remplacement refusé.".into());
+        return changed("La cible a changé; remplacement refusé.");
     }
-    if target.anchor.is_none() { return Ok(()); }
-    if let Ok((text, anchor, selection_len, _)) = selection(&element) {
-        if text != target.selected_text || selection_len != target.selection_len || Some(target.anchor) != Some(anchor) {
-            return Err("La sélection a changé; remplacement refusé.".into());
-        }
+    if text_changed(target, || selection(&element)) {
+        return changed("La sélection a changé; remplacement refusé.");
     }
     Ok(())
+}
+
+/// Whether the target's text is no longer what was captured, as far as UI Automation can tell:
+/// a UIA target compares its selection even without a drawable anchor (review n°1: it used to
+/// skip that comparison); a copy target is checked by `control_copy` at the paste, never here.
+fn text_changed(target: &TargetIdentity, now: impl FnOnce() -> Result<(String, Vec<Rect>, usize, bool), String>) -> bool {
+    target.check == TargetCheck::Uia && selection_changed(target, &now())
+}
+
+/// Review n°1: a text only a synthetic copy gave (VS Code's Monaco has no text pattern) is
+/// copied again right before the paste, once the target is revalidated and the keys are up:
+/// the paste goes on only when the source copies exactly the captured text again. Nothing
+/// selected any more makes VS Code copy its whole line: never « contains », always « equals ».
+/// The clipboard is put back as after the capture's own copy.
+fn control_copy(target: &TargetIdentity) -> Result<(), AppError> {
+    let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
+    crate::host::suppress_clipboard_tracking(OWN_TRAFFIC);
+    let before = crate::host::clipboard_sequence();
+    crate::host::send_copy_chord().map_err(|_| AppError::new(ErrorKind::PasteBlocked, "La vérification de la sélection a été bloquée; remplacement refusé."))?;
+    let after = crate::host::wait_clipboard_change(before, COPY_SETTLE);
+    let copied = after.and_then(|_| read_clipboard());
+    if let Some(after) = after { let _ = keeper.restore(after); }
+    same_copy(copied.as_deref(), &target.selected_text)
+}
+
+/// The control copy of a copy target must give back exactly the captured text.
+fn same_copy(copied: Option<&str>, captured: &str) -> Result<(), AppError> {
+    match copied {
+        Some(text) if !text.is_empty() && text == captured => Ok(()),
+        _ => Err(AppError::new(ErrorKind::TargetChanged, "La sélection a changé; remplacement refusé.")),
+    }
+}
+
+/// Whether what UI Automation answers now differs from the captured selection: another
+/// text, length or last rectangle, or no selection at all while the control still answers
+/// (a click or an arrow collapsed it to the caret: a paste would insert there instead of
+/// replacing). A control that stopped answering is not a change.
+fn selection_changed(target: &TargetIdentity, now: &Result<(String, Vec<Rect>, usize, bool), String>) -> bool {
+    match now {
+        Ok((text, rects, selection_len, _)) => *text != target.selected_text || *selection_len != target.selection_len || target.anchor != anchor_of(rects),
+        Err(message) => message == NO_SELECTION,
+    }
 }
 
 /// How a paste ended: the field read the result back (`confirmed`), or the chord went
@@ -333,34 +448,35 @@ fn field_text(target: &TargetIdentity) -> Option<String> {
 /// the result, sends one Ctrl+V, then reads the field back when something can read it
 /// and puts the clipboard back while it still holds our write. `reactivate` (the menu
 /// of the glass) brings the source window back to the front first.
-pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<Delivery, String> {
-    if value.contains('\0') { return Err("Le résultat contient un caractère nul; remplacement refusé.".into()); }
-    if !target.editable { return Err("Ce champ n’est pas modifiable; utilisez Copier.".into()); }
+pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<Delivery, AppError> {
+    paste_preflight(target, value)?;
     #[cfg(windows)]
     if reactivate && crate::host::foreground() != target.native_window {
         use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::SetForegroundWindow};
+        // Not under a held chord: released over the source, Alt would first move its
+        // focus to its menu bar (Win11 Notepad) and the revalidation would refuse.
+        released(crate::host::wait_modifiers_released(CHORD_RELEASE))?;
         if !unsafe { SetForegroundWindow(HWND(target.native_window as *mut _)) }.as_bool() {
-            return Err("Impossible de réactiver la fenêtre source; utilisez Copier.".into());
+            return Err(AppError::new(ErrorKind::PasteBlocked, "Impossible de réactiver la fenêtre source; utilisez Copier."));
         }
         std::thread::sleep(Duration::from_millis(60));
     }
     #[cfg(not(windows))]
     let _ = reactivate;
     validate_target(target)?;
-    if !crate::host::wait_modifiers_released(CHORD_RELEASE) {
-        return Err("Relâchez les touches du raccourci, puis réessayez depuis la bulle.".into());
-    }
+    released(crate::host::wait_modifiers_released(CHORD_RELEASE))?;
     validate_target(target)?;
+    if target.check == TargetCheck::Copy { control_copy(target)?; }
     let keeper = crate::clipboard_guard::Keeper::take(read_clipboard);
     crate::host::suppress_clipboard_tracking(Duration::from_secs(4));
-    let sequence = keeper.put_text(value)?;
+    let sequence = keeper.put_text(value).map_err(|message| AppError::new(ErrorKind::PasteBlocked, message))?;
     if let Err(error) = validate_target(target) {
         let _ = keeper.restore(sequence);
         return Err(error);
     }
     if let Err(sent) = crate::host::send_paste_chord() {
         if sent == 0 { let _ = keeper.restore(sequence); }
-        return Err("Le collage a été bloqué par Windows ou par l’application; utilisez Copier.".into());
+        return Err(AppError::new(ErrorKind::PasteBlocked, "Le collage a été bloqué par Windows ou par l’application; utilisez Copier."));
     }
     let started = Instant::now();
     let mut readable = true;
@@ -377,6 +493,19 @@ pub fn paste(target: &TargetIdentity, value: &str, reactivate: bool) -> Result<D
     if started.elapsed() < PASTE_SETTLE { std::thread::sleep(PASTE_SETTLE - started.elapsed()); }
     let _ = keeper.restore(sequence);
     Ok(Delivery { confirmed })
+}
+
+/// What is refused before anything is touched: a result the clipboard would cut at its
+/// first NUL, a field that cannot be written.
+fn paste_preflight(target: &TargetIdentity, value: &str) -> Result<(), AppError> {
+    if value.contains('\0') { return Err(AppError::new(ErrorKind::PasteBlocked, "Le résultat contient un caractère nul; remplacement refusé.")); }
+    if !target.editable { return Err(AppError::new(ErrorKind::NotEditable, "Ce champ n’est pas modifiable; utilisez Copier.")); }
+    Ok(())
+}
+
+/// The shortcut's keys are still held: a chord sent now would be another one.
+pub(crate) fn released(released: bool) -> Result<(), AppError> {
+    if released { Ok(()) } else { Err(AppError::new(ErrorKind::KeysHeld, "Relâchez les touches du raccourci, puis réessayez depuis la bulle.")) }
 }
 
 #[cfg(windows)]
@@ -401,6 +530,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_anchorless_target_is_checked_by_its_text_and_a_copy_target_by_a_second_copy() {
+        // Review n°1: a UIA selection without a drawable rectangle still compares its text.
+        let target = TargetIdentity { runtime_id: Some(vec![1]), native_window: 1, control: 0, selected_text: "mot A".into(), anchor: None, selection_len: 5, editable: true, check: TargetCheck::Uia };
+        assert!(text_changed(&target, || Ok(("bloc B".into(), Vec::new(), 6, true))), "another selection in the same element");
+        assert!(text_changed(&target, || Err(NO_SELECTION.into())), "collapsed to the caret");
+        assert!(!text_changed(&target, || Ok(("mot A".into(), Vec::new(), 5, true))));
+        // A copy target is not read through UI Automation: its control copy decides.
+        let copy = TargetIdentity { check: TargetCheck::Copy, runtime_id: None, ..target };
+        assert!(!text_changed(&copy, || panic!("a copy target is never read through UIA")));
+        assert!(same_copy(Some("mot A"), "mot A").is_ok());
+        for copied in [None, Some(""), Some("bloc B"), Some("ligne entière avec mot A"), Some("mot A ")] {
+            assert_eq!(same_copy(copied, "mot A").unwrap_err().kind, ErrorKind::TargetChanged, "{copied:?}");
+        }
+    }
+
+    #[test]
+    fn a_selection_collapsed_to_the_caret_is_a_change_but_a_silent_control_is_not() {
+        let line = Rect { x: 100., y: 200., width: 300., height: 18. };
+        let target = TargetIdentity { runtime_id: Some(vec![1]), native_window: 1, control: 0, selected_text: "Deux lignes".into(), anchor: Some(line), selection_len: 11, editable: true, check: TargetCheck::Uia };
+        let same: Result<(String, Vec<Rect>, usize, bool), String> = Ok(("Deux lignes".into(), vec![Rect { y: 182., ..line }, line], 11, true));
+        assert!(!selection_changed(&target, &same));
+        assert!(selection_changed(&target, &Err(NO_SELECTION.into())), "collapsed by a click: a paste would insert at the caret");
+        assert!(selection_changed(&target, &Ok(("Deux lignes".into(), vec![Rect { y: 230., ..line }], 11, true))), "scrolled: the anchor moved");
+        assert!(selection_changed(&target, &Ok(("Autre".into(), vec![line], 5, true))));
+        assert!(!selection_changed(&target, &Err("La sélection n’est pas accessible par UI Automation.".into())), "a control that stopped answering is not a change");
+    }
+
+    #[test]
     fn a_paste_replaces_a_uia_selection_or_a_proved_copy_but_never_a_console_or_a_password() {
         assert!(replaceable(CaptureOrigin::Uia, true, "Chrome_WidgetWin_1", false));
         assert!(!replaceable(CaptureOrigin::Uia, false, "Chrome_WidgetWin_1", false));
@@ -419,6 +576,29 @@ mod tests {
         assert_eq!(readback_confirms(Some("avant équipe après"), "équipe"), Some(true));
         assert_eq!(readback_confirms(Some("deux  espaces"), "deux espaces"), Some(false));
         assert_eq!(readback_confirms(None, "x"), None);
+    }
+
+    #[test]
+    fn every_refusal_of_a_capture_or_a_paste_carries_its_code() {
+        // The capture: a protected field, nothing readable, too long.
+        assert!(refuse_protected(Ok(false)).is_ok());
+        assert_eq!(refuse_protected(Ok(true)).unwrap_err().kind, ErrorKind::ProtectedField);
+        assert_eq!(refuse_protected(Err(())).unwrap_err().kind, ErrorKind::ProtectedField);
+        assert_eq!(copied_text(None).unwrap_err().kind, ErrorKind::NoSelection);
+        assert_eq!(copied_text(Some(" \n\t".into())).unwrap_err().kind, ErrorKind::NoSelection);
+        assert_eq!(copied_text(Some("é".repeat(6001))).unwrap_err().kind, ErrorKind::TooLong);
+        assert_eq!(copied_text(Some("é".repeat(6000))).unwrap(), "é".repeat(6000));
+        // A window that is not in front (0 never is): the capture is refused as changed.
+        assert_eq!(ensure_source_unchanged(0).unwrap_err().kind, ErrorKind::TargetChanged);
+        // The paste: NUL, a read-only field, the chord still held, another window in front.
+        let target = TargetIdentity { runtime_id: None, native_window: 1, control: 0, selected_text: "x".into(), anchor: None, selection_len: 1, editable: true, check: TargetCheck::Uia };
+        assert_eq!(paste_preflight(&target, "a\0b").unwrap_err().kind, ErrorKind::PasteBlocked);
+        assert_eq!(paste_preflight(&TargetIdentity { editable: false, ..target.clone() }, "ok").unwrap_err().kind, ErrorKind::NotEditable);
+        assert!(paste_preflight(&target, "ok").is_ok());
+        assert_eq!(released(false).unwrap_err().kind, ErrorKind::KeysHeld);
+        assert!(released(true).is_ok());
+        assert_eq!(validate_target(&target).unwrap_err().kind, ErrorKind::TargetChanged, "window 1 is never the foreground");
+        assert_eq!(paste(&target, "ok", false).unwrap_err().kind, ErrorKind::TargetChanged, "refused before any key or clipboard");
     }
 
     #[test]

@@ -1,5 +1,12 @@
 # Boucle de validation visuelle
 
+Ce document retrace les itérations du verre graphite, de la 0.1.x à la 0.4.0. Depuis le
+24 septembre 2026, la direction artistique « Îlot » les remplace : plan, lots et valeurs
+exactes dans docs/DA-PLAN.md, référence visuelle et de mouvement dans design-lab/, en cours
+d’implémentation sur la branche `da-ilot`. Les durées, le graphite et l’indicateur d’attente
+décrits ci-dessous sont historiques (mentions en ligne) ; la méthode (vraie fenêtre Windows
+avant toute déclaration, preuves rejouables, jugement final de Lucas) reste valable.
+
 ## Reprise du 9 septembre 2026 (Claude Code, handoff design « 1a »)
 
 Les trois livrables du handoff (bulle 1a, défilement, fenêtre Réglages) sont implémentés
@@ -71,11 +78,14 @@ Ce qui définit une interface fluide pour FlowTranslate, base des prochains lots
    interaction : tout mouvement est une propriété composée (opacité, transform,
    clip-path) animée dans le DOM ; le redimensionnement natif n’a lieu qu’à l’arrivée du
    résultat. Le hit-test par régions le permet : une fenêtre plus grande que le verre ne
-   coûte rien.
+   coûte rien. (La DA Îlot garde la fenêtre réservée et anime aussi la largeur, la hauteur
+   et le rayon de la surface dans le DOM : docs/DA-PLAN.md §4.3.)
 2. Windows ne peint jamais rien : ni bandeau, ni cadre, ni fond (silhouette 100 % DOM).
 3. Chaque transition a une durée et une courbe connues : entrée 180 ms, sortie 100 ms,
    survol 120 ms, anneau environ 1,4 s par tour ; rien n’est instantané, sauf sous
-   mouvement réduit.
+   mouvement réduit. (Historique pour les valeurs : ressorts Apple « smooth » et courbes
+   de docs/DA-PLAN.md §9 ; l’anneau n’existe plus depuis la 0.2.0. Le principe d’une durée
+   et d’une courbe connues pour chaque transition reste.)
 4. L’interface ne disparaît jamais sous l’utilisateur : une action accorde un délai de
    grâce (2 s) ; la sortie du pointeur est jugée sur la silhouette et son halo, pas sur
    les boîtes serrées ; un retour rapide annule le repli.
@@ -104,7 +114,8 @@ Le lot applique les six critères en une fois, sans matériau natif nouveau.
   secondes de grâce après toute action, sortie jugée sur `glass-near` ; anneau à 1,4 s
   par tour avec un arc qui respire ; `<wbr>` après les séparateurs des longues
   séquences (`src/text.ts`) et marge de 22 px ; menu dans le graphite du verre ;
-  original à 14 px sur fond clair.
+  original à 14 px sur fond clair. (Historique pour l’anneau et le menu graphite :
+  remplacés par l’orbe Perle, l’Îlot et la matière de docs/DA-PLAN.md.)
 - Preuves : Vitest (`text.test.ts`), Playwright (grâce, proximité, fenêtre constante
   entre repli, dépli et menu, coupures aux séparateurs, durées de l’anneau, corps replié
   `toBeHidden()`), `cargo test` (côté avec réserve, décalage des régions sur écran bas,
@@ -169,6 +180,9 @@ fait désormais sur `BerthalonLucas/Flow_Translate` (toutes les branches poussé
   depuis la pilule (16/24) ; sinon lecteur en bande bas centre, large de la moitié de la
   zone de travail de l’écran courant, haute d’au plus 45 %, lignes entières (22/33). Plus
   de « Agrandir/Réduire », d’onglet ni de repli : le verre part de lui-même.
+  (Historique pour le spinner : rejeté par Lucas le 23 septembre 2026 ; l’indicateur
+  retenu est l’orbe Perle, lot 8 de docs/DA-PLAN.md. Les deux formes restent le
+  comportement du mode « Afficher le résultat », restylé au lot 11.)
 - Budget de lecture puis fondu : `readingBudget` (orientation + 350 ms par mot, 5 s à
   30 s / 90 s), réglage « Fermeture automatique », sortie de la souris après une visite
   → 4 s au plus, jamais moins de 2,5 s ; assombrissement 55 % en 600 ms, tenue 1,4 s,
@@ -187,6 +201,8 @@ fait désormais sur `BerthalonLucas/Flow_Translate` (toutes les branches poussé
   et replace la fenêtre ; un verre ancré ne suit jamais.
 - Typographie : `#e8eaef`, interlettrage 0, `text-wrap: pretty`, un seul graphite
   `rgba(24,26,31,.96)` pour verre, pilule et menu, liseré à 20 %, plus de sheen.
+  (Historique pour le graphite : remplacé par le verre clair et le verre sombre qui
+  suivent le thème de Windows, docs/DA-PLAN.md §9 et lot 12.)
 - Preuves : `cargo test` (plafond, cadre), Vitest (`layout.test.ts`), Playwright
   (`ui.pw.ts`, `native-bridge.pw.ts`, `reported-defects.pw.ts` UI-021 à UI-024,
   `workbench.pw.ts`, `overlay.layout.spec.mjs`), références visuelles régénérées et
@@ -264,10 +280,14 @@ reste visible tant que les composants ne les implémentent pas.
 
 ### Accès réel à Tauri / WebView2
 
-`npm run ui:native` lance l’exécutable installé en démo explicite, ouvre un port
-CDP local et utilise Playwright dans sa vraie WebView2. Fermer l’application avant
-ce test ; le script refuse une session existante. Pour un autre build :
-`powershell -NoProfile -File scripts/test-native-ui.ps1 -Executable CHEMIN_EXE`.
+`npm run ui:native` lance l’exécutable installé (`%LOCALAPPDATA%\FlowTranslate`, installateur
+NSIS) en démo explicite, ouvre un port CDP local et utilise Playwright dans sa vraie WebView2.
+Fermer l’application avant ce test ; le script refuse une session existante. Pour un autre build :
+`powershell -NoProfile -File scripts/test-native-ui.ps1 -Executable CHEMIN_EXE`. Les réglages
+de la sonde sont versionnés dans `scripts/native-ui-settings/` (`-Theme dark` pour le sombre) :
+aucun raccourci global n'est enregistré, et l'Îlot fait son parcours après le lecteur de la démo.
+La sonde déplace le vrai curseur (sauf session verrouillée) : ne pas la lancer pendant que
+quelqu'un utilise le PC.
 Le script termine seulement son propre processus, même si le test échoue.
 La version de l’exécutable testé dépend du chemin fourni : ne jamais assimiler
 le test de l’installation 0.1.5 à celui d’un futur build de la branche.
