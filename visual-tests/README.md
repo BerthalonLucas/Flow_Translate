@@ -25,9 +25,12 @@ Elles figent le rendu actuel, elles ne l’approuvent pas : tant que Lucas ne le
 pas revues (référence visuelle : design-lab/), un test `@ilot` vert veut seulement
 dire « rien n’a changé depuis la génération ». Après revue : corriger ce qui doit
 l’être, régénérer avec `npm run ui:reference -- --grep @ilot`, puis retirer cette
-mention.
+mention. Le même jour, la mise en valeur du texte (choix de Lucas) a remplacé
+`halo`, ajouté `halo-menu` et `halo-marks`, et allongé `settings` d’un réglage
+(seule la barre de défilement change à l’écran) : régénérées après examen de
+l’attendu, du réel et de la différence.
 
-28 images dans `references/win32/chromium/ilot/`, chacune en `-light` et `-dark`,
+32 images dans `references/win32/chromium/ilot/`, chacune en `-light` et `-dark`,
 en anglais (langue par défaut de l’application), mouvements réduits :
 
 | Image | Ce qu’elle montre |
@@ -38,7 +41,9 @@ en anglais (langue par défaut de l’application), mouvements réduits :
 | `error-config`, `error-transient`, `error-paste`, `error-content` | une pilule d’erreur par famille (lot 10) |
 | `long` | la bande de lecture d’un long résultat (lot 11) |
 | `settings` | les Réglages de l’Îlot (lot 13) |
-| `halo` | le halo sur trois lignes, voile fixe (lot 6) |
+| `halo` | le halo pendant le travail, mouvements réduits : aurore immobile autour de la zone de texte, bandes des lignes entières, voile irisé fixe sur le texte exact |
+| `halo-menu` | le halo du menu : zone de texte cernée, bandes des lignes entières, calque sur le texte exact |
+| `halo-marks` | la lueur irisée des mots changés, sans la vague (mouvements réduits) |
 
 ## État des images 0.4 (25/09/2026, lot 14)
 

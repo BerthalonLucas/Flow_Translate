@@ -462,7 +462,7 @@ test('« Undone » goes back to the strip’s corner, against the original text;
 });
 
 test('the time stands still while the pill is out of sight: a 2 s Undo still has its 2 s once the pill is back', async ({ page }) => {
-  await openIlot(page, { afterReplace: { check: true, undo: true, undoSeconds: 2, changedWords: true } });
+  await openIlot(page, { afterReplace: { check: true, undo: true, undoSeconds: 2, changedWords: true, changedWordsSeconds: 60 } });
   await page.mouse.move(2, 2);
   await working(page, 'time');
   await paste(page, Array.from({ length: 12 }, (_, index) => ({ x: 100, y: 300 + 18 * index, width: 600, height: 18 })));

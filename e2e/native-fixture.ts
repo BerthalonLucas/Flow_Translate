@@ -8,7 +8,7 @@ import { resetFrom } from '../src/settings/reset';
 
 // The Îlot, as Rust's default (UiVersion::Ilot); `&ui=v4` in the URL starts in the 0.4 journey,
 // for the tests that ask for it.
-let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: new URLSearchParams(location.search).get('ui') === 'v4' ? 'v4' : 'ilot', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
+let settings: Settings = { mode: 'quality', defaultActionId, actions: structuredClone(defaultActions), shortcutBindings: structuredClone(defaultBindings), historyEnabled: false, autostart: false, connectionExpanded: false, textSize: 'normal', autoClose: 'normal', uiVersion: new URLSearchParams(location.search).get('ui') === 'v4' ? 'v4' : 'ilot', language: 'en', theme: 'system', motion: 'system', motionPreset: 'smooth', indicator: 'perle', afterReplace: { check: true, undo: true, undoSeconds: 8, changedWords: true, changedWordsSeconds: 60 }, undoStrategy: 'keystroke', pillPlacement: 'below', glassMaterial: 'painted', menuActionIds: [...defaultMenuActionIds],
   profiles: { fast: { endpoint: '', model: 'test', apiKey: '' }, quality: { endpoint: '', model: 'test', apiKey: '' } } };
 // A fresh install's settings (Rust's Settings::default), for `reset_settings`.
 const freshSettings: Settings = { ...structuredClone(settings), uiVersion: 'ilot' };
@@ -249,7 +249,6 @@ mockIPC((command, args) => {
     return;
   }
   if (command === 'highlight_changes') { const ranges = (args as { ranges: unknown[] }).ranges; return { ranges: ranges.length, lines: ranges.length }; }
-  if (command === 'clear_highlight') return;
   if (command === 'replace_result' && refuseReplace !== null) { void emit('capture-target', { captureId: currentCapture.id, canReplace: false }); return Promise.reject(refuseReplace); }
 }, { shouldMockEvents: true });
 mockWindows('overlay');

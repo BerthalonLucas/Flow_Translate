@@ -97,9 +97,21 @@ const surfaces: Surface[] = [
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'After replacing', exact: true })).toBeVisible();
   } },
-  // The halo over three lines (lot 6), its still veil under reduced motion.
+  // The halo (lot 6, « mise en valeur », Lucas 25/09) under reduced motion: while the action
+  // works, the still aurora, the bands and the still iridescent veil; the menu's three levels;
+  // the changed words' iridescent glow, without the wave.
   { name: 'halo', query: { scenario: 'halo' }, ready: async (page: Page) => {
-    await expect(page.locator('.halo-line')).toHaveCount(3);
+    await expect(page.locator('.halo-veil')).toHaveCount(3);
+    await expect(page.locator('.halo-aurora')).toHaveCount(1);
+    await expect(page.locator('.halo-band')).toHaveCount(3);
+  } },
+  { name: 'halo-menu', query: { scenario: 'halo', phase: 'menu' }, ready: async (page: Page) => {
+    await expect(page.locator('.halo-tint')).toHaveCount(3);
+    await expect(page.locator('.halo-box')).toHaveCount(1);
+  } },
+  { name: 'halo-marks', query: { scenario: 'halo', phase: 'marks' }, ready: async (page: Page) => {
+    await expect(page.locator('.halo-mark')).toHaveCount(2);
+    await expect(page.locator('.halo-mark').first()).toHaveCSS('opacity', '1');
   } },
 ];
 

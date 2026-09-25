@@ -70,8 +70,16 @@ test('After replacing, the motion style and the default action are saved by the 
   const section = page.locator('.after-settings');
   await section.getByRole('switch', { name: 'Check mark', exact: true }).click();
   await expect.poll(() => saved(page)).toMatchObject({ afterReplace: { check: false, undo: true, undoSeconds: 8, changedWords: true } });
+  // The changed words stay until the next action in the text, a minute at most by default.
+  const highlight = section.getByRole('radiogroup', { name: 'Highlight time', exact: true });
+  await expect(highlight.getByRole('radio', { name: '1 min', exact: true })).toHaveAttribute('data-state', 'on');
+  await expect(highlight.getByRole('radio')).toHaveText(['15 s', '30 s', '1 min', '2 min']);
+  await highlight.getByRole('radio', { name: '30 s', exact: true }).click();
+  await expect.poll(() => saved(page)).toMatchObject({ afterReplace: { changedWords: true, changedWordsSeconds: 30 } });
   await section.getByRole('switch', { name: 'Highlight changed words', exact: true }).click();
-  await expect.poll(() => saved(page)).toMatchObject({ afterReplace: { check: false, changedWords: false } });
+  await expect.poll(() => saved(page)).toMatchObject({ afterReplace: { check: false, changedWords: false, changedWordsSeconds: 30 } });
+  // Off, its time has nothing to set.
+  await expect(highlight).toHaveCount(0);
   // Undo time: 2 to 20 s, from the keyboard too, saved after a pause.
   const time = section.getByRole('slider', { name: 'Undo time', exact: true });
   await time.focus();
