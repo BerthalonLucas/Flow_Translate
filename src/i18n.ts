@@ -239,6 +239,7 @@ const dictionary = {
   'settings.connectionFailed': { en: 'Connection failed', fr: 'Échec de connexion' },
   'settings.notChecked': { en: 'Not checked', fr: 'Non vérifié' },
   'settings.checkImpossible': { en: 'Check failed. Start the server, then try again.', fr: 'Vérification impossible. Démarrez le serveur puis réessayez.' },
+  'settings.checkUnsaved': { en: 'Not checked: this change couldn’t be saved (see below).', fr: 'Non vérifié : cette modification n’a pas pu être enregistrée (voir en bas).' },
   'settings.endpoint': { en: 'Address', fr: 'Adresse' },
   'settings.model': { en: 'Model', fr: 'Modèle' },
   'settings.apiKey': { en: 'API key', fr: 'Clé API' },

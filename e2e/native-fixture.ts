@@ -171,6 +171,8 @@ mockIPC((command, args) => {
   if (command === 'save_settings') {
     const next = args?.settings as Settings;
     if (refuseShortcut && JSON.stringify(next.shortcutBindings) !== JSON.stringify(settings.shortcutBindings)) return Promise.reject('Le raccourci est déjà utilisé ou indisponible.');
+    // As Rust (settings::validate_endpoint): a remote server in plain HTTP is refused.
+    if (Object.values(next.profiles).some(profile => /^http:\/\/(?!127\.0\.0\.1[:/]|localhost[:/]|\[::1\][:/])/i.test(profile.endpoint))) return Promise.reject('Un serveur distant doit utiliser HTTPS; HTTP est réservé au bouclage local.');
     // As Rust: a binding saved on another chord registered it (a taken one refuses the save), and
     // every save sends the state of each shortcut.
     for (const binding of next.shortcutBindings) if (settings.shortcutBindings.find(b => b.id === binding.id)?.shortcut !== binding.shortcut) delete shortcutStates[binding.id];

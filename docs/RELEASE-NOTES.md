@@ -1,3 +1,13 @@
+# FlowTranslate 0.5.1 — un serveur derrière le pare-feu de l’entreprise — 25 septembre 2026
+
+- **Certificats d’entreprise reconnus.** La connexion au serveur passe par la pile TLS de Windows (schannel) : un certificat émis par l’autorité de l’entreprise, ou réécrit par l’inspection TLS d’un pare-feu, est accepté dès que Windows l’accepte, comme dans le navigateur. En 0.5.0, seules les autorités publiques l’étaient, et un tel serveur restait « injoignable ».
+- **« Injoignable » dit pourquoi.** Le message de « Check » (Réglages › Connection) nomme la cause : certificat refusé par Windows, connexion sécurisée impossible, nom introuvable, rien n’écoute à l’adresse, réseau ou pare-feu, connexion qui ne s’ouvre pas à temps ou qui est coupée. Seul l’hôte y figure, jamais le chemin ni la clé.
+- **« Check » vérifie ce qui est écrit.** Une adresse tapée juste avant est enregistrée d’abord ; une modification refusée (un serveur distant en HTTP, par exemple) est signalée, au lieu de vérifier l’ancienne adresse.
+
+À savoir : le proxy configuré dans Windows n’est toujours pas utilisé ; un serveur que seul le proxy de l’entreprise atteint reste injoignable, et le message l’indique (« pare-feu ou proxy ? »).
+
+Validation : `cargo test` (causes lues dans les codes de Windows, port fermé, nom en `.invalid`, serveur qui ne parle pas TLS) ; à la main sur le poste de développement, des certificats réels : autosigné, racine non approuvée, expiré et mauvais nom refusés avec leur cause, certificat public accepté ; Vitest et Playwright (« Check » enregistre d’abord, un refus est signalé). Pas encore vérifié derrière le pare-feu de l’entreprise.
+
 # FlowTranslate 0.5.0 — l’Îlot, un menu à côté de la sélection — 25 septembre 2026
 
 - **Un raccourci, un menu.** `Ctrl+Alt+Espace` ouvre l’Îlot juste sous le texte sélectionné, au-dessus s’il manque la place en bas. Au repos, il ne montre que la dernière action utilisée dans cette application et une pastille ✦ ; Tab, ↓ ou la souris posée sur la ✦ déplie une grille de six tuiles, à droite de la bulle quand l’écran en a la place : Fix grammar, Translate (français → anglais, le reste → français), Make professional, Shorten, Write email et Ask. Entrée relance la dernière action, une lettre lance la sienne (F, T, P, S, E), les flèches parcourent la grille, Échap revient d’un cran puis ferme. Deux appuis rapides relancent la dernière action sans passer par le menu.
